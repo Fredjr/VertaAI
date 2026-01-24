@@ -3,7 +3,7 @@ import type { Router as RouterType } from 'express';
 import { Octokit } from 'octokit';
 import { prisma } from '../lib/db.js';
 import { verifyWebhookSignature, extractPRInfo, getInstallationOctokit, getPRDiff, getPRFiles } from '../lib/github.js';
-import { runDriftTriage } from '../agents/drift-triage.js';
+import { runDriftDetectionPipeline } from '../pipelines/drift-detection.js';
 
 // Create Octokit with personal access token for repo webhooks (no installation)
 function getTokenOctokit(): Octokit | null {
@@ -153,9 +153,12 @@ async function handlePullRequestEvent(payload: any, res: Response) {
 
     console.log(`[Webhook] Created signal ${signal.id} for PR #${prInfo.prNumber}`);
 
-    // Run drift triage analysis (synchronous for now, will be queued later)
+    // Run full drift detection pipeline (A → B → C → D → E)
+    // Note: For production, this should be queued with BullMQ
     try {
-      const triageResult = await runDriftTriage({
+      const pipelineResult = await runDriftDetectionPipeline({
+        signalId: signal.id,
+        orgId: org.id,
         prNumber: prInfo.prNumber,
         prTitle: prInfo.prTitle,
         prBody: prInfo.prBody,
@@ -166,19 +169,12 @@ async function handlePullRequestEvent(payload: any, res: Response) {
         diff,
       });
 
-      // Update signal with drift analysis result
-      if (triageResult.success && triageResult.data) {
-        await prisma.signal.update({
-          where: { id: signal.id },
-          data: {
-            driftAnalysis: triageResult.data as any,
-            processedAt: new Date(),
-          },
-        });
-        console.log(`[Webhook] Drift analysis complete: drift_detected=${triageResult.data.drift_detected}`);
+      console.log(`[Webhook] Pipeline complete: drift_detected=${pipelineResult.driftDetected}, proposals=${pipelineResult.proposalIds.length}`);
+      if (pipelineResult.errors.length > 0) {
+        console.warn(`[Webhook] Pipeline errors: ${pipelineResult.errors.join(', ')}`);
       }
-    } catch (triageError) {
-      console.error('[Webhook] Drift triage failed:', triageError);
+    } catch (pipelineError) {
+      console.error('[Webhook] Pipeline failed:', pipelineError);
       // Don't fail the webhook - we still created the signal
     }
 

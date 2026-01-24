@@ -58,18 +58,19 @@ model User {
 
 // Docs we're actively monitoring
 model TrackedDocument {
-  id               String   @id @default(uuid())
-  orgId            String   @map("org_id")
-  confluencePageId String   @map("confluence_page_id")
-  title            String
-  contentHash      String?  @map("content_hash")
-  lastSyncedAt     DateTime? @map("last_synced_at")
-  freshnessScore   Decimal  @default(1.0) @map("freshness_score") @db.Decimal(3, 2)
-  ownerUserId      String?  @map("owner_user_id")
-  ownerSource      String?  @map("owner_source")
-  repoMapping      String[] @map("repo_mapping")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  id                  String   @id @default(uuid())
+  orgId               String   @map("org_id")
+  confluencePageId    String   @map("confluence_page_id")
+  title               String
+  contentHash         String?  @map("content_hash")
+  lastContentSnapshot String?  @map("last_content_snapshot") @db.Text
+  lastSyncedAt        DateTime? @map("last_synced_at")
+  freshnessScore      Decimal  @default(1.0) @map("freshness_score") @db.Decimal(3, 2)
+  ownerUserId         String?  @map("owner_user_id")
+  ownerSource         String?  @map("owner_source")
+  repoMapping         String[] @map("repo_mapping")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
   organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   owner         User?          @relation("DocumentOwner", fields: [ownerUserId], references: [id])
