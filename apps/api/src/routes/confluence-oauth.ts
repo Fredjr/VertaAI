@@ -131,6 +131,9 @@ router.get('/callback', async (req: Request, res: Response) => {
 });
 
 async function exchangeCodeForToken(code: string): Promise<any> {
+  const redirectUri = `${API_URL}/auth/confluence/callback`;
+  console.log(`[ConfluenceOAuth] Exchanging code for token with redirect_uri: ${redirectUri}`);
+
   const response = await fetch('https://auth.atlassian.com/oauth/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -139,11 +142,15 @@ async function exchangeCodeForToken(code: string): Promise<any> {
       client_id: CONFLUENCE_CLIENT_ID,
       client_secret: CONFLUENCE_CLIENT_SECRET,
       code,
-      redirect_uri: `${API_URL}/auth/confluence/callback`,
+      redirect_uri: redirectUri,
     }),
   });
 
-  return response.json();
+  const data = await response.json();
+  if (!response.ok || data.error) {
+    console.error(`[ConfluenceOAuth] Token exchange failed:`, data);
+  }
+  return data;
 }
 
 async function getAccessibleResources(accessToken: string): Promise<any[]> {

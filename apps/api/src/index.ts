@@ -98,6 +98,25 @@ app.patch('/api/proposals/:id', async (req: Request, res: Response) => {
   }
 });
 
+// Admin endpoint to update organization (for setting tokens manually)
+app.patch('/api/organizations/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { confluenceAccessToken } = req.body;
+
+  try {
+    const updateData: any = {};
+    if (confluenceAccessToken) updateData.confluenceAccessToken = confluenceAccessToken;
+
+    const org = await prisma.organization.update({
+      where: { id },
+      data: updateData,
+    });
+    res.json({ success: true, org: { id: org.id, name: org.name, hasToken: !!org.confluenceAccessToken } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/metrics', async (_req: Request, res: Response) => {
   try {
     const today = new Date();
