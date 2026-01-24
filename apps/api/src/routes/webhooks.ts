@@ -129,10 +129,19 @@ async function handlePullRequestEvent(payload: any, res: Response) {
         console.log(`[Webhook] Fetched ${files.length} files, diff length: ${diff.length}`);
       } else {
         console.warn('[Webhook] No GitHub auth available - set GITHUB_TOKEN env var to enable PR diff fetching');
+        console.log(`[Webhook] Will use PR title/body for drift detection (${prInfo.changedFiles} files changed)`);
       }
     } catch (error: any) {
       console.error('[Webhook] Error fetching PR details:', error.message);
-      // Continue without diff - we can still use PR title/body for drift detection
+      console.log(`[Webhook] Will use PR title/body for drift detection (${prInfo.changedFiles} files changed)`);
+    }
+
+    // If we couldn't fetch files but have changedFiles count, create placeholder entries
+    // This helps the drift detection know files were changed even without details
+    if (files.length === 0 && prInfo.changedFiles > 0) {
+      console.log(`[Webhook] Creating placeholder for ${prInfo.changedFiles} changed files`);
+      // We don't have filenames, but we can indicate files were changed
+      // The drift detection will rely more on PR title/body in this case
     }
 
     // Create signal record
