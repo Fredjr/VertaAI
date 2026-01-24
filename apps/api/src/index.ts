@@ -372,6 +372,114 @@ VertaAI is a knowledge drift detection system.
 // Test endpoint to manually trigger drift detection pipeline
 import { runDriftDetectionPipeline } from './pipelines/drift-detection.js';
 
+// Create and send a test proposal to Slack (for testing Edit Modal)
+app.post('/api/test/create-proposal', async (req: Request, res: Response) => {
+  const { channel, documentTitle, summary, diff, confidence, prNumber } = req.body;
+
+  if (!channel) {
+    return res.status(400).json({ error: 'Missing channel' });
+  }
+
+  try {
+    // Get the default org
+    const org = await prisma.organization.findFirst();
+    if (!org) {
+      return res.status(400).json({ error: 'No organization found' });
+    }
+
+    // Find or create a test document
+    let document = await prisma.trackedDocument.findFirst({
+      where: { orgId: org.id, title: documentTitle || 'Test Document' },
+    });
+
+    if (!document) {
+      document = await prisma.trackedDocument.create({
+        data: {
+          orgId: org.id,
+          title: documentTitle || 'Test Document',
+          confluencePageId: '262146', // Use existing test page
+          freshnessScore: 0.5,
+        },
+      });
+    }
+
+    // Create a new proposal
+    const proposal = await prisma.diffProposal.create({
+      data: {
+        orgId: org.id,
+        documentId: document.id,
+        status: 'pending',
+        confidence: confidence || 0.85,
+        summary: summary || 'Test proposal for Edit Modal testing',
+        diffContent: diff || '--- current\n+++ proposed\n@@ -1,3 +1,4 @@\n # Test Document\n \n This is a test.\n+Added new line for testing.',
+      },
+      include: { document: true },
+    });
+
+    // Build Slack message blocks
+    const truncatedDiff = (proposal.diffContent || '').split('\n').slice(0, 15).join('\n');
+    const confidencePercent = Math.round(Number(proposal.confidence || 0) * 100);
+
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: '📝 Documentation update ready for review', emoji: true },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Document:* ${proposal.document?.title || 'Unknown'}\n*Triggered by:* PR #${prNumber || 'test'}\n*Confidence:* ${confidencePercent}%`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Summary:* ${proposal.summary || 'No summary available'}`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Diff preview:*\n\`\`\`${truncatedDiff}\`\`\``,
+        },
+      },
+      {
+        type: 'actions',
+        elements: [
+          { type: 'button', text: { type: 'plain_text', text: '✅ Approve', emoji: true }, style: 'primary', value: `approve:${proposal.id}`, action_id: 'approve_action' },
+          { type: 'button', text: { type: 'plain_text', text: '✏️ Edit', emoji: true }, value: `edit:${proposal.id}`, action_id: 'edit_action' },
+          { type: 'button', text: { type: 'plain_text', text: '❌ Reject', emoji: true }, style: 'danger', value: `reject:${proposal.id}`, action_id: 'reject_action' },
+        ],
+      },
+    ];
+
+    const result = await sendSlackMessage(org.id, channel, `Documentation update for ${proposal.document?.title}`, blocks);
+
+    if (result.ok && result.ts) {
+      await prisma.diffProposal.update({
+        where: { id: proposal.id },
+        data: {
+          slackChannelId: result.channel || channel,
+          slackMessageTs: result.ts,
+        },
+      });
+    }
+
+    res.json({
+      success: result.ok,
+      proposalId: proposal.id,
+      messageTs: result.ts,
+      channel: result.channel,
+      error: result.error,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Send proposal notification to Slack
 app.post('/api/test/send-proposal', async (req: Request, res: Response) => {
   const { proposalId, channel } = req.body;
