@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { prisma } from '../lib/db.js';
 import { verifyWebhookSignature, extractPRInfo, getInstallationOctokit, getPRDiff, getPRFiles } from '../lib/github.js';
+import { runDriftTriage } from '../agents/drift-triage.js';
 
 const router: RouterType = Router();
 
@@ -128,10 +129,36 @@ async function handlePullRequestEvent(payload: any, res: Response) {
 
     console.log(`[Webhook] Created signal ${signal.id} for PR #${prInfo.prNumber}`);
 
-    // TODO: Queue drift analysis job here
-    // await driftAnalysisQueue.add('analyze', { signalId: signal.id });
+    // Run drift triage analysis (synchronous for now, will be queued later)
+    try {
+      const triageResult = await runDriftTriage({
+        prNumber: prInfo.prNumber,
+        prTitle: prInfo.prTitle,
+        prBody: prInfo.prBody,
+        repoFullName: prInfo.repoFullName,
+        authorLogin: prInfo.authorLogin,
+        mergedAt: prInfo.mergedAt,
+        changedFiles: files,
+        diff,
+      });
 
-    return res.json({ 
+      // Update signal with drift analysis result
+      if (triageResult.success && triageResult.data) {
+        await prisma.signal.update({
+          where: { id: signal.id },
+          data: {
+            driftAnalysis: triageResult.data as any,
+            processedAt: new Date(),
+          },
+        });
+        console.log(`[Webhook] Drift analysis complete: drift_detected=${triageResult.data.drift_detected}`);
+      }
+    } catch (triageError) {
+      console.error('[Webhook] Drift triage failed:', triageError);
+      // Don't fail the webhook - we still created the signal
+    }
+
+    return res.json({
       message: 'PR processed successfully',
       signalId: signal.id,
     });

@@ -114,6 +114,27 @@ app.get('/api/organizations', async (_req: Request, res: Response) => {
   }
 });
 
+app.get('/api/signals', async (_req: Request, res: Response) => {
+  try {
+    const signals = await prisma.signal.findMany({
+      take: 50,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        type: true,
+        externalId: true,
+        repoFullName: true,
+        driftAnalysis: true,
+        processedAt: true,
+        createdAt: true,
+      },
+    });
+    res.json({ signals });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch signals' });
+  }
+});
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
