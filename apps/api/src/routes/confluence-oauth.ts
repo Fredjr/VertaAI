@@ -20,11 +20,11 @@ const API_URL = process.env.API_URL || 'http://localhost:3001';
 
 // Required OAuth scopes for Confluence
 // These must match exactly what's configured in the Atlassian Developer Console
+// Using granular scopes (v2) instead of classic scopes
 const CONFLUENCE_SCOPES = [
   'read:me',
-  'read:confluence-content.all',
-  'write:confluence-content',
-  'read:confluence-space.summary',
+  'read:page:confluence',
+  'write:page:confluence',
   'offline_access',
 ].join(' ');
 
