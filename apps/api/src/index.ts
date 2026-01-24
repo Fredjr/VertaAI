@@ -113,6 +113,7 @@ app.get('/api/organizations', async (_req: Request, res: Response) => {
         id: true,
         name: true,
         slackTeamName: true,
+        confluenceCloudId: true,
         createdAt: true,
         _count: {
           select: {
