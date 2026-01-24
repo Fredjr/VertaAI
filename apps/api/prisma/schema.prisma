@@ -1,0 +1,208 @@
+// Prisma schema for VertaAI
+// Knowledge Drift Agent for Engineering Ops
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Multi-tenant organizations
+model Organization {
+  id                    String   @id @default(uuid())
+  name                  String
+  slackWorkspaceId      String?  @unique @map("slack_workspace_id")
+  slackBotToken         String?  @map("slack_bot_token")
+  slackTeamName         String?  @map("slack_team_name")
+  confluenceCloudId     String?  @map("confluence_cloud_id")
+  confluenceAccessToken String?  @map("confluence_access_token")
+  githubInstallationId  BigInt?  @map("github_installation_id")
+  settings              Json     @default("{}")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  users            User[]
+  trackedDocuments TrackedDocument[]
+  docMappings      DocMapping[]
+  signals          Signal[]
+  diffProposals    DiffProposal[]
+  auditLogs        AuditLog[]
+  metricsSnapshots MetricsSnapshot[]
+
+  @@map("organizations")
+}
+
+// Users (Slack-based identity)
+model User {
+  id             String   @id @default(uuid())
+  orgId          String   @map("org_id")
+  slackUserId    String   @map("slack_user_id")
+  email          String?
+  name           String?
+  githubUsername String?  @map("github_username")
+  isAdmin        Boolean  @default(false) @map("is_admin")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization      Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  ownedDocuments    TrackedDocument[] @relation("DocumentOwner")
+  routedProposals   DiffProposal[]   @relation("RoutedTo")
+  resolvedProposals DiffProposal[]   @relation("ResolvedBy")
+  auditLogs         AuditLog[]
+
+  @@unique([orgId, slackUserId])
+  @@map("users")
+}
+
+// Docs we're actively monitoring
+model TrackedDocument {
+  id               String   @id @default(uuid())
+  orgId            String   @map("org_id")
+  confluencePageId String   @map("confluence_page_id")
+  title            String
+  contentHash      String?  @map("content_hash")
+  lastSyncedAt     DateTime? @map("last_synced_at")
+  freshnessScore   Decimal  @default(1.0) @map("freshness_score") @db.Decimal(3, 2)
+  ownerUserId      String?  @map("owner_user_id")
+  ownerSource      String?  @map("owner_source")
+  repoMapping      String[] @map("repo_mapping")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  owner         User?          @relation("DocumentOwner", fields: [ownerUserId], references: [id])
+  docMappings   DocMapping[]
+  diffProposals DiffProposal[]
+  auditLogs     AuditLog[]
+
+  @@unique([orgId, confluencePageId])
+  @@index([orgId])
+  @@map("tracked_documents")
+}
+
+// Service/repo to doc mapping
+model DocMapping {
+  id           String   @id @default(uuid())
+  orgId        String   @map("org_id")
+  repoFullName String   @map("repo_full_name")
+  pathPatterns String[] @map("path_patterns")
+  serviceName  String?  @map("service_name")
+  documentId   String   @map("document_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  organization Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  document     TrackedDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, repoFullName, documentId])
+  @@map("doc_mappings")
+}
+
+// Incoming signals (GitHub PRs for MVP)
+model Signal {
+  id            String    @id @default(uuid())
+  orgId         String    @map("org_id")
+  type          String    // 'github_pr', 'pagerduty_incident', 'slack_question'
+  externalId    String    @map("external_id")
+  repoFullName  String?   @map("repo_full_name")
+  payload       Json
+  driftAnalysis Json?     @map("drift_analysis")
+  processedAt   DateTime? @map("processed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  diffProposals DiffProposal[]
+
+  @@unique([orgId, type, externalId])
+  @@index([orgId, createdAt(sort: Desc)])
+  @@map("signals")
+}
+
+// Generated diff proposals
+model DiffProposal {
+  id                String    @id @default(uuid())
+  orgId             String    @map("org_id")
+  signalId          String?   @map("signal_id")
+  documentId        String?   @map("document_id")
+
+  // The diff itself
+  diffContent       String    @map("diff_content")
+  summary           String?
+  rationale         String?
+  confidence        Decimal?  @db.Decimal(3, 2)
+  suspectedSections String[]  @map("suspected_sections")
+  sourceLinks       String[]  @map("source_links")
+
+  // Routing
+  routedToUserId    String?   @map("routed_to_user_id")
+  routingConfidence String?   @map("routing_confidence")
+
+  // Approval state
+  status            String    @default("pending")
+  slackChannelId    String?   @map("slack_channel_id")
+  slackMessageTs    String?   @map("slack_message_ts")
+  snoozeUntil       DateTime? @map("snooze_until")
+
+  // Resolution
+  resolvedAt        DateTime? @map("resolved_at")
+  resolvedByUserId  String?   @map("resolved_by_user_id")
+  rejectionReason   String?   @map("rejection_reason")
+  rejectionTags     String[]  @map("rejection_tags")
+  editedDiffContent String?   @map("edited_diff_content")
+
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  organization Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  signal       Signal?          @relation(fields: [signalId], references: [id])
+  document     TrackedDocument? @relation(fields: [documentId], references: [id])
+  routedTo     User?            @relation("RoutedTo", fields: [routedToUserId], references: [id])
+  resolvedBy   User?            @relation("ResolvedBy", fields: [resolvedByUserId], references: [id])
+  auditLogs    AuditLog[]
+
+  @@index([orgId, status])
+  @@index([routedToUserId, status])
+  @@map("diff_proposals")
+}
+
+// Full audit trail
+model AuditLog {
+  id             String   @id @default(uuid())
+  orgId          String   @map("org_id")
+  action         String   // 'proposal_created', 'approved', 'rejected', 'edited', 'writeback_success'
+  actorUserId    String?  @map("actor_user_id")
+  documentId     String?  @map("document_id")
+  diffProposalId String?  @map("diff_proposal_id")
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actor        User?            @relation(fields: [actorUserId], references: [id])
+  document     TrackedDocument? @relation(fields: [documentId], references: [id])
+  diffProposal DiffProposal?    @relation(fields: [diffProposalId], references: [id])
+
+  @@index([orgId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// Metrics snapshots (for dashboard)
+model MetricsSnapshot {
+  id                     String   @id @default(uuid())
+  orgId                  String   @map("org_id")
+  date                   DateTime @db.Date
+  totalSignals           Int      @default(0) @map("total_signals")
+  totalProposals         Int      @default(0) @map("total_proposals")
+  approvedCount          Int      @default(0) @map("approved_count")
+  editedCount            Int      @default(0) @map("edited_count")
+  rejectedCount          Int      @default(0) @map("rejected_count")
+  snoozedCount           Int      @default(0) @map("snoozed_count")
+  avgTimeToApprovalHours Decimal? @map("avg_time_to_approval_hours") @db.Decimal(10, 2)
+  docsUpdatedCount       Int      @default(0) @map("docs_updated_count")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, date])
+  @@map("metrics_snapshots")
+}
