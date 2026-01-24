@@ -50,6 +50,7 @@ export function clearConfluenceCache(orgId: string): void {
 
 /**
  * Make an authenticated request to Confluence API
+ * Supports both OAuth (Bearer token) and Basic Auth (API token)
  */
 async function confluenceRequest(
   orgId: string,
@@ -61,12 +62,34 @@ async function confluenceRequest(
     throw new Error('Confluence not connected for this organization');
   }
 
-  const url = `https://api.atlassian.com/ex/confluence/${creds.cloudId}${path}`;
-  
+  // Determine auth method based on token format
+  // API tokens start with "ATATT" and require Basic Auth
+  const isApiToken = creds.accessToken.startsWith('ATATT');
+
+  let url: string;
+  let authHeader: string;
+
+  if (isApiToken) {
+    // Basic Auth with API token - use direct Confluence URL
+    // Requires CONFLUENCE_USER_EMAIL env var
+    const userEmail = process.env.CONFLUENCE_USER_EMAIL;
+    if (!userEmail) {
+      throw new Error('CONFLUENCE_USER_EMAIL environment variable required for API token auth');
+    }
+    const siteUrl = process.env.CONFLUENCE_SITE_URL || `https://${creds.cloudId}.atlassian.net`;
+    url = `${siteUrl}${path}`;
+    authHeader = `Basic ${Buffer.from(`${userEmail}:${creds.accessToken}`).toString('base64')}`;
+    console.log(`[ConfluenceClient] Using Basic Auth with API token for ${url}`);
+  } else {
+    // OAuth Bearer token - use Atlassian Cloud API
+    url = `https://api.atlassian.com/ex/confluence/${creds.cloudId}${path}`;
+    authHeader = `Bearer ${creds.accessToken}`;
+  }
+
   const response = await fetch(url, {
     ...options,
     headers: {
-      'Authorization': `Bearer ${creds.accessToken}`,
+      'Authorization': authHeader,
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       ...options.headers,
@@ -75,6 +98,7 @@ async function confluenceRequest(
 
   if (!response.ok) {
     const error = await response.text();
+    console.error(`[ConfluenceClient] API error: ${response.status} - ${error}`);
     throw new Error(`Confluence API error: ${response.status} - ${error}`);
   }
 
