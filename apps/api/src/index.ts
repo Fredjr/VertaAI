@@ -372,16 +372,17 @@ app.post('/api/test/send-proposal', async (req: Request, res: Response) => {
 
     if (result.ok && result.ts) {
       // Store the message reference for later updates
+      // Use the channel ID returned by Slack (not the input which could be a name like #channel)
       await prisma.diffProposal.update({
         where: { id: proposalId },
         data: {
-          slackChannelId: channel,
+          slackChannelId: result.channel || channel,
           slackMessageTs: result.ts,
         },
       });
     }
 
-    res.json({ success: result.ok, messageTs: result.ts, error: result.error });
+    res.json({ success: result.ok, messageTs: result.ts, channel: result.channel, error: result.error });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

@@ -54,7 +54,7 @@ export async function sendSlackMessage(
   channel: string,
   text: string,
   blocks?: any[]
-): Promise<{ ok: boolean; ts?: string; error?: string }> {
+): Promise<{ ok: boolean; ts?: string; channel?: string; error?: string }> {
   const client = await getSlackClient(orgId);
   if (!client) {
     return { ok: false, error: 'No Slack client available for organization' };
@@ -67,7 +67,8 @@ export async function sendSlackMessage(
       blocks,
     });
 
-    return { ok: result.ok ?? false, ts: result.ts };
+    // Return the actual channel ID from Slack response (not the input which could be a name)
+    return { ok: result.ok ?? false, ts: result.ts, channel: result.channel };
   } catch (error: any) {
     console.error(`[SlackClient] Error sending message:`, error);
     return { ok: false, error: error.message };
