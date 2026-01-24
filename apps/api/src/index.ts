@@ -175,6 +175,22 @@ app.get('/api/organizations', async (_req: Request, res: Response) => {
   }
 });
 
+app.get('/api/audit-logs', async (_req: Request, res: Response) => {
+  try {
+    const logs = await prisma.auditLog.findMany({
+      take: 50,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        document: { select: { title: true } },
+        diffProposal: { select: { id: true, summary: true } },
+      },
+    });
+    res.json({ logs });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch audit logs' });
+  }
+});
+
 app.get('/api/signals', async (_req: Request, res: Response) => {
   try {
     const signals = await prisma.signal.findMany({
