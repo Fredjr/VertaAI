@@ -8,6 +8,7 @@ import type { Router as RouterType } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../lib/db.js';
 import { updateSlackMessage, openSlackModal } from '../services/slack-client.js';
+import { processApproval } from '../pipelines/approval.js';
 
 const router: RouterType = Router();
 
@@ -111,48 +112,31 @@ async function handleBlockActions(payload: any, res: Response) {
 }
 
 /**
- * Handle approve action
+ * Handle approve action - uses the approval pipeline
  */
-async function handleApprove(proposal: any, slackUserId: string, payload: any) {
+async function handleApprove(proposal: any, slackUserId: string, _payload: any) {
   console.log(`[SlackInteractions] Approving proposal ${proposal.id}`);
 
   // Find or create user
   const user = await findOrCreateUser(proposal.orgId, slackUserId);
 
-  // Update proposal status
-  await prisma.diffProposal.update({
-    where: { id: proposal.id },
-    data: {
-      status: 'approved',
-      resolvedAt: new Date(),
-      resolvedByUserId: user?.id,
-    },
-  });
+  // Use the approval pipeline to process the approval
+  // This handles: Confluence update, status update, audit log, Slack message update
+  const result = await processApproval(proposal.id, user.id);
 
-  // Log audit
-  await prisma.auditLog.create({
-    data: {
-      orgId: proposal.orgId,
-      action: 'approved',
-      actorUserId: user?.id,
-      documentId: proposal.documentId,
-      diffProposalId: proposal.id,
-      metadata: { slackUserId },
-    },
-  });
-
-  // Update Slack message
-  if (proposal.slackChannelId && proposal.slackMessageTs) {
-    await updateSlackMessage(
-      proposal.orgId,
-      proposal.slackChannelId,
-      proposal.slackMessageTs,
-      '✅ Patch approved! Applying to documentation...',
-      [{ type: 'section', text: { type: 'mrkdwn', text: '✅ *Approved* by <@' + slackUserId + '>' } }]
-    );
+  if (!result.success) {
+    console.error(`[SlackInteractions] Approval failed: ${result.error}`);
+    // Update Slack message with error
+    if (proposal.slackChannelId && proposal.slackMessageTs) {
+      await updateSlackMessage(
+        proposal.orgId,
+        proposal.slackChannelId,
+        proposal.slackMessageTs,
+        '❌ Approval failed',
+        [{ type: 'section', text: { type: 'mrkdwn', text: `❌ *Approval failed*: ${result.error}` } }]
+      );
+    }
   }
-
-  // TODO: Apply patch to Confluence
 }
 
 /**

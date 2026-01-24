@@ -5,6 +5,7 @@ import { prisma } from './lib/db.js';
 import webhooksRouter from './routes/webhooks.js';
 import slackOAuthRouter from './routes/slack-oauth.js';
 import slackInteractionsRouter from './routes/slack-interactions.js';
+import confluenceOAuthRouter from './routes/confluence-oauth.js';
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -41,6 +42,9 @@ app.use('/webhooks', webhooksRouter);
 
 // Slack OAuth routes (multi-tenant installation)
 app.use('/auth/slack', slackOAuthRouter);
+
+// Confluence OAuth routes (multi-tenant integration)
+app.use('/auth/confluence', confluenceOAuthRouter);
 
 // Slack interaction routes (button clicks, modals)
 app.use('/slack/interactions', slackInteractionsRouter);
