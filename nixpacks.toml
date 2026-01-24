@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = ["nodejs_20", "pnpm"]
+
+[phases.install]
+cmds = ["pnpm install"]
+
+[phases.build]
+cmds = ["cd apps/api && pnpm prisma generate && cd ../.. && pnpm turbo build --filter=@vertaai/api"]
+
+[start]
+cmd = "cd apps/api && node dist/index.js"
+
