@@ -23,7 +23,7 @@
     "diff": "^5.2.0",
     "express": "^4.19.2",
     "ioredis": "^5.4.1",
-    "octokit": "^4.0.2",
+    "octokit": "^4.1.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -36,4 +36,3 @@
     "typescript": "^5.4.0"
   }
 }
-

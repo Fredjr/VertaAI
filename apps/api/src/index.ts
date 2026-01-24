@@ -1,6 +1,7 @@
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import { prisma } from './lib/db.js';
+import webhooksRouter from './routes/webhooks.js';
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -30,11 +31,8 @@ app.get('/health', async (_req: Request, res: Response) => {
   }
 });
 
-// Webhook endpoints (to be implemented)
-app.post('/webhooks/github', (_req: Request, res: Response) => {
-  // TODO: Implement GitHub webhook handler
-  res.json({ received: true });
-});
+// Webhook routes
+app.use('/webhooks', webhooksRouter);
 
 // Slack endpoints (to be implemented)
 app.post('/slack/events', (_req: Request, res: Response) => {
