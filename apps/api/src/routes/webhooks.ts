@@ -1,8 +1,16 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
+import { Octokit } from 'octokit';
 import { prisma } from '../lib/db.js';
 import { verifyWebhookSignature, extractPRInfo, getInstallationOctokit, getPRDiff, getPRFiles } from '../lib/github.js';
 import { runDriftTriage } from '../agents/drift-triage.js';
+
+// Create Octokit with personal access token for repo webhooks (no installation)
+function getTokenOctokit(): Octokit | null {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) return null;
+  return new Octokit({ auth: token });
+}
 
 const router: RouterType = Router();
 
@@ -61,17 +69,22 @@ async function handlePullRequestEvent(payload: any, res: Response) {
   console.log(`[Webhook] Processing merged PR #${prInfo.prNumber}: ${prInfo.prTitle}`);
 
   try {
-    // Find or create organization based on installation
-    let org = await prisma.organization.findFirst({
-      where: { githubInstallationId: BigInt(prInfo.installationId) },
-    });
+    // Find or create organization
+    // For GitHub App webhooks, use installationId; for repo webhooks, use repoOwner
+    let org = prInfo.installationId
+      ? await prisma.organization.findFirst({
+          where: { githubInstallationId: BigInt(prInfo.installationId) },
+        })
+      : await prisma.organization.findFirst({
+          where: { name: prInfo.repoOwner },
+        });
 
     if (!org) {
-      // Create a new organization for this installation
+      // Create a new organization
       org = await prisma.organization.create({
         data: {
           name: prInfo.repoOwner,
-          githubInstallationId: BigInt(prInfo.installationId),
+          ...(prInfo.installationId && { githubInstallationId: BigInt(prInfo.installationId) }),
         },
       });
       console.log(`[Webhook] Created new organization: ${org.name}`);
@@ -94,13 +107,24 @@ async function handlePullRequestEvent(payload: any, res: Response) {
     // Get PR diff and files for analysis
     let diff = '';
     let files: Array<{ filename: string; status: string; additions: number; deletions: number }> = [];
-    
+
     try {
-      const octokit = await getInstallationOctokit(prInfo.installationId);
-      [diff, files] = await Promise.all([
-        getPRDiff(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
-        getPRFiles(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
-      ]);
+      // Use GitHub App auth if installationId exists, otherwise use token auth
+      let octokit: Octokit | null = null;
+      if (prInfo.installationId) {
+        octokit = await getInstallationOctokit(prInfo.installationId);
+      } else {
+        octokit = getTokenOctokit();
+      }
+
+      if (octokit) {
+        [diff, files] = await Promise.all([
+          getPRDiff(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
+          getPRFiles(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
+        ]);
+      } else {
+        console.log('[Webhook] No GitHub auth available, skipping PR diff/files fetch');
+      }
     } catch (error) {
       console.error('[Webhook] Error fetching PR details:', error);
       // Continue without diff - we can still create the signal
