@@ -308,6 +308,60 @@ VertaAI is a knowledge drift detection system.
   }
 });
 
+// Test endpoint to manually trigger drift detection pipeline
+import { runDriftDetectionPipeline } from './pipelines/drift-detection.js';
+
+app.post('/api/test/trigger-drift', async (req: Request, res: Response) => {
+  const { orgId, prNumber, prTitle, prBody, changedFiles, diff } = req.body;
+
+  if (!orgId) {
+    return res.status(400).json({ error: 'Missing orgId' });
+  }
+
+  try {
+    // Create a test signal
+    const signal = await prisma.signal.create({
+      data: {
+        orgId,
+        type: 'github_pr',
+        externalId: `Fredjr/VertaAI#${prNumber || 999}`,
+        repoFullName: 'Fredjr/VertaAI',
+        payload: {
+          prNumber: prNumber || 999,
+          prTitle: prTitle || 'Test PR for drift detection',
+          prBody: prBody || 'Testing drift detection pipeline',
+          changedFiles: changedFiles || [],
+          diff: diff || '',
+        },
+      },
+    });
+
+    // Run the pipeline
+    const result = await runDriftDetectionPipeline({
+      signalId: signal.id,
+      orgId,
+      prNumber: prNumber || 999,
+      prTitle: prTitle || 'Test PR for drift detection',
+      prBody: prBody || 'Testing drift detection pipeline',
+      repoFullName: 'Fredjr/VertaAI',
+      authorLogin: 'test-user',
+      mergedAt: new Date().toISOString(),
+      changedFiles: changedFiles || [],
+      diff: diff || '',
+    });
+
+    res.json({
+      success: true,
+      signalId: signal.id,
+      driftDetected: result.driftDetected,
+      proposalIds: result.proposalIds,
+      errors: result.errors,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
