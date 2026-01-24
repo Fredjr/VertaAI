@@ -78,6 +78,26 @@ app.get('/api/proposals', async (_req: Request, res: Response) => {
   }
 });
 
+// Admin endpoint to update proposal (for fixing channel IDs, etc.)
+app.patch('/api/proposals/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { slackChannelId, status } = req.body;
+
+  try {
+    const updateData: any = {};
+    if (slackChannelId) updateData.slackChannelId = slackChannelId;
+    if (status) updateData.status = status;
+
+    const proposal = await prisma.diffProposal.update({
+      where: { id },
+      data: updateData,
+    });
+    res.json({ success: true, proposal });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/metrics', async (_req: Request, res: Response) => {
   try {
     const today = new Date();
