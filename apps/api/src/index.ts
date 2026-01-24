@@ -1,14 +1,19 @@
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { prisma } from './lib/db.js';
 import webhooksRouter from './routes/webhooks.js';
+import slackOAuthRouter from './routes/slack-oauth.js';
+import slackInteractionsRouter from './routes/slack-interactions.js';
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
+app.use(cookieParser());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // For Slack form-encoded payloads
 
 // Health check endpoint
 app.get('/health', async (_req: Request, res: Response) => {
@@ -34,14 +39,20 @@ app.get('/health', async (_req: Request, res: Response) => {
 // Webhook routes
 app.use('/webhooks', webhooksRouter);
 
-// Slack endpoints (to be implemented)
-app.post('/slack/events', (_req: Request, res: Response) => {
-  // TODO: Implement Slack event handler
-  res.json({ challenge: _req.body?.challenge });
-});
+// Slack OAuth routes (multi-tenant installation)
+app.use('/auth/slack', slackOAuthRouter);
 
-app.post('/slack/interactions', (_req: Request, res: Response) => {
-  // TODO: Implement Slack interaction handler
+// Slack interaction routes (button clicks, modals)
+app.use('/slack/interactions', slackInteractionsRouter);
+
+// Slack events endpoint (for URL verification and events)
+app.post('/slack/events', (req: Request, res: Response) => {
+  // Handle Slack URL verification challenge
+  if (req.body?.type === 'url_verification') {
+    return res.json({ challenge: req.body.challenge });
+  }
+  // TODO: Handle other Slack events (app_mention, message.im)
+  console.log(`[SlackEvents] Received event: ${req.body?.event?.type}`);
   res.json({ ok: true });
 });
 
@@ -147,6 +158,8 @@ app.listen(PORT, () => {
   console.log(`🚀 VertaAI API running on port ${PORT}`);
   console.log(`   Health check: http://localhost:${PORT}/health`);
   console.log(`   Webhook endpoint: http://localhost:${PORT}/webhooks/github`);
+  console.log(`   Slack OAuth: http://localhost:${PORT}/auth/slack/install`);
+  console.log(`   Slack Interactions: http://localhost:${PORT}/slack/interactions`);
   console.log(`   Signals endpoint: http://localhost:${PORT}/api/signals`);
 });
 
