@@ -8,8 +8,9 @@ import type { Router as RouterType } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../lib/db.js';
 import { updateSlackMessage, openSlackModal } from '../services/slack-client.js';
-import { processApproval } from '../pipelines/approval.js';
+import { processApproval, applyDiff } from '../pipelines/approval.js';
 import { processRejection } from '../pipelines/reject.js';
+import { getPage, updatePage, markdownToStorage } from '../services/confluence-client.js';
 
 const router: RouterType = Router();
 
@@ -80,10 +81,10 @@ async function handleBlockActions(payload: any, res: Response) {
     return res.json({ ok: true });
   }
 
-  // Find the proposal and its organization
+  // Find the proposal and its organization + document
   const proposal = await prisma.diffProposal.findUnique({
     where: { id: proposalId },
-    include: { organization: true },
+    include: { organization: true, document: true },
   });
 
   if (!proposal) {
@@ -102,7 +103,15 @@ async function handleBlockActions(payload: any, res: Response) {
       await openRejectModal(orgId, payload.trigger_id, proposalId);
       break;
     case 'edit':
-      await openEditModal(orgId, payload.trigger_id, proposalId, proposal.diffContent || '');
+      await openEditModal(
+        orgId,
+        payload.trigger_id,
+        proposalId,
+        proposal.diffContent || '',
+        proposal.document?.title,
+        proposal.summary || undefined,
+        proposal.confidence ? Math.round(Number(proposal.confidence) * 100) : undefined
+      );
       break;
     case 'snooze':
       await handleSnooze(proposal, userId);
@@ -180,20 +189,70 @@ async function openRejectModal(orgId: string, triggerId: string, proposalId: str
   });
 }
 
-async function openEditModal(orgId: string, triggerId: string, proposalId: string, diff: string) {
+async function openEditModal(
+  orgId: string,
+  triggerId: string,
+  proposalId: string,
+  diff: string,
+  docTitle?: string,
+  summary?: string,
+  confidence?: number
+) {
+  // Build context header
+  const contextText = [
+    docTitle ? `📄 *${docTitle}*` : '',
+    summary ? `\n${summary}` : '',
+    confidence ? `\n_Confidence: ${confidence}%_` : '',
+  ].filter(Boolean).join('');
+
+  const blocks: any[] = [];
+
+  // Add context section if we have any
+  if (contextText) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: contextText },
+    });
+    blocks.push({ type: 'divider' });
+  }
+
+  // Add the diff input
+  blocks.push({
+    type: 'input',
+    block_id: 'diff',
+    element: {
+      type: 'plain_text_input',
+      action_id: 'diff_input',
+      multiline: true,
+      initial_value: diff,
+    },
+    label: { type: 'plain_text', text: 'Edit the diff (unified format)' },
+  });
+
+  // Add checkbox to apply immediately
+  blocks.push({
+    type: 'input',
+    block_id: 'apply_option',
+    optional: true,
+    element: {
+      type: 'checkboxes',
+      action_id: 'apply_checkbox',
+      options: [
+        {
+          text: { type: 'plain_text', text: 'Apply to Confluence immediately' },
+          value: 'apply_now',
+        },
+      ],
+    },
+    label: { type: 'plain_text', text: 'Options' },
+  });
+
   await openSlackModal(orgId, triggerId, {
     type: 'modal',
     callback_id: `edit:${proposalId}`,
     title: { type: 'plain_text', text: 'Edit Patch' },
     submit: { type: 'plain_text', text: 'Save' },
-    blocks: [
-      {
-        type: 'input',
-        block_id: 'diff',
-        element: { type: 'plain_text_input', action_id: 'diff_input', multiline: true, initial_value: diff },
-        label: { type: 'plain_text', text: 'Edit the diff' },
-      },
-    ],
+    blocks,
   });
 }
 
@@ -241,40 +300,125 @@ async function handleViewSubmission(payload: any, res: Response) {
       // Get the edited diff from the modal input
       const editedDiff = payload.view?.state?.values?.diff?.diff_input?.value;
 
-      if (editedDiff) {
-        // Update the proposal with the edited diff
-        await prisma.diffProposal.update({
-          where: { id: proposalId },
-          data: {
-            editedDiffContent: editedDiff,
-            status: 'edited',
-            resolvedAt: new Date(),
-            resolvedByUserId: user.id,
-          },
-        });
+      // Check if user wants to apply immediately
+      const applyOptions = payload.view?.state?.values?.apply_option?.apply_checkbox?.selected_options || [];
+      const shouldApplyNow = applyOptions.some((opt: any) => opt.value === 'apply_now');
 
-        // Create audit log
-        await prisma.auditLog.create({
-          data: {
-            orgId: proposal.orgId,
-            action: 'edited',
-            actorUserId: user.id,
-            documentId: proposal.documentId,
-            diffProposalId: proposal.id,
-            metadata: { slackUserId },
-          },
-        });
+      if (!editedDiff) {
+        break;
+      }
 
-        // Update Slack message
-        if (proposal.slackChannelId && proposal.slackMessageTs) {
-          await updateSlackMessage(
-            proposal.orgId,
-            proposal.slackChannelId,
-            proposal.slackMessageTs,
-            '✏️ Patch edited',
-            [{ type: 'section', text: { type: 'mrkdwn', text: '✏️ *Edited* by <@' + slackUserId + '>' } }]
-          );
+      console.log(`[SlackInteractions] Edit submission - applyNow: ${shouldApplyNow}`);
+
+      // Get full proposal with document and organization for Confluence update
+      const fullProposal = await prisma.diffProposal.findUnique({
+        where: { id: proposalId },
+        include: { document: true, organization: true },
+      });
+
+      if (!fullProposal) {
+        return res.json({
+          response_action: 'errors',
+          errors: { diff: 'Proposal not found' },
+        });
+      }
+
+      let confluenceUpdated = false;
+      const now = new Date();
+
+      // If apply immediately is checked, update Confluence
+      if (shouldApplyNow && fullProposal.organization.confluenceAccessToken) {
+        const pageId = fullProposal.document?.confluencePageId;
+
+        if (pageId) {
+          try {
+            // Fetch current page from Confluence
+            const page = await getPage(fullProposal.orgId, pageId);
+
+            if (page) {
+              // Apply the edited diff
+              const newContent = applyDiff(
+                fullProposal.document?.lastContentSnapshot || page.content,
+                editedDiff
+              );
+
+              // Convert and update
+              const storageContent = markdownToStorage(newContent);
+              const updateResult = await updatePage(
+                fullProposal.orgId,
+                pageId,
+                page.title,
+                storageContent,
+                page.version
+              );
+
+              if (updateResult.success) {
+                confluenceUpdated = true;
+                console.log(`[SlackInteractions] Applied edited diff to Confluence page ${pageId}`);
+              } else {
+                console.error(`[SlackInteractions] Confluence update failed: ${updateResult.error}`);
+              }
+            }
+          } catch (error: any) {
+            console.error(`[SlackInteractions] Error applying edit to Confluence:`, error);
+          }
         }
+      }
+
+      // Update the proposal with the edited diff
+      await prisma.diffProposal.update({
+        where: { id: proposalId },
+        data: {
+          editedDiffContent: editedDiff,
+          status: confluenceUpdated ? 'approved' : 'edited',
+          resolvedAt: now,
+          resolvedByUserId: user.id,
+        },
+      });
+
+      // Update document freshness if applied
+      if (confluenceUpdated && fullProposal.documentId) {
+        await prisma.trackedDocument.update({
+          where: { id: fullProposal.documentId },
+          data: {
+            freshnessScore: 1.0,
+            lastSyncedAt: now,
+          },
+        });
+      }
+
+      // Create audit log
+      await prisma.auditLog.create({
+        data: {
+          orgId: fullProposal.orgId,
+          action: confluenceUpdated ? 'edited_and_applied' : 'edited',
+          actorUserId: user.id,
+          documentId: fullProposal.documentId,
+          diffProposalId: fullProposal.id,
+          metadata: {
+            slackUserId,
+            confluenceUpdated,
+            editedAt: now.toISOString(),
+          },
+        },
+      });
+
+      // Update Slack message
+      if (fullProposal.slackChannelId && fullProposal.slackMessageTs) {
+        const statusText = confluenceUpdated
+          ? '✏️ *Edited & Applied* - Patch has been applied to Confluence'
+          : '✏️ *Edited* - Diff saved (not applied to Confluence)';
+
+        await updateSlackMessage(
+          fullProposal.orgId,
+          fullProposal.slackChannelId,
+          fullProposal.slackMessageTs,
+          confluenceUpdated ? '✏️ Edited & Applied' : '✏️ Patch edited',
+          [
+            { type: 'section', text: { type: 'mrkdwn', text: statusText } },
+            { type: 'context', elements: [{ type: 'mrkdwn', text: `By <@${slackUserId}> at ${now.toISOString()}` }] },
+          ]
+        );
       }
       break;
     }
