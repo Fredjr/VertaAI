@@ -125,6 +125,7 @@ process.on('SIGTERM', async () => {
 app.listen(PORT, () => {
   console.log(`🚀 VertaAI API running on port ${PORT}`);
   console.log(`   Health check: http://localhost:${PORT}/health`);
+  console.log(`   Webhook endpoint: http://localhost:${PORT}/webhooks/github`);
 });
 
 export default app;
