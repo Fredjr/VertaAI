@@ -146,6 +146,123 @@ app.get('/api/signals', async (_req: Request, res: Response) => {
   }
 });
 
+// Test Slack messaging endpoint
+import { sendSlackMessage } from './services/slack-client.js';
+
+app.post('/api/test/slack', async (req: Request, res: Response) => {
+  const { orgId, channel, message } = req.body;
+
+  if (!orgId || !channel || !message) {
+    return res.status(400).json({ error: 'Missing orgId, channel, or message' });
+  }
+
+  try {
+    const result = await sendSlackMessage(orgId, channel, message, [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `🧪 *Test Message from VertaAI*\n\n${message}`
+        }
+      },
+      {
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: `Sent at ${new Date().toISOString()}`
+          }
+        ]
+      }
+    ]);
+
+    if (result.ok) {
+      res.json({ success: true, messageTs: result.ts });
+    } else {
+      res.status(500).json({ success: false, error: result.error });
+    }
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Create test data endpoint (tracked document + mapping)
+app.post('/api/test/setup', async (req: Request, res: Response) => {
+  const { orgId } = req.body;
+
+  if (!orgId) {
+    return res.status(400).json({ error: 'Missing orgId' });
+  }
+
+  try {
+    // Create a test tracked document
+    const doc = await prisma.trackedDocument.upsert({
+      where: {
+        orgId_confluencePageId: {
+          orgId,
+          confluencePageId: 'test-doc-123'
+        }
+      },
+      update: {},
+      create: {
+        orgId,
+        confluencePageId: 'test-doc-123',
+        title: 'VertaAI Service Runbook',
+        lastContentSnapshot: `# VertaAI Service Runbook
+
+## Overview
+VertaAI is a knowledge drift detection system.
+
+## Deployment
+- Platform: Railway (API) + Vercel (Frontend)
+- Database: PostgreSQL on Railway
+
+## Configuration
+- Environment variables are stored in Railway dashboard
+- Slack integration requires OAuth setup
+
+## Troubleshooting
+### API not responding
+1. Check Railway logs
+2. Verify DATABASE_URL is set
+3. Check health endpoint: /health
+
+### Slack messages not sending
+1. Verify SLACK_BOT_TOKEN is set
+2. Check bot has correct permissions
+`,
+      },
+    });
+
+    // Create a doc mapping for the VertaAI repo
+    const mapping = await prisma.docMapping.upsert({
+      where: {
+        orgId_repoFullName_documentId: {
+          orgId,
+          repoFullName: 'Fredjr/VertaAI',
+          documentId: doc.id
+        }
+      },
+      update: {},
+      create: {
+        orgId,
+        repoFullName: 'Fredjr/VertaAI',
+        pathPatterns: ['apps/*', 'packages/*', 'src/*'],
+        serviceName: 'vertaai',
+        documentId: doc.id,
+      },
+    });
+
+    res.json({
+      success: true,
+      document: { id: doc.id, title: doc.title },
+      mapping: { id: mapping.id, repo: mapping.repoFullName, service: mapping.serviceName }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
