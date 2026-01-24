@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import { prisma } from '../lib/db.js';
 import { updateSlackMessage, openSlackModal } from '../services/slack-client.js';
 import { processApproval } from '../pipelines/approval.js';
+import { processRejection } from '../pipelines/reject.js';
 
 const router: RouterType = Router();
 
@@ -198,8 +199,87 @@ async function openEditModal(orgId: string, triggerId: string, proposalId: strin
 
 async function handleViewSubmission(payload: any, res: Response) {
   const [action, proposalId] = (payload.view?.callback_id || '').split(':');
-  // Handle modal submissions - to be expanded
+  const slackUserId = payload.user?.id;
+
   console.log(`[SlackInteractions] View submission: ${action} for ${proposalId}`);
+
+  if (!proposalId) {
+    return res.json({ response_action: 'clear' });
+  }
+
+  // Get the proposal to find the org
+  const proposal = await prisma.diffProposal.findUnique({
+    where: { id: proposalId },
+  });
+
+  if (!proposal) {
+    console.error(`[SlackInteractions] Proposal not found: ${proposalId}`);
+    return res.json({ response_action: 'clear' });
+  }
+
+  const user = await findOrCreateUser(proposal.orgId, slackUserId);
+
+  switch (action) {
+    case 'reject': {
+      // Get the rejection reason from the modal input
+      const rejectionReason = payload.view?.state?.values?.reason?.reason_input?.value || 'No reason provided';
+
+      const result = await processRejection(proposal.id, user.id, rejectionReason);
+
+      if (!result.success) {
+        console.error(`[SlackInteractions] Rejection failed: ${result.error}`);
+        // Show error in Slack
+        return res.json({
+          response_action: 'errors',
+          errors: { reason: `Rejection failed: ${result.error}` },
+        });
+      }
+      break;
+    }
+
+    case 'edit': {
+      // Get the edited diff from the modal input
+      const editedDiff = payload.view?.state?.values?.diff?.diff_input?.value;
+
+      if (editedDiff) {
+        // Update the proposal with the edited diff
+        await prisma.diffProposal.update({
+          where: { id: proposalId },
+          data: {
+            editedDiffContent: editedDiff,
+            status: 'edited',
+            resolvedAt: new Date(),
+            resolvedByUserId: user.id,
+          },
+        });
+
+        // Create audit log
+        await prisma.auditLog.create({
+          data: {
+            orgId: proposal.orgId,
+            action: 'edited',
+            actorUserId: user.id,
+            documentId: proposal.documentId,
+            diffProposalId: proposal.id,
+            metadata: { slackUserId },
+          },
+        });
+
+        // Update Slack message
+        if (proposal.slackChannelId && proposal.slackMessageTs) {
+          await updateSlackMessage(
+            proposal.orgId,
+            proposal.slackChannelId,
+            proposal.slackMessageTs,
+            '✏️ Patch edited',
+            [{ type: 'section', text: { type: 'mrkdwn', text: '✏️ *Edited* by <@' + slackUserId + '>' } }]
+          );
+        }
+      }
+      break;
+    }
+  }
+
   return res.json({ response_action: 'clear' });
 }
 
