@@ -147,6 +147,7 @@ app.listen(PORT, () => {
   console.log(`🚀 VertaAI API running on port ${PORT}`);
   console.log(`   Health check: http://localhost:${PORT}/health`);
   console.log(`   Webhook endpoint: http://localhost:${PORT}/webhooks/github`);
+  console.log(`   Signals endpoint: http://localhost:${PORT}/api/signals`);
 });
 
 export default app;
