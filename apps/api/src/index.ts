@@ -134,6 +134,7 @@ app.get('/api/organizations', async (_req: Request, res: Response) => {
         name: true,
         slackTeamName: true,
         confluenceCloudId: true,
+        confluenceAccessToken: true,
         createdAt: true,
         _count: {
           select: {
@@ -144,7 +145,12 @@ app.get('/api/organizations', async (_req: Request, res: Response) => {
         },
       },
     });
-    res.json({ organizations: orgs });
+    // Mask the token but indicate if it exists
+    const maskedOrgs = orgs.map(org => ({
+      ...org,
+      confluenceAccessToken: org.confluenceAccessToken ? 'SET' : null,
+    }));
+    res.json({ organizations: maskedOrgs });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch organizations' });
   }
