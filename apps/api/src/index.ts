@@ -311,6 +311,82 @@ VertaAI is a knowledge drift detection system.
 // Test endpoint to manually trigger drift detection pipeline
 import { runDriftDetectionPipeline } from './pipelines/drift-detection.js';
 
+// Send proposal notification to Slack
+app.post('/api/test/send-proposal', async (req: Request, res: Response) => {
+  const { proposalId, channel } = req.body;
+
+  if (!proposalId || !channel) {
+    return res.status(400).json({ error: 'Missing proposalId or channel' });
+  }
+
+  try {
+    const proposal = await prisma.diffProposal.findUnique({
+      where: { id: proposalId },
+      include: { document: true, signal: true },
+    });
+
+    if (!proposal) {
+      return res.status(404).json({ error: 'Proposal not found' });
+    }
+
+    const truncatedDiff = (proposal.diffContent || '').split('\n').slice(0, 15).join('\n');
+    const confidence = Math.round(Number(proposal.confidence || 0) * 100);
+
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: '📝 Documentation update ready for review', emoji: true },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Document:* ${proposal.document?.title || 'Unknown'}\n*Triggered by:* ${proposal.signal?.externalId || 'Unknown PR'}\n*Confidence:* ${confidence}%`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Summary:* ${proposal.summary || 'No summary available'}`,
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Diff preview:*\n\`\`\`${truncatedDiff}\`\`\``,
+        },
+      },
+      {
+        type: 'actions',
+        elements: [
+          { type: 'button', text: { type: 'plain_text', text: '✅ Approve', emoji: true }, style: 'primary', value: `approve:${proposalId}`, action_id: 'approve_action' },
+          { type: 'button', text: { type: 'plain_text', text: '✏️ Edit', emoji: true }, value: `edit:${proposalId}`, action_id: 'edit_action' },
+          { type: 'button', text: { type: 'plain_text', text: '❌ Reject', emoji: true }, style: 'danger', value: `reject:${proposalId}`, action_id: 'reject_action' },
+        ],
+      },
+    ];
+
+    const result = await sendSlackMessage(proposal.orgId, channel, `Documentation update for ${proposal.document?.title}`, blocks);
+
+    if (result.ok && result.ts) {
+      // Store the message reference for later updates
+      await prisma.diffProposal.update({
+        where: { id: proposalId },
+        data: {
+          slackChannelId: channel,
+          slackMessageTs: result.ts,
+        },
+      });
+    }
+
+    res.json({ success: result.ok, messageTs: result.ts, error: result.error });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.post('/api/test/trigger-drift', async (req: Request, res: Response) => {
   const { orgId, prNumber, prTitle, prBody, changedFiles, diff } = req.body;
 
