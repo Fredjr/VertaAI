@@ -192,12 +192,52 @@ app.post('/api/test/slack', async (req: Request, res: Response) => {
 });
 
 // Create test data endpoint (tracked document + mapping)
+// List tracked documents for an organization
+app.get('/api/documents', async (req: Request, res: Response) => {
+  const { orgId } = req.query;
+  try {
+    const documents = await prisma.trackedDocument.findMany({
+      where: orgId ? { orgId: String(orgId) } : undefined,
+      include: {
+        docMappings: { select: { repoFullName: true, pathPatterns: true, serviceName: true } },
+        _count: { select: { diffProposals: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ documents });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch documents' });
+  }
+});
+
+// Update a tracked document (for setting real Confluence page ID)
+app.patch('/api/documents/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { confluencePageId, title, lastContentSnapshot } = req.body;
+  try {
+    const updated = await prisma.trackedDocument.update({
+      where: { id },
+      data: {
+        ...(confluencePageId && { confluencePageId }),
+        ...(title && { title }),
+        ...(lastContentSnapshot && { lastContentSnapshot }),
+      },
+    });
+    res.json({ document: updated });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/test/setup', async (req: Request, res: Response) => {
-  const { orgId } = req.body;
+  const { orgId, confluencePageId, title } = req.body;
 
   if (!orgId) {
     return res.status(400).json({ error: 'Missing orgId' });
   }
+
+  const pageId = confluencePageId || 'test-doc-123';
+  const docTitle = title || 'VertaAI Service Runbook';
 
   try {
     // Create a test tracked document
@@ -205,15 +245,15 @@ app.post('/api/test/setup', async (req: Request, res: Response) => {
       where: {
         orgId_confluencePageId: {
           orgId,
-          confluencePageId: 'test-doc-123'
+          confluencePageId: pageId
         }
       },
-      update: {},
+      update: { title: docTitle },
       create: {
         orgId,
-        confluencePageId: 'test-doc-123',
-        title: 'VertaAI Service Runbook',
-        lastContentSnapshot: `# VertaAI Service Runbook
+        confluencePageId: pageId,
+        title: docTitle,
+        lastContentSnapshot: `# ${docTitle}
 
 ## Overview
 VertaAI is a knowledge drift detection system.
@@ -260,7 +300,7 @@ VertaAI is a knowledge drift detection system.
 
     res.json({
       success: true,
-      document: { id: doc.id, title: doc.title },
+      document: { id: doc.id, title: doc.title, confluencePageId: doc.confluencePageId },
       mapping: { id: mapping.id, repo: mapping.repoFullName, service: mapping.serviceName }
     });
   } catch (error: any) {
