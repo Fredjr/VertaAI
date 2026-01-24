@@ -8,7 +8,10 @@ import { runDriftDetectionPipeline } from '../pipelines/drift-detection.js';
 // Create Octokit with personal access token for repo webhooks (no installation)
 function getTokenOctokit(): Octokit | null {
   const token = process.env.GITHUB_TOKEN;
-  if (!token) return null;
+  if (!token) {
+    console.warn('[Webhook] GITHUB_TOKEN not set - PR diff fetching will be limited');
+    return null;
+  }
   return new Octokit({ auth: token });
 }
 
@@ -118,16 +121,18 @@ async function handlePullRequestEvent(payload: any, res: Response) {
       }
 
       if (octokit) {
+        console.log(`[Webhook] Fetching PR diff and files using ${prInfo.installationId ? 'GitHub App' : 'token'} auth`);
         [diff, files] = await Promise.all([
           getPRDiff(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
           getPRFiles(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
         ]);
+        console.log(`[Webhook] Fetched ${files.length} files, diff length: ${diff.length}`);
       } else {
-        console.log('[Webhook] No GitHub auth available, skipping PR diff/files fetch');
+        console.warn('[Webhook] No GitHub auth available - set GITHUB_TOKEN env var to enable PR diff fetching');
       }
-    } catch (error) {
-      console.error('[Webhook] Error fetching PR details:', error);
-      // Continue without diff - we can still create the signal
+    } catch (error: any) {
+      console.error('[Webhook] Error fetching PR details:', error.message);
+      // Continue without diff - we can still use PR title/body for drift detection
     }
 
     // Create signal record
