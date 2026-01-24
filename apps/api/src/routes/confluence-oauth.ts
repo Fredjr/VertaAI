@@ -72,41 +72,59 @@ router.get('/install', (req: Request, res: Response) => {
  * Handles OAuth callback from Atlassian
  */
 router.get('/callback', async (req: Request, res: Response) => {
-  const { code, state, error } = req.query;
+  const { code, state, error, error_description } = req.query;
+
+  console.log(`[ConfluenceOAuth] Callback received - code: ${code ? 'present' : 'missing'}, state: ${state}, error: ${error}`);
 
   if (error) {
-    console.error(`[ConfluenceOAuth] Authorization error: ${error}`);
-    return res.redirect(`${APP_URL}/auth/error?message=${encodeURIComponent(String(error))}`);
+    console.error(`[ConfluenceOAuth] Authorization error: ${error} - ${error_description}`);
+    return res.status(400).json({
+      success: false,
+      error: String(error),
+      description: String(error_description || '')
+    });
   }
 
   if (!code || !state) {
-    return res.redirect(`${APP_URL}/auth/error?message=Missing authorization code or state`);
+    return res.status(400).json({ success: false, error: 'Missing authorization code or state' });
   }
 
   // Extract orgId from state
   const [orgId] = String(state).split(':');
   if (!orgId) {
-    return res.redirect(`${APP_URL}/auth/error?message=Invalid state parameter`);
+    return res.status(400).json({ success: false, error: 'Invalid state parameter' });
   }
 
   try {
     // Exchange code for access token
+    console.log(`[ConfluenceOAuth] Exchanging code for token...`);
     const tokenResponse = await exchangeCodeForToken(String(code));
 
+    if (tokenResponse.error) {
+      console.error(`[ConfluenceOAuth] Token exchange error:`, tokenResponse);
+      throw new Error(`Token exchange failed: ${tokenResponse.error} - ${tokenResponse.error_description || ''}`);
+    }
+
     if (!tokenResponse.access_token) {
+      console.error(`[ConfluenceOAuth] No access token in response:`, tokenResponse);
       throw new Error('No access token received');
     }
 
+    console.log(`[ConfluenceOAuth] Token received, fetching accessible resources...`);
+
     // Get accessible resources (cloud IDs)
     const resources = await getAccessibleResources(tokenResponse.access_token);
-    
+
     if (!resources || resources.length === 0) {
+      console.error(`[ConfluenceOAuth] No accessible resources:`, resources);
       throw new Error('No Confluence sites accessible');
     }
 
     // Use the first accessible Confluence site
     const cloudId = resources[0].id;
     const siteName = resources[0].name;
+
+    console.log(`[ConfluenceOAuth] Found Confluence site: ${siteName} (${cloudId})`);
 
     // Update organization with Confluence credentials
     await prisma.organization.update({
@@ -122,11 +140,23 @@ router.get('/callback', async (req: Request, res: Response) => {
     });
 
     console.log(`[ConfluenceOAuth] Successfully connected Confluence for org ${orgId}: ${siteName}`);
-    return res.redirect(`${APP_URL}/settings?confluence=connected`);
+
+    // Return success page instead of redirect
+    return res.send(`
+      <html>
+        <head><title>Confluence Connected</title></head>
+        <body style="font-family: sans-serif; padding: 40px; text-align: center;">
+          <h1>✅ Confluence Connected!</h1>
+          <p>Site: <strong>${siteName}</strong></p>
+          <p>Cloud ID: <code>${cloudId}</code></p>
+          <p>You can close this window and return to Slack to test the approval flow.</p>
+        </body>
+      </html>
+    `);
 
   } catch (err: any) {
     console.error(`[ConfluenceOAuth] Callback error:`, err);
-    return res.redirect(`${APP_URL}/auth/error?message=${encodeURIComponent(err.message)}`);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
