@@ -14,6 +14,12 @@ import { runDocResolver } from '../../agents/doc-resolver.js';
 // import { runSlackComposer } from '../../agents/slack-composer.js';
 import { prisma } from '../../lib/db.js';
 
+// Phase 3 imports
+import { computeDriftFingerprint, extractKeyTokens } from '../dedup/fingerprint.js';
+import { checkDuplicateDrift } from '../validators/dedup.js';
+import { determineNotificationRoute } from '../notifications/policy.js';
+import { runAllValidators } from '../validators/index.js';
+
 // Type alias for transition handlers
 type TransitionHandler = (drift: any) => Promise<TransitionResult>;
 
@@ -134,26 +140,70 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
     return { state: DriftState.COMPLETED, enqueueNext: false };
   }
 
-  // Update drift with triage results
+  const triageData = result.data;
+
+  // Phase 3: Extract key tokens for fingerprinting
+  const keyTokens = triageData.key_tokens || extractKeyTokens(triageData.evidence_summary || '');
+
+  // Phase 3: Compute fingerprint for deduplication
+  const primaryDriftType = triageData.drift_types?.[0] || 'instruction';
+  const fingerprint = computeDriftFingerprint({
+    workspaceId: drift.workspaceId,
+    service: drift.service,
+    driftType: primaryDriftType,
+    driftDomains: triageData.impacted_domains || [],
+    docId: 'pending', // Will be updated after doc resolution
+    keyTokens,
+  });
+
+  // Update drift with full triage results (Phase 3 fields)
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
     data: {
-      driftType: 'instruction', // Default, Phase 3 will add full classification
-      driftDomains: result.data.impacted_domains || [],
-      evidenceSummary: result.data.evidence_summary || '',
-      confidence: result.data.confidence || 0,
+      driftType: primaryDriftType,
+      driftDomains: triageData.impacted_domains || [],
+      evidenceSummary: triageData.evidence_summary || '',
+      confidence: triageData.confidence || 0,
+      driftScore: triageData.drift_score || (triageData.confidence * (triageData.impact_score || 1)),
+      riskLevel: triageData.risk_level || null,
+      recommendedAction: triageData.recommended_action || null,
+      fingerprint,
     },
   });
+
+  console.log(`[Transitions] Drift classified: type=${primaryDriftType}, confidence=${triageData.confidence}, risk=${triageData.risk_level}`);
 
   return { state: DriftState.DRIFT_CLASSIFIED, enqueueNext: true };
 }
 
 /**
  * DRIFT_CLASSIFIED -> DOCS_RESOLVED
- * Resolve which docs to update
+ * Resolve which docs to update (with Phase 3 deduplication)
  */
 async function handleDriftClassified(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
+
+  // Phase 3: Check for duplicate drift before proceeding
+  if (drift.driftType && drift.evidenceSummary) {
+    const dedupResult = await checkDuplicateDrift({
+      workspaceId: drift.workspaceId,
+      service: drift.service,
+      driftType: drift.driftType,
+      driftDomains: drift.driftDomains || [],
+      docId: 'pending', // Will be updated after doc resolution
+      evidence: drift.evidenceSummary,
+      newConfidence: drift.confidence || 0.5,
+    });
+
+    if (dedupResult.isDuplicate && !dedupResult.shouldNotify) {
+      console.log(`[Transitions] Duplicate drift detected - existing ID: ${dedupResult.existingDriftId}, reason: ${dedupResult.reason}`);
+      return { state: DriftState.COMPLETED, enqueueNext: false };
+    }
+
+    if (dedupResult.isDuplicate) {
+      console.log(`[Transitions] Duplicate drift but re-notifying: ${dedupResult.reason}`);
+    }
+  }
 
   const resolverInput = {
     repoFullName: signal?.repo || '',
@@ -313,7 +363,7 @@ async function handlePatchValidated(drift: any): Promise<TransitionResult> {
 
 /**
  * OWNER_RESOLVED -> SLACK_SENT
- * Send Slack notification
+ * Send Slack notification (with Phase 3 notification routing)
  */
 async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
   // Get the patch proposal
@@ -352,13 +402,31 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
 
   // Get owner info
   const ownerResolution = drift.ownerResolution || {};
-  const signal = drift.signalEvent;
-  const extracted = signal?.extracted || {};
 
-  // TODO Phase 3: Actually send to Slack using slack-client
+  // Phase 3: Use notification routing policy
+  const ownerSlackId = ownerResolution.ownerType === 'slack_user' ? ownerResolution.ownerRef : null;
+  const notificationRoute = await determineNotificationRoute({
+    workspaceId: drift.workspaceId,
+    driftId: drift.id,
+    confidence: drift.confidence || 0.5,
+    riskLevel: drift.riskLevel as 'low' | 'medium' | 'high' | undefined,
+    ownerSlackId,
+    ownerChannel: ownerResolution.ownerType === 'slack_channel' ? ownerResolution.ownerRef : null,
+  });
+
+  console.log(`[Transitions] Notification decision: ${notificationRoute.channel}, priority=${notificationRoute.priority}, reason=${notificationRoute.reason}`);
+
+  if (!notificationRoute.shouldNotify) {
+    // Low confidence - skip Slack, complete without notification
+    console.log(`[Transitions] Skipping Slack notification: ${notificationRoute.reason}`);
+    return { state: DriftState.COMPLETED, enqueueNext: false };
+  }
+
+  // TODO: Actually send to Slack using slack-client
   // For now, just log and transition
   console.log(`[Transitions] Would send Slack message for drift ${drift.id}`);
-  console.log(`[Transitions] Owner: ${ownerResolution.ownerRef || 'default'}`);
+  console.log(`[Transitions] Target: ${notificationRoute.target || ownerResolution.ownerRef || 'default'}`);
+  console.log(`[Transitions] Channel: ${notificationRoute.channel}`);
   console.log(`[Transitions] Doc: ${patchProposal.docTitle}`);
   console.log(`[Transitions] Patch summary: ${patchProposal.summary || 'N/A'}`);
 
