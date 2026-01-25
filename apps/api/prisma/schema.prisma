@@ -122,9 +122,10 @@ model DriftCandidate {
   // Deduplication (fingerprint = hash of workspace + service + drift_type + domains + doc_id + key_tokens)
   fingerprint String?
 
-  // Correlated signals (from SignalJoiner)
-  correlatedSignals Json  @default("[]") @map("correlated_signals")
-  confidenceBoost   Float @default(0) @map("confidence_boost")
+  // Correlated signals (from SignalJoiner - Phase 4)
+  correlatedSignals  Json    @default("[]") @map("correlated_signals")
+  correlationBoost   Float   @default(0) @map("correlation_boost")
+  correlationReason  String? @map("correlation_reason")
 
   // Error tracking
   lastErrorCode    String? @map("last_error_code")

@@ -3,9 +3,11 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { prisma } from './lib/db.js';
 import webhooksRouter from './routes/webhooks.js';
+import pagerdutyRouter from './routes/pagerduty.js';
 import slackOAuthRouter from './routes/slack-oauth.js';
 import slackInteractionsRouter from './routes/slack-interactions.js';
 import confluenceOAuthRouter from './routes/confluence-oauth.js';
+import notionOAuthRouter from './routes/notion-oauth.js';
 import jobsRouter from './routes/jobs.js';
 
 const app: Application = express();
@@ -45,12 +47,16 @@ app.get('/health', async (_req: Request, res: Response) => {
 
 // Webhook routes
 app.use('/webhooks', webhooksRouter);
+app.use('/webhooks/pagerduty', pagerdutyRouter);
 
 // Slack OAuth routes (multi-tenant installation)
 app.use('/auth/slack', slackOAuthRouter);
 
 // Confluence OAuth routes (multi-tenant integration)
 app.use('/auth/confluence', confluenceOAuthRouter);
+
+// Notion OAuth routes (multi-tenant integration - Phase 4)
+app.use('/auth/notion', notionOAuthRouter);
 
 // Slack interaction routes (button clicks, modals)
 app.use('/slack/interactions', slackInteractionsRouter);

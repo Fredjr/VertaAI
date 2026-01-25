@@ -131,8 +131,8 @@ export async function mergeIntoExistingDrift(
   }
 
   // Boost confidence based on correlated signals (max +0.15)
-  const confidenceBoost = Math.min(correlatedSignals.length * 0.05, 0.15);
-  const newTotalConfidence = Math.min((existing.confidence || 0) + confidenceBoost, 1.0);
+  const correlationBoost = Math.min(correlatedSignals.length * 0.05, 0.15);
+  const newTotalConfidence = Math.min((existing.confidence || 0) + correlationBoost, 1.0);
 
   await prisma.driftCandidate.update({
     where: {
@@ -140,7 +140,7 @@ export async function mergeIntoExistingDrift(
     },
     data: {
       correlatedSignals,
-      confidenceBoost,
+      correlationBoost,
       confidence: newTotalConfidence,
       evidenceSummary: existing.evidenceSummary
         ? `${existing.evidenceSummary}\n\n---\n\n${newEvidence}`

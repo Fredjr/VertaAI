@@ -20,6 +20,10 @@ import { checkDuplicateDrift } from '../validators/dedup.js';
 import { determineNotificationRoute } from '../notifications/policy.js';
 import { runAllValidators } from '../validators/index.js';
 
+// Phase 4 imports
+import { joinSignals, summarizeCorrelatedSignals } from '../correlation/signalJoiner.js';
+import { resolveOwner, formatOwnerResolution } from '../ownership/resolver.js';
+
 // Type alias for transition handlers
 type TransitionHandler = (drift: any) => Promise<TransitionResult>;
 
@@ -103,11 +107,39 @@ async function handleIngested(drift: any): Promise<TransitionResult> {
 
 /**
  * ELIGIBILITY_CHECKED -> SIGNALS_CORRELATED
- * (Placeholder - full implementation in Phase 4)
+ * Phase 4: Correlate signals from multiple sources (GitHub + PagerDuty)
  */
 async function handleEligibilityChecked(drift: any): Promise<TransitionResult> {
-  // Phase 2: Skip correlation, move to classification
-  // Phase 4 will add signal correlation with PagerDuty etc.
+  const signal = drift.signalEvent;
+  const service = drift.service || signal?.service;
+
+  // Phase 4: Use SignalJoiner to find correlated signals
+  const joinResult = await joinSignals(
+    drift.workspaceId,
+    drift.signalEventId,
+    service
+  );
+
+  // Store correlation results in drift metadata
+  if (joinResult.correlatedSignals.length > 0 || joinResult.confidenceBoost > 0) {
+    const correlationSummary = summarizeCorrelatedSignals(joinResult.correlatedSignals);
+
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: {
+        // Store correlation metadata in extracted field
+        correlatedSignals: joinResult.correlatedSignals.map(s => s.id),
+        correlationBoost: joinResult.confidenceBoost,
+        correlationReason: joinResult.joinReason,
+      },
+    });
+
+    console.log(
+      `[Transitions] Signal correlation: ${correlationSummary}, ` +
+      `boost=${joinResult.confidenceBoost}, reason=${joinResult.joinReason}`
+    );
+  }
+
   return { state: DriftState.SIGNALS_CORRELATED, enqueueNext: true };
 }
 
@@ -145,6 +177,11 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
   // Phase 3: Extract drift type and metadata
   const primaryDriftType = triageData.drift_types?.[0] || 'instruction';
 
+  // Phase 4: Apply correlation boost to confidence
+  const baseConfidence = triageData.confidence || 0;
+  const correlationBoost = drift.correlationBoost || 0;
+  const boostedConfidence = Math.min(1, baseConfidence + correlationBoost);
+
   // Update drift with triage results (fingerprint stored in DRIFT_CLASSIFIED after dedup check)
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
@@ -152,15 +189,15 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
       driftType: primaryDriftType,
       driftDomains: triageData.impacted_domains || [],
       evidenceSummary: triageData.evidence_summary || '',
-      confidence: triageData.confidence || 0,
-      driftScore: triageData.drift_score || (triageData.confidence * (triageData.impact_score || 1)),
+      confidence: boostedConfidence,
+      driftScore: triageData.drift_score || (boostedConfidence * (triageData.impact_score || 1)),
       riskLevel: triageData.risk_level || null,
       recommendedAction: triageData.recommended_action || null,
       // Note: fingerprint stored after dedup check in DRIFT_CLASSIFIED state
     },
   });
 
-  console.log(`[Transitions] Drift classified: type=${primaryDriftType}, confidence=${triageData.confidence}, risk=${triageData.risk_level}`);
+  console.log(`[Transitions] Drift classified: type=${primaryDriftType}, base_conf=${baseConfidence}, boost=${correlationBoost}, final_conf=${boostedConfidence}, risk=${triageData.risk_level}`);
 
   return { state: DriftState.DRIFT_CLASSIFIED, enqueueNext: true };
 }
@@ -330,41 +367,30 @@ async function handlePatchGenerated(drift: any): Promise<TransitionResult> {
 
 /**
  * PATCH_VALIDATED -> OWNER_RESOLVED
- * Resolve the doc owner
+ * Phase 4: Resolve doc owner using configurable ownership ranking
  */
 async function handlePatchValidated(drift: any): Promise<TransitionResult> {
-  // Try to find an owner mapping for this service/doc
-  const ownerMapping = await prisma.ownerMapping.findFirst({
-    where: {
-      workspaceId: drift.workspaceId,
-      service: drift.service || undefined,
+  const signal = drift.signalEvent;
+
+  // Phase 4: Use ownership resolver with configurable ranking
+  const resolution = await resolveOwner(
+    drift.workspaceId,
+    drift.service || signal?.service || null,
+    drift.repo || signal?.repo || null
+  );
+
+  // Store owner resolution in drift candidate
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: {
+      ownerResolution: formatOwnerResolution(resolution),
     },
   });
 
-  if (ownerMapping) {
-    await prisma.driftCandidate.update({
-      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
-      data: {
-        ownerResolution: {
-          ownerType: ownerMapping.ownerType,
-          ownerRef: ownerMapping.ownerRef,
-          source: 'mapping',
-        },
-      },
-    });
-  } else {
-    // Use workspace default owner
-    await prisma.driftCandidate.update({
-      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
-      data: {
-        ownerResolution: {
-          ownerType: drift.workspace?.defaultOwnerType || 'slack_channel',
-          ownerRef: drift.workspace?.defaultOwnerRef || '#engineering',
-          source: 'default',
-        },
-      },
-    });
-  }
+  console.log(
+    `[Transitions] Owner resolved: primary=${resolution.primary?.ref || 'none'}, ` +
+    `fallback=${resolution.fallback?.ref || 'none'}, sources=${resolution.sources.length}`
+  );
 
   return { state: DriftState.OWNER_RESOLVED, enqueueNext: true };
 }
@@ -408,18 +434,22 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
     };
   }
 
-  // Get owner info
+  // Phase 4: Get owner info from new format
   const ownerResolution = drift.ownerResolution || {};
+  const primaryOwner = ownerResolution.primary || ownerResolution; // Backward compatible
+  const fallbackOwner = ownerResolution.fallback;
 
   // Phase 3: Use notification routing policy
-  const ownerSlackId = ownerResolution.ownerType === 'slack_user' ? ownerResolution.ownerRef : null;
+  const ownerSlackId = primaryOwner?.type === 'slack_user' ? primaryOwner.ref : null;
+  const ownerChannel = primaryOwner?.type === 'slack_channel' ? primaryOwner.ref :
+                       (fallbackOwner?.type === 'slack_channel' ? fallbackOwner.ref : null);
   const notificationRoute = await determineNotificationRoute({
     workspaceId: drift.workspaceId,
     driftId: drift.id,
     confidence: drift.confidence || 0.5,
     riskLevel: drift.riskLevel as 'low' | 'medium' | 'high' | undefined,
     ownerSlackId,
-    ownerChannel: ownerResolution.ownerType === 'slack_channel' ? ownerResolution.ownerRef : null,
+    ownerChannel,
   });
 
   console.log(`[Transitions] Notification decision: ${notificationRoute.channel}, priority=${notificationRoute.priority}, reason=${notificationRoute.reason}`);
@@ -433,7 +463,7 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
   // TODO: Actually send to Slack using slack-client
   // For now, just log and transition
   console.log(`[Transitions] Would send Slack message for drift ${drift.id}`);
-  console.log(`[Transitions] Target: ${notificationRoute.target || ownerResolution.ownerRef || 'default'}`);
+  console.log(`[Transitions] Target: ${notificationRoute.target || primaryOwner?.ref || 'default'}`);
   console.log(`[Transitions] Channel: ${notificationRoute.channel}`);
   console.log(`[Transitions] Doc: ${patchProposal.docTitle}`);
   console.log(`[Transitions] Patch summary: ${patchProposal.summary || 'N/A'}`);

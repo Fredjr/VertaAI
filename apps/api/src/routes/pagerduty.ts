@@ -1,0 +1,220 @@
+import { Router, Request, Response } from 'express';
+import type { Router as RouterType } from 'express';
+import crypto from 'crypto';
+import { prisma } from '../lib/db.js';
+import { enqueueJob } from '../services/queue/qstash.js';
+
+const router: RouterType = Router();
+
+/**
+ * PagerDuty webhook signature verification
+ * https://developer.pagerduty.com/docs/db0fa8c8984fc-webhooks#webhook-signature-verification
+ */
+function verifyPagerDutySignature(
+  payload: string,
+  signature: string | undefined,
+  secret: string
+): boolean {
+  if (!signature) return false;
+  
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(payload)
+    .digest('hex');
+  
+  // PagerDuty signature format: v1=<hex>
+  const expectedSignature = `v1=${expected}`;
+  
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(signature),
+      Buffer.from(expectedSignature)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Map PagerDuty urgency to severity
+ */
+function mapPagerDutySeverity(urgency: string | undefined): string {
+  if (urgency === 'high') return 'sev1';
+  if (urgency === 'low') return 'sev3';
+  return 'sev2';
+}
+
+/**
+ * Calculate incident duration in milliseconds
+ */
+function calculateDuration(createdAt: string, resolvedAt: string | undefined): number | null {
+  if (!resolvedAt) return null;
+  return new Date(resolvedAt).getTime() - new Date(createdAt).getTime();
+}
+
+/**
+ * Infer service name from incident metadata
+ */
+function inferServiceFromIncident(incident: any): string | undefined {
+  // Try service summary first
+  if (incident.service?.summary) {
+    return incident.service.summary.toLowerCase().replace(/\s+/g, '-');
+  }
+  // Try escalation policy
+  if (incident.escalation_policy?.summary) {
+    return incident.escalation_policy.summary.toLowerCase().replace(/\s+/g, '-');
+  }
+  return undefined;
+}
+
+// ============================================================================
+// PagerDuty Webhook: Tenant-Routed (Phase 4)
+// URL: POST /webhooks/pagerduty/:workspaceId
+// Handles incident.resolved events for correlation with GitHub PRs
+// ============================================================================
+router.post('/:workspaceId', async (req: Request, res: Response) => {
+  const workspaceIdParam = req.params.workspaceId;
+  const signature = req.headers['x-pagerduty-signature'] as string | undefined;
+
+  if (!workspaceIdParam) {
+    return res.status(400).json({ error: 'Missing workspaceId parameter' });
+  }
+
+  console.log(`[PagerDuty] Received webhook for workspace ${workspaceIdParam}`);
+
+  // 1. Load workspace and PagerDuty integration
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceIdParam },
+    include: { integrations: { where: { type: 'pagerduty' } } },
+  });
+
+  if (!workspace) {
+    console.error(`[PagerDuty] Workspace not found: ${workspaceIdParam}`);
+    return res.status(404).json({ error: 'Workspace not found' });
+  }
+
+  // After validation, workspaceId is guaranteed to be a string
+  const workspaceId: string = workspaceIdParam;
+
+  const integration = workspace.integrations[0];
+
+  // 2. Verify webhook signature
+  const secret = integration?.webhookSecret || process.env.PD_WEBHOOK_SECRET;
+  if (!secret) {
+    console.error('[PagerDuty] No webhook secret configured');
+    return res.status(500).json({ error: 'PagerDuty webhook secret not configured' });
+  }
+
+  const payload = (req as any).rawBody || JSON.stringify(req.body);
+  if (!verifyPagerDutySignature(payload, signature, secret)) {
+    console.error('[PagerDuty] Invalid signature');
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+
+  // 3. Parse event payload
+  // PagerDuty sends events in a messages array or as a single event object
+  const events = req.body.messages || (req.body.event ? [req.body] : []);
+
+  if (events.length === 0) {
+    console.log('[PagerDuty] No events in payload');
+    return res.json({ status: 'ok', message: 'No events to process' });
+  }
+
+  const results: Array<{ eventType: string; signalEventId?: string; driftId?: string; status: string }> = [];
+
+  for (const eventWrapper of events) {
+    const event = eventWrapper.event || eventWrapper;
+    const eventType = event.event_type || eventWrapper.event_type;
+
+    console.log(`[PagerDuty] Processing event type: ${eventType}`);
+
+    // Only process incident.resolved events for drift detection
+    // (indicates a fix was deployed - correlates with merged PRs)
+    if (eventType !== 'incident.resolved') {
+      results.push({ eventType, status: 'ignored' });
+      continue;
+    }
+
+    const incident = event.data || event.incident;
+    if (!incident) {
+      console.log('[PagerDuty] No incident data in event');
+      results.push({ eventType, status: 'no_data' });
+      continue;
+    }
+
+    const service = inferServiceFromIncident(incident);
+    const signalEventId = `pagerduty_incident_${incident.id}`;
+
+    // Check idempotency - skip if already processed
+    const existingSignal = await prisma.signalEvent.findUnique({
+      where: { workspaceId_id: { workspaceId, id: signalEventId } },
+    });
+
+    if (existingSignal) {
+      console.log(`[PagerDuty] Incident ${incident.id} already processed`);
+      results.push({ eventType, signalEventId, status: 'already_processed' });
+      continue;
+    }
+
+    // 4. Create SignalEvent
+    const signalEvent = await prisma.signalEvent.create({
+      data: {
+        workspaceId,
+        id: signalEventId,
+        sourceType: 'pagerduty_incident',
+        occurredAt: new Date(incident.resolved_at || incident.updated_at || new Date()),
+        service,
+        severity: mapPagerDutySeverity(incident.urgency),
+        extracted: {
+          title: incident.title || incident.summary,
+          description: incident.description || '',
+          incidentNumber: incident.incident_number,
+          urgency: incident.urgency,
+          priority: incident.priority?.summary,
+          escalationPolicy: incident.escalation_policy?.summary,
+          assignees: incident.assignments?.map((a: any) => a.assignee?.summary) || [],
+          resolvedBy: incident.resolved_by?.summary,
+          duration: calculateDuration(incident.created_at, incident.resolved_at),
+          serviceId: incident.service?.id,
+        },
+        rawPayload: eventWrapper,
+      },
+    });
+
+    console.log(`[PagerDuty] Created signal event ${signalEvent.id}`);
+
+    // 5. Create DriftCandidate in INGESTED state
+    const driftCandidate = await prisma.driftCandidate.create({
+      data: {
+        workspaceId,
+        signalEventId: signalEvent.id,
+        state: 'INGESTED',
+        sourceType: 'pagerduty_incident',
+        service,
+      },
+    });
+
+    console.log(`[PagerDuty] Created drift candidate ${driftCandidate.id}`);
+
+    // 6. Enqueue for async processing
+    const messageId = await enqueueJob({ workspaceId, driftId: driftCandidate.id });
+    console.log(`[PagerDuty] Enqueued job ${messageId || 'sync'} for drift ${driftCandidate.id}`);
+
+    results.push({
+      eventType,
+      signalEventId: signalEvent.id,
+      driftId: driftCandidate.id,
+      status: 'processed',
+    });
+  }
+
+  return res.status(202).json({
+    message: 'Webhook received',
+    processed: results.filter(r => r.status === 'processed').length,
+    ignored: results.filter(r => r.status === 'ignored').length,
+    results,
+  });
+});
+
+export default router;
+
