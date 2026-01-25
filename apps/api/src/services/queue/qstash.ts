@@ -45,7 +45,8 @@ export async function enqueueJob(payload: JobPayload): Promise<string | null> {
     return result.messageId;
   } catch (error) {
     console.error('[QStash] Failed to enqueue job:', error);
-    throw error;
+    // Return null instead of throwing - let caller fall back to sync processing
+    return null;
   }
 }
 
@@ -79,7 +80,8 @@ export async function enqueueDelayedJob(
     return result.messageId;
   } catch (error) {
     console.error('[QStash] Failed to enqueue delayed job:', error);
-    throw error;
+    // Return null instead of throwing - let caller handle gracefully
+    return null;
   }
 }
 
