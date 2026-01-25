@@ -142,21 +142,10 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
 
   const triageData = result.data;
 
-  // Phase 3: Extract key tokens for fingerprinting
-  const keyTokens = triageData.key_tokens || extractKeyTokens(triageData.evidence_summary || '');
-
-  // Phase 3: Compute fingerprint for deduplication
+  // Phase 3: Extract drift type and metadata
   const primaryDriftType = triageData.drift_types?.[0] || 'instruction';
-  const fingerprint = computeDriftFingerprint({
-    workspaceId: drift.workspaceId,
-    service: drift.service,
-    driftType: primaryDriftType,
-    driftDomains: triageData.impacted_domains || [],
-    docId: 'pending', // Will be updated after doc resolution
-    keyTokens,
-  });
 
-  // Update drift with full triage results (Phase 3 fields)
+  // Update drift with triage results (fingerprint stored in DRIFT_CLASSIFIED after dedup check)
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
     data: {
@@ -167,7 +156,7 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
       driftScore: triageData.drift_score || (triageData.confidence * (triageData.impact_score || 1)),
       riskLevel: triageData.risk_level || null,
       recommendedAction: triageData.recommended_action || null,
-      fingerprint,
+      // Note: fingerprint stored after dedup check in DRIFT_CLASSIFIED state
     },
   });
 
@@ -183,14 +172,26 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
 async function handleDriftClassified(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
 
-  // Phase 3: Check for duplicate drift before proceeding
+  // Phase 3: Compute fingerprint and check for duplicates
+  let fingerprint: string | null = null;
   if (drift.driftType && drift.evidenceSummary) {
-    const dedupResult = await checkDuplicateDrift({
+    // Extract key tokens for fingerprinting
+    const keyTokens = extractKeyTokens(drift.evidenceSummary);
+    fingerprint = computeDriftFingerprint({
       workspaceId: drift.workspaceId,
       service: drift.service,
       driftType: drift.driftType,
       driftDomains: drift.driftDomains || [],
       docId: 'pending', // Will be updated after doc resolution
+      keyTokens,
+    });
+
+    const dedupResult = await checkDuplicateDrift({
+      workspaceId: drift.workspaceId,
+      service: drift.service,
+      driftType: drift.driftType,
+      driftDomains: drift.driftDomains || [],
+      docId: 'pending',
       evidence: drift.evidenceSummary,
       newConfidence: drift.confidence || 0.5,
     });
@@ -203,6 +204,13 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
     if (dedupResult.isDuplicate) {
       console.log(`[Transitions] Duplicate drift but re-notifying: ${dedupResult.reason}`);
     }
+
+    // Store fingerprint after dedup check passes (this is the "primary" drift for this fingerprint)
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: { fingerprint },
+    });
+    console.log(`[Transitions] Fingerprint stored: ${fingerprint}`);
   }
 
   const resolverInput = {
