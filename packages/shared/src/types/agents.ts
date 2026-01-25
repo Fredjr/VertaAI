@@ -17,7 +17,7 @@ export type DriftType = typeof DRIFT_TYPES[number];
 
 export const DriftTypeSchema = z.enum(DRIFT_TYPES);
 
-// Impacted Domains
+// Impacted Domains (10 domains per spec Section 5.6)
 export const IMPACTED_DOMAINS = [
   'deployment',
   'rollback',
@@ -28,6 +28,7 @@ export const IMPACTED_DOMAINS = [
   'infra',
   'onboarding',
   'data_migrations',
+  'ownership_routing',  // Added: Escalation accuracy (impact score 0.5)
 ] as const;
 
 export type ImpactedDomain = typeof IMPACTED_DOMAINS[number];

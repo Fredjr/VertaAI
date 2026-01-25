@@ -27,6 +27,7 @@ export interface ValidatorContext {
   diff: string;
   evidence: string[];
   confidence: number;
+  expectedRevision?: string | null;  // For revision check validator
 }
 
 // Validator 1: Diff applies cleanly (placeholder - actual diff application is done elsewhere)
@@ -248,28 +249,177 @@ export async function validateDocFreshness(
   return { valid: true, errors: [], warnings: [] };
 }
 
-// Run all validators
+// Validator 12: No new commands unless evidenced (spec Section 5.11)
+export function validateNoNewCommandsUnlessEvidenced(
+  diff: string,
+  evidence: string[]
+): ValidationResult {
+  // Extract commands from added lines in diff
+  const commandPatterns = [
+    /`(kubectl|helm|terraform|docker|aws|gcloud|psql|curl|npm|yarn|pip|cargo|go)\s+[^`]+`/gi,
+    /\$\s*(kubectl|helm|terraform|docker|aws|gcloud|psql|curl|npm|yarn|pip|cargo|go)\s+\S+/gi,
+  ];
+
+  const addedLines = diff.split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++'));
+  const newCommands: string[] = [];
+
+  for (const line of addedLines) {
+    for (const pattern of commandPatterns) {
+      const matches = line.match(pattern) || [];
+      newCommands.push(...matches);
+    }
+  }
+
+  if (newCommands.length === 0) {
+    return { valid: true, errors: [], warnings: [] };
+  }
+
+  // Check if commands are supported by evidence
+  const evidenceText = evidence.join(' ').toLowerCase();
+  const unsupportedCommands = newCommands.filter(cmd => {
+    // Extract tool name from command
+    const toolMatch = cmd.match(/`?(kubectl|helm|terraform|docker|aws|gcloud|psql|curl|npm|yarn|pip|cargo|go)/i);
+    if (!toolMatch || !toolMatch[1]) return true;  // Unknown command = unsupported
+    const tool = toolMatch[1].toLowerCase();
+    return !evidenceText.includes(tool);
+  });
+
+  if (unsupportedCommands.length > 0) {
+    return {
+      valid: false,
+      errors: [`Patch introduces commands not supported by evidence: ${unsupportedCommands.slice(0, 3).join(', ')}. Use NOTE instead.`],
+      warnings: [],
+    };
+  }
+
+  return { valid: true, errors: [], warnings: [] };
+}
+
+// Validator 13: Owner block scope (spec Section 5.11)
+export function validateOwnerBlockScope(
+  diff: string,
+  driftType: string,
+  originalMarkdown: string
+): ValidationResult {
+  // Only applies to ownership drift
+  if (driftType !== 'ownership') {
+    return { valid: true, errors: [], warnings: [] };
+  }
+
+  // Owner block patterns
+  const ownerPatterns = [
+    /^#+\s*(?:owner|contact|team|escalat|on-?call)/gim,
+    /owner:\s*[^\n]+/gi,
+    /team:\s*[^\n]+/gi,
+    /contact:\s*[^\n]+/gi,
+  ];
+
+  // Get all changed lines from diff
+  const changedLines = diff.split('\n').filter(l =>
+    (l.startsWith('+') || l.startsWith('-')) &&
+    !l.startsWith('+++') && !l.startsWith('---')
+  );
+
+  // Check if all changes are within owner-related content
+  const nonOwnerChanges: string[] = [];
+  for (const line of changedLines) {
+    const content = line.substring(1);  // Remove +/- prefix
+    const isOwnerRelated = ownerPatterns.some(p => p.test(content));
+    // Reset lastIndex for global patterns
+    ownerPatterns.forEach(p => p.lastIndex = 0);
+
+    if (!isOwnerRelated && content.trim().length > 0) {
+      // Check if line is part of owner section context
+      const isContext = content.startsWith('@') || content.startsWith('#') ||
+                       /\b(owner|team|contact|escalat|on-?call)\b/i.test(content);
+      if (!isContext) {
+        nonOwnerChanges.push(content.substring(0, 50));
+      }
+    }
+  }
+
+  if (nonOwnerChanges.length > 0) {
+    return {
+      valid: false,
+      errors: ['Ownership drift patches must only edit owner/contact sections. Found changes outside owner block.'],
+      warnings: [],
+    };
+  }
+
+  return { valid: true, errors: [], warnings: [] };
+}
+
+// Validator 14: Doc revision unchanged (spec Section 5.11)
+export async function validateDocRevisionUnchanged(
+  workspaceId: string,
+  docId: string,
+  expectedRevision: string | null
+): Promise<ValidationResult> {
+  if (!expectedRevision) {
+    // No revision tracking, skip validation
+    return { valid: true, errors: [], warnings: ['No revision tracking - concurrent edits possible'] };
+  }
+
+  // Use updatedAt as revision proxy since DocMappingV2 doesn't have docRevision field
+  const mapping = await prisma.docMappingV2.findFirst({
+    where: { workspaceId, docId },
+    select: { updatedAt: true },
+  });
+
+  if (!mapping) {
+    return {
+      valid: false,
+      errors: ['Document mapping not found'],
+      warnings: [],
+    };
+  }
+
+  // Compare updatedAt timestamp as revision
+  const currentRevision = mapping.updatedAt.toISOString();
+  if (currentRevision !== expectedRevision) {
+    return {
+      valid: false,
+      errors: [`Document has been modified since patch was generated. Expected revision: ${expectedRevision}, current: ${currentRevision}`],
+      warnings: [],
+    };
+  }
+
+  return { valid: true, errors: [], warnings: [] };
+}
+
+// Run all validators (14 total per spec Section 5.11)
 export async function runAllValidators(ctx: ValidatorContext): Promise<ValidationResult> {
   const results: ValidationResult[] = [
+    // Core validators (1-6)
     validateMaxChangedLines(ctx.diff, 50),
     validateNoSecretsIntroduced(ctx.diff),
     validatePatchStyleMatchesDriftType(ctx.patchStyle, ctx.driftType),
     validateEvidenceForRiskyChanges(ctx.diff, ctx.evidence),
     validateConfidenceThreshold(ctx.confidence, 0.40),
     validateNoBreakingChanges(ctx.diff),
+
+    // New validators per spec (12-13)
+    validateNoNewCommandsUnlessEvidenced(ctx.diff, ctx.evidence),
+    validateOwnerBlockScope(ctx.diff, ctx.driftType, ctx.originalMarkdown),
   ];
 
-  // Check managed region only if doc has one
+  // Check managed region only if doc has one (7)
   if (extractManagedRegion(ctx.originalMarkdown).hasManagedRegion) {
     results.push(validateManagedRegionOnly(ctx.originalMarkdown, ctx.patchedMarkdown));
   }
 
-  // Async validators
+  // Async validators (8-11, 14)
   const primaryDocResult = await validatePrimaryDocOnly(ctx.workspaceId, ctx.docId, ctx.patchStyle);
   results.push(primaryDocResult);
 
   const freshnessResult = await validateDocFreshness(ctx.workspaceId, ctx.docId);
   results.push(freshnessResult);
+
+  // Revision check (14) - only if expectedRevision is provided
+  if (ctx.expectedRevision !== undefined) {
+    const revisionResult = await validateDocRevisionUnchanged(ctx.workspaceId, ctx.docId, ctx.expectedRevision);
+    results.push(revisionResult);
+  }
 
   // Aggregate results
   const errors = results.flatMap(r => r.errors);
