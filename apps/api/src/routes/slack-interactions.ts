@@ -100,7 +100,13 @@ async function handleBlockActions(payload: any, res: Response) {
       await handleApprove(proposal, userId, payload);
       break;
     case 'reject':
-      await openRejectModal(orgId, payload.trigger_id, proposalId);
+      await openRejectModal(
+        orgId,
+        payload.trigger_id,
+        proposalId,
+        proposal.document?.title,
+        proposal.summary || undefined
+      );
       break;
     case 'edit':
       await openEditModal(
@@ -171,21 +177,72 @@ async function handleSnooze(proposal: any, slackUserId: string) {
   }
 }
 
-async function openRejectModal(orgId: string, triggerId: string, proposalId: string) {
-  // Simplified modal - will be expanded
+async function openRejectModal(
+  orgId: string,
+  triggerId: string,
+  proposalId: string,
+  docTitle?: string,
+  summary?: string
+) {
+  // Build context header
+  const contextText = [
+    docTitle ? `📄 *${docTitle}*` : '',
+    summary ? `\n${summary}` : '',
+  ].filter(Boolean).join('');
+
+  const blocks: any[] = [];
+
+  // Add context section if we have any
+  if (contextText) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: contextText },
+    });
+    blocks.push({ type: 'divider' });
+  }
+
+  // Quick-select rejection categories
+  blocks.push({
+    type: 'input',
+    block_id: 'category',
+    element: {
+      type: 'static_select',
+      action_id: 'category_select',
+      placeholder: { type: 'plain_text', text: 'Select a category' },
+      options: [
+        { text: { type: 'plain_text', text: '❌ Incorrect change' }, value: 'incorrect_change' },
+        { text: { type: 'plain_text', text: '🚫 Not needed' }, value: 'not_needed' },
+        { text: { type: 'plain_text', text: '📋 Out of scope' }, value: 'out_of_scope' },
+        { text: { type: 'plain_text', text: '🔍 Needs more context' }, value: 'needs_more_context' },
+        { text: { type: 'plain_text', text: '📄 Wrong document' }, value: 'doc_not_source_of_truth' },
+        { text: { type: 'plain_text', text: '👤 Wrong owner' }, value: 'wrong_owner' },
+        { text: { type: 'plain_text', text: '📝 Formatting issue' }, value: 'formatting_issue' },
+        { text: { type: 'plain_text', text: '❓ Other' }, value: 'other' },
+      ],
+    },
+    label: { type: 'plain_text', text: 'Why are you rejecting this patch?' },
+  });
+
+  // Free-text reason (optional but helpful for Agent F)
+  blocks.push({
+    type: 'input',
+    block_id: 'reason',
+    optional: true,
+    element: {
+      type: 'plain_text_input',
+      action_id: 'reason_input',
+      multiline: true,
+      placeholder: { type: 'plain_text', text: 'Add details to help us improve future suggestions...' },
+    },
+    label: { type: 'plain_text', text: 'Additional details (optional)' },
+  });
+
   await openSlackModal(orgId, triggerId, {
     type: 'modal',
     callback_id: `reject:${proposalId}`,
     title: { type: 'plain_text', text: 'Reject Patch' },
     submit: { type: 'plain_text', text: 'Reject' },
-    blocks: [
-      {
-        type: 'input',
-        block_id: 'reason',
-        element: { type: 'plain_text_input', action_id: 'reason_input', multiline: true },
-        label: { type: 'plain_text', text: 'Rejection Reason' },
-      },
-    ],
+    blocks,
   });
 }
 
@@ -280,8 +337,29 @@ async function handleViewSubmission(payload: any, res: Response) {
 
   switch (action) {
     case 'reject': {
-      // Get the rejection reason from the modal input
-      const rejectionReason = payload.view?.state?.values?.reason?.reason_input?.value || 'No reason provided';
+      // Get the rejection category from dropdown
+      const category = payload.view?.state?.values?.category?.category_select?.selected_option?.value || 'other';
+
+      // Get the optional additional details
+      const additionalDetails = payload.view?.state?.values?.reason?.reason_input?.value || '';
+
+      // Combine category and details into a rejection reason for Agent F
+      const categoryLabels: Record<string, string> = {
+        'incorrect_change': 'Incorrect change',
+        'not_needed': 'Not needed',
+        'out_of_scope': 'Out of scope',
+        'needs_more_context': 'Needs more context',
+        'doc_not_source_of_truth': 'Wrong document',
+        'wrong_owner': 'Wrong owner',
+        'formatting_issue': 'Formatting issue',
+        'other': 'Other',
+      };
+
+      const rejectionReason = additionalDetails
+        ? `${categoryLabels[category] || category}: ${additionalDetails}`
+        : categoryLabels[category] || category;
+
+      console.log(`[SlackInteractions] Rejection - category: ${category}, reason: ${rejectionReason}`);
 
       const result = await processRejection(proposal.id, user.id, rejectionReason);
 
@@ -290,7 +368,7 @@ async function handleViewSubmission(payload: any, res: Response) {
         // Show error in Slack
         return res.json({
           response_action: 'errors',
-          errors: { reason: `Rejection failed: ${result.error}` },
+          errors: { category: `Rejection failed: ${result.error}` },
         });
       }
       break;
