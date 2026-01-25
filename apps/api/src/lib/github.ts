@@ -88,19 +88,25 @@ export function extractPRInfo(payload: any): PRInfo | null {
   const pr = payload.pull_request;
   const repo = payload.repository;
 
+  // Extract owner from repo.owner.login or parse from full_name
+  let repoOwner = repo.owner?.login;
+  if (!repoOwner && repo.full_name) {
+    repoOwner = repo.full_name.split('/')[0];
+  }
+
   return {
     action: payload.action,
     prNumber: pr.number,
     prTitle: pr.title,
-    prBody: pr.body,
+    prBody: pr.body || '',
     repoFullName: repo.full_name,
-    repoOwner: repo.owner.login,
+    repoOwner: repoOwner || 'unknown',
     repoName: repo.name,
     merged: pr.merged || false,
     mergedAt: pr.merged_at,
-    baseBranch: pr.base.ref,
-    headBranch: pr.head.ref,
-    authorLogin: pr.user.login,
+    baseBranch: pr.base?.ref || 'main',
+    headBranch: pr.head?.ref || 'unknown',
+    authorLogin: pr.user?.login || 'unknown',
     installationId: payload.installation?.id,
     changedFiles: pr.changed_files || 0,
   };
