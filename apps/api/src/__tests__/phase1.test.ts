@@ -10,7 +10,7 @@ import {
   createPingPayload,
   API_BASE_URL,
   TEST_WEBHOOK_SECRET,
-} from './setup';
+} from './setup.js';
 
 // Helper to make API requests
 async function api(path: string, options: RequestInit = {}) {
