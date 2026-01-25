@@ -10,7 +10,278 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Multi-tenant organizations
+// ======================================================================
+// NEW MODELS (Phase 1: Workspace-based multi-tenancy)
+// These coexist with Organization model for gradual migration
+// ======================================================================
+
+// Workspaces (new multi-tenant model - replaces Organization)
+model Workspace {
+  id         String @id @default(uuid())
+  name       String
+  slug       String @unique
+  ownerEmail String @map("owner_email")
+
+  // Ownership config (for owner resolution)
+  ownershipSourceRanking String[] @default(["pagerduty", "codeowners", "manual"]) @map("ownership_source_ranking")
+  defaultOwnerType       String   @default("slack_channel") @map("default_owner_type")
+  defaultOwnerRef        String   @default("#engineering") @map("default_owner_ref")
+
+  // Notification policy (confidence-based routing)
+  highConfidenceThreshold   Float   @default(0.70) @map("high_confidence_threshold")
+  mediumConfidenceThreshold Float   @default(0.55) @map("medium_confidence_threshold")
+  digestChannel             String? @map("digest_channel")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  integrations    Integration[]
+  signalEvents    SignalEvent[]
+  driftCandidates DriftCandidate[]
+  patchProposals  PatchProposal[]
+  docMappingsV2   DocMappingV2[]
+  ownerMappings   OwnerMapping[]
+  auditEvents     AuditEvent[]
+  approvals       Approval[]
+
+  @@map("workspaces")
+}
+
+// Integrations (OAuth connections per workspace)
+model Integration {
+  id            BigInt   @id @default(autoincrement())
+  workspaceId   String   @map("workspace_id")
+  type          String // 'github', 'pagerduty', 'slack', 'confluence', 'notion'
+  status        String   @default("pending") // 'pending', 'connected', 'error', 'revoked'
+  config        Json     @default("{}")
+  webhookSecret String?  @map("webhook_secret")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, type])
+  @@map("integrations")
+}
+
+// Signal Events (workspace-scoped, composite primary key)
+model SignalEvent {
+  workspaceId String   @map("workspace_id")
+  id          String // eventId from source (e.g., github_pr_owner/repo_123)
+  sourceType  String   @map("source_type") // 'github_pr', 'pagerduty_incident'
+  occurredAt  DateTime @map("occurred_at")
+  service     String?
+  repo        String?
+  severity    String? // 'sev1', 'sev2', 'sev3', 'sev4'
+  extracted   Json     @default("{}")
+  rawPayload  Json     @map("raw_payload")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  driftCandidates DriftCandidate[]
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, sourceType, occurredAt(sort: Desc)])
+  @@index([workspaceId, service, occurredAt(sort: Desc)])
+  @@map("signal_events")
+}
+
+// Drift Candidates (state machine entity)
+model DriftCandidate {
+  workspaceId   String @map("workspace_id")
+  id            String @default(uuid())
+  signalEventId String @map("signal_event_id")
+
+  // State machine (18 states)
+  state          String   @default("INGESTED") // DriftState enum
+  stateUpdatedAt DateTime @default(now()) @map("state_updated_at")
+
+  // Source context
+  sourceType String  @map("source_type")
+  service    String?
+  repo       String?
+
+  // Drift classification
+  driftType    String?  @map("drift_type") // 'instruction', 'process', 'ownership', 'coverage', 'environment_tooling'
+  driftDomains String[] @map("drift_domains")
+
+  // Evidence & scoring
+  evidenceSummary   String? @map("evidence_summary")
+  confidence        Float?
+  driftScore        Float?  @map("drift_score")
+  riskLevel         String? @map("risk_level") // 'low', 'medium', 'high'
+  recommendedAction String? @map("recommended_action") // 'generate_patch', 'annotate_only', 'review_queue', 'ignore'
+
+  // Document targeting
+  docCandidates    Json @default("[]") @map("doc_candidates")
+  baselineFindings Json @default("[]") @map("baseline_findings")
+
+  // Owner resolution
+  ownerResolution Json? @map("owner_resolution")
+
+  // Deduplication (fingerprint = hash of workspace + service + drift_type + domains + doc_id + key_tokens)
+  fingerprint String?
+
+  // Correlated signals (from SignalJoiner)
+  correlatedSignals Json  @default("[]") @map("correlated_signals")
+  confidenceBoost   Float @default(0) @map("confidence_boost")
+
+  // Error tracking
+  lastErrorCode    String? @map("last_error_code")
+  lastErrorMessage String? @map("last_error_message")
+  retryCount       Int     @default(0) @map("retry_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  signalEvent    SignalEvent     @relation(fields: [workspaceId, signalEventId], references: [workspaceId, id], onDelete: Cascade)
+  patchProposals PatchProposal[]
+
+  @@id([workspaceId, id])
+  @@unique([workspaceId, fingerprint])
+  @@index([workspaceId, state, stateUpdatedAt(sort: Desc)])
+  @@index([workspaceId, service])
+  @@map("drift_candidates")
+}
+
+// Patch Proposals (generated patches awaiting approval)
+model PatchProposal {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+  driftId     String @map("drift_id")
+
+  // Target document
+  docSystem String  @map("doc_system") // 'confluence', 'notion'
+  docId     String  @map("doc_id")
+  docTitle  String  @map("doc_title")
+  docUrl    String? @map("doc_url")
+
+  // Patch content
+  baseRevision String? @map("base_revision")
+  patchStyle   String  @default("replace_steps") @map("patch_style") // 'replace_steps', 'add_note', 'reorder_steps', 'update_owner_block', 'add_section', 'link_patch'
+  unifiedDiff  String  @map("unified_diff") @db.Text
+
+  // Metadata
+  sourcesUsed Json    @default("[]") @map("sources_used")
+  confidence  Float   @default(0)
+  summary     String?
+
+  // Validation
+  validatorReport Json @default("{}") @map("validator_report")
+
+  // Status
+  status String @default("proposed") // 'proposed', 'sent', 'approved', 'edited', 'rejected', 'snoozed', 'written_back'
+
+  // Slack tracking
+  slackChannel String? @map("slack_channel")
+  slackTs      String? @map("slack_ts")
+
+  // Notification tracking
+  lastNotifiedAt    DateTime? @map("last_notified_at")
+  notificationCount Int       @default(0) @map("notification_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  driftCandidate DriftCandidate @relation(fields: [workspaceId, driftId], references: [workspaceId, id], onDelete: Cascade)
+  approvals      Approval[]
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, docSystem, docId])
+  @@index([workspaceId, status, updatedAt(sort: Desc)])
+  @@map("patch_proposals")
+}
+
+// Approvals (append-only audit log for human actions)
+model Approval {
+  workspaceId       String    @map("workspace_id")
+  id                String    @default(uuid())
+  patchId           String    @map("patch_id")
+  action            String // 'approve', 'edit', 'reject', 'snooze'
+  actorSlackId      String    @map("actor_slack_id")
+  actorName         String?   @map("actor_name")
+  note              String?
+  editedDiff        String?   @map("edited_diff") @db.Text
+  snoozeUntil       DateTime? @map("snooze_until")
+  rejectionCategory String?   @map("rejection_category")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  patchProposal PatchProposal @relation(fields: [workspaceId, patchId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, patchId, createdAt(sort: Desc)])
+  @@map("approvals")
+}
+
+// Doc Mappings V2 (with primary doc flag and managed region tracking)
+model DocMappingV2 {
+  workspaceId              String    @map("workspace_id")
+  id                       BigInt    @id @default(autoincrement())
+  service                  String?
+  repo                     String?
+  docSystem                String    @map("doc_system") // 'confluence', 'notion'
+  docId                    String    @map("doc_id")
+  docTitle                 String    @map("doc_title")
+  docUrl                   String?   @map("doc_url")
+  isPrimary                Boolean   @default(false) @map("is_primary")
+  hasManagedRegion         Boolean   @default(false) @map("has_managed_region")
+  managedRegionInstalledAt DateTime? @map("managed_region_installed_at")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, docSystem, docId])
+  @@index([workspaceId, service])
+  @@index([workspaceId, repo])
+  @@map("doc_mappings_v2")
+}
+
+// Owner Mappings (service/repo to owner resolution)
+model OwnerMapping {
+  workspaceId String   @map("workspace_id")
+  id          BigInt   @id @default(autoincrement())
+  service     String?
+  repo        String?
+  ownerType   String   @map("owner_type") // 'slack_user', 'slack_channel', 'team'
+  ownerRef    String   @map("owner_ref")
+  source      String   @default("manual") // 'manual', 'pagerduty', 'codeowners', 'commit_history'
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, service])
+  @@index([workspaceId, repo])
+  @@map("owner_mappings")
+}
+
+// Audit Events (system-wide event log)
+model AuditEvent {
+  workspaceId String   @map("workspace_id")
+  id          BigInt   @id @default(autoincrement())
+  entityType  String   @map("entity_type") // 'signal', 'drift', 'patch', 'approval', 'writeback', 'integration'
+  entityId    String   @map("entity_id")
+  eventType   String   @map("event_type")
+  payload     Json     @default("{}")
+  actorType   String?  @map("actor_type") // 'system', 'user', 'webhook'
+  actorId     String?  @map("actor_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, entityType, entityId, createdAt(sort: Desc)])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("audit_events")
+}
+
+// ======================================================================
+// LEGACY MODELS (kept for gradual migration)
+// Will be removed after data migration to new models is complete
+// ======================================================================
+
+// Multi-tenant organizations (LEGACY - use Workspace instead)
 model Organization {
   id                    String   @id @default(uuid())
   name                  String
@@ -46,10 +317,10 @@ model User {
   isAdmin        Boolean  @default(false) @map("is_admin")
   createdAt      DateTime @default(now()) @map("created_at")
 
-  organization      Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  organization      Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   ownedDocuments    TrackedDocument[] @relation("DocumentOwner")
-  routedProposals   DiffProposal[]   @relation("RoutedTo")
-  resolvedProposals DiffProposal[]   @relation("ResolvedBy")
+  routedProposals   DiffProposal[]    @relation("RoutedTo")
+  resolvedProposals DiffProposal[]    @relation("ResolvedBy")
   auditLogs         AuditLog[]
 
   @@unique([orgId, slackUserId])
@@ -58,19 +329,19 @@ model User {
 
 // Docs we're actively monitoring
 model TrackedDocument {
-  id                  String   @id @default(uuid())
-  orgId               String   @map("org_id")
-  confluencePageId    String   @map("confluence_page_id")
+  id                  String    @id @default(uuid())
+  orgId               String    @map("org_id")
+  confluencePageId    String    @map("confluence_page_id")
   title               String
-  contentHash         String?  @map("content_hash")
-  lastContentSnapshot String?  @map("last_content_snapshot") @db.Text
+  contentHash         String?   @map("content_hash")
+  lastContentSnapshot String?   @map("last_content_snapshot") @db.Text
   lastSyncedAt        DateTime? @map("last_synced_at")
-  freshnessScore      Decimal  @default(1.0) @map("freshness_score") @db.Decimal(3, 2)
-  ownerUserId         String?  @map("owner_user_id")
-  ownerSource         String?  @map("owner_source")
-  repoMapping         String[] @map("repo_mapping")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  freshnessScore      Decimal   @default(1.0) @map("freshness_score") @db.Decimal(3, 2)
+  ownerUserId         String?   @map("owner_user_id")
+  ownerSource         String?   @map("owner_source")
+  repoMapping         String[]  @map("repo_mapping")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   organization  Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
   owner         User?          @relation("DocumentOwner", fields: [ownerUserId], references: [id])
@@ -104,7 +375,7 @@ model DocMapping {
 model Signal {
   id            String    @id @default(uuid())
   orgId         String    @map("org_id")
-  type          String    // 'github_pr', 'pagerduty_incident', 'slack_question'
+  type          String // 'github_pr', 'pagerduty_incident', 'slack_question'
   externalId    String    @map("external_id")
   repoFullName  String?   @map("repo_full_name")
   payload       Json
@@ -122,28 +393,28 @@ model Signal {
 
 // Generated diff proposals
 model DiffProposal {
-  id                String    @id @default(uuid())
-  orgId             String    @map("org_id")
-  signalId          String?   @map("signal_id")
-  documentId        String?   @map("document_id")
+  id         String  @id @default(uuid())
+  orgId      String  @map("org_id")
+  signalId   String? @map("signal_id")
+  documentId String? @map("document_id")
 
   // The diff itself
-  diffContent       String    @map("diff_content")
+  diffContent       String   @map("diff_content")
   summary           String?
   rationale         String?
-  confidence        Decimal?  @db.Decimal(3, 2)
-  suspectedSections String[]  @map("suspected_sections")
-  sourceLinks       String[]  @map("source_links")
+  confidence        Decimal? @db.Decimal(3, 2)
+  suspectedSections String[] @map("suspected_sections")
+  sourceLinks       String[] @map("source_links")
 
   // Routing
-  routedToUserId    String?   @map("routed_to_user_id")
-  routingConfidence String?   @map("routing_confidence")
+  routedToUserId    String? @map("routed_to_user_id")
+  routingConfidence String? @map("routing_confidence")
 
   // Approval state
-  status            String    @default("pending")
-  slackChannelId    String?   @map("slack_channel_id")
-  slackMessageTs    String?   @map("slack_message_ts")
-  snoozeUntil       DateTime? @map("snooze_until")
+  status         String    @default("pending")
+  slackChannelId String?   @map("slack_channel_id")
+  slackMessageTs String?   @map("slack_message_ts")
+  snoozeUntil    DateTime? @map("snooze_until")
 
   // Resolution
   resolvedAt        DateTime? @map("resolved_at")
@@ -152,8 +423,8 @@ model DiffProposal {
   rejectionTags     String[]  @map("rejection_tags")
   editedDiffContent String?   @map("edited_diff_content")
 
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   organization Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
   signal       Signal?          @relation(fields: [signalId], references: [id])
@@ -171,7 +442,7 @@ model DiffProposal {
 model AuditLog {
   id             String   @id @default(uuid())
   orgId          String   @map("org_id")
-  action         String   // 'proposal_created', 'approved', 'rejected', 'edited', 'writeback_success'
+  action         String // 'proposal_created', 'approved', 'rejected', 'edited', 'writeback_success'
   actorUserId    String?  @map("actor_user_id")
   documentId     String?  @map("document_id")
   diffProposalId String?  @map("diff_proposal_id")

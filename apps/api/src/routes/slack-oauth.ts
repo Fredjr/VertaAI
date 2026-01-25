@@ -1,10 +1,14 @@
 /**
  * Slack OAuth Routes for Multi-tenant Installation
- * 
+ *
  * Flow:
  * 1. User clicks "Add to Slack" → /auth/slack/install
  * 2. Slack redirects to /auth/slack/callback with code
- * 3. Exchange code for tokens, create/update organization
+ * 3. Exchange code for tokens, create/update workspace + integration
+ *
+ * Supports both:
+ * - NEW: Workspace + Integration model (Phase 1)
+ * - LEGACY: Organization model (for backward compatibility)
  */
 
 import { Router, Request, Response } from 'express';
@@ -18,6 +22,9 @@ const SLACK_CLIENT_ID = process.env.SLACK_CLIENT_ID;
 const SLACK_CLIENT_SECRET = process.env.SLACK_CLIENT_SECRET;
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 const API_URL = process.env.API_URL || 'http://localhost:3001';
+
+// Feature flag: use new Workspace model instead of Organization
+const USE_WORKSPACE_MODEL = process.env.USE_WORKSPACE_MODEL === 'true';
 
 // Required OAuth scopes for the bot
 const SLACK_SCOPES = [
@@ -83,21 +90,30 @@ router.get('/callback', async (req: Request, res: Response) => {
   try {
     // Exchange code for access token
     const tokenResponse = await exchangeCodeForToken(String(code));
-    
+
     if (!tokenResponse.ok) {
       throw new Error(tokenResponse.error || 'Token exchange failed');
     }
 
-    // Create or update organization
-    const org = await upsertOrganization(tokenResponse);
+    let result: { id: string; name: string; type: 'workspace' | 'organization' };
 
-    console.log(`[SlackOAuth] Successfully installed for org: ${org.name} (${org.id})`);
+    if (USE_WORKSPACE_MODEL) {
+      // NEW: Create/update workspace + integration (Phase 1)
+      result = await upsertWorkspaceAndIntegration(tokenResponse);
+      console.log(`[SlackOAuth] Successfully installed for workspace: ${result.name} (${result.id})`);
+    } else {
+      // LEGACY: Create/update organization
+      const org = await upsertOrganization(tokenResponse);
+      result = { id: org.id, name: org.name, type: 'organization' };
+      console.log(`[SlackOAuth] Successfully installed for org: ${result.name} (${result.id})`);
+    }
 
     // Clear any cached Slack client
-    clearSlackClientCache(org.id);
+    clearSlackClientCache(result.id);
 
     // Redirect to success page
-    return res.redirect(`${APP_URL}/auth/success?org=${org.id}`);
+    const redirectParam = result.type === 'workspace' ? 'workspace' : 'org';
+    return res.redirect(`${APP_URL}/auth/success?${redirectParam}=${result.id}`);
 
   } catch (err: any) {
     console.error(`[SlackOAuth] Callback error:`, err);
@@ -124,7 +140,78 @@ async function exchangeCodeForToken(code: string): Promise<any> {
 }
 
 /**
- * Create or update organization from Slack OAuth response
+ * NEW: Create or update workspace + Slack integration (Phase 1)
+ */
+async function upsertWorkspaceAndIntegration(tokenResponse: any): Promise<{ id: string; name: string; type: 'workspace' }> {
+  const { team, access_token, bot_user_id } = tokenResponse;
+
+  // Use transaction to ensure atomic creation
+  const result = await prisma.$transaction(async (tx) => {
+    // Check if workspace already exists for this Slack team
+    let workspace = await tx.workspace.findFirst({
+      where: {
+        integrations: {
+          some: {
+            type: 'slack',
+            config: {
+              path: ['teamId'],
+              equals: team.id,
+            },
+          },
+        },
+      },
+    });
+
+    if (workspace) {
+      // Update existing workspace's Slack integration
+      await tx.integration.update({
+        where: {
+          workspaceId_type: {
+            workspaceId: workspace.id,
+            type: 'slack',
+          },
+        },
+        data: {
+          status: 'connected',
+          config: {
+            teamId: team.id,
+            teamName: team.name,
+            botToken: access_token,
+            botUserId: bot_user_id,
+          },
+        },
+      });
+    } else {
+      // Create new workspace with Slack integration
+      workspace = await tx.workspace.create({
+        data: {
+          name: team.name,
+          slug: team.id.toLowerCase(), // Use Slack team ID as slug
+          ownerEmail: 'admin@' + team.name.toLowerCase().replace(/\s+/g, '') + '.com',
+          integrations: {
+            create: {
+              type: 'slack',
+              status: 'connected',
+              config: {
+                teamId: team.id,
+                teamName: team.name,
+                botToken: access_token,
+                botUserId: bot_user_id,
+              },
+            },
+          },
+        },
+      });
+    }
+
+    return workspace;
+  });
+
+  return { id: result.id, name: result.name, type: 'workspace' };
+}
+
+/**
+ * LEGACY: Create or update organization from Slack OAuth response
  */
 async function upsertOrganization(tokenResponse: any): Promise<{ id: string; name: string }> {
   const { team, access_token, bot_user_id } = tokenResponse;
@@ -136,7 +223,7 @@ async function upsertOrganization(tokenResponse: any): Promise<{ id: string; nam
       slackBotToken: access_token,
       slackTeamName: team.name,
       settings: {
-        ...(await prisma.organization.findUnique({ 
+        ...(await prisma.organization.findUnique({
           where: { slackWorkspaceId: team.id },
           select: { settings: true }
         }))?.settings as object || {},

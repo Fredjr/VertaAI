@@ -13,7 +13,12 @@ const PORT = process.env.PORT || 3001;
 // Middleware
 app.use(cors());
 app.use(cookieParser());
-app.use(express.json());
+// Preserve raw body for webhook signature verification
+app.use(express.json({
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf.toString();
+  }
+}));
 app.use(express.urlencoded({ extended: true })); // For Slack form-encoded payloads
 
 // Health check endpoint
@@ -188,6 +193,201 @@ app.get('/api/audit-logs', async (_req: Request, res: Response) => {
     res.json({ logs });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch audit logs' });
+  }
+});
+
+// ============================================================================
+// NEW: Workspace endpoints (Phase 1)
+// ============================================================================
+
+// List all workspaces
+app.get('/api/workspaces', async (_req: Request, res: Response) => {
+  try {
+    const workspaces = await prisma.workspace.findMany({
+      include: {
+        integrations: {
+          select: { id: true, type: true, status: true },
+        },
+        _count: {
+          select: { signalEvents: true, driftCandidates: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    // Convert BigInt ids to strings for JSON serialization
+    const serializedWorkspaces = workspaces.map(w => ({
+      ...w,
+      integrations: w.integrations.map(i => ({
+        ...i,
+        id: i.id.toString(),
+      })),
+    }));
+    res.json({ workspaces: serializedWorkspaces });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch workspaces' });
+  }
+});
+
+// Get a single workspace
+app.get('/api/workspaces/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      include: {
+        integrations: true,
+        _count: {
+          select: { signalEvents: true, driftCandidates: true, patchProposals: true },
+        },
+      },
+    });
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+    // Mask sensitive data and convert BigInt to string
+    const maskedIntegrations = workspace.integrations.map(i => ({
+      ...i,
+      id: i.id.toString(),
+      config: i.status === 'connected' ? 'CONFIGURED' : null,
+    }));
+    res.json({ ...workspace, integrations: maskedIntegrations });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch workspace' });
+  }
+});
+
+// Create a new workspace
+app.post('/api/workspaces', async (req: Request, res: Response) => {
+  const { name, ownerEmail, slug } = req.body;
+
+  if (!name || !ownerEmail) {
+    return res.status(400).json({ error: 'Missing name or ownerEmail' });
+  }
+
+  try {
+    const workspace = await prisma.workspace.create({
+      data: {
+        name,
+        ownerEmail,
+        slug: slug || name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
+      },
+    });
+    res.status(201).json({ workspace });
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'Workspace with this slug already exists' });
+    }
+    res.status(500).json({ error: 'Failed to create workspace' });
+  }
+});
+
+// List signal events for a workspace
+app.get('/api/workspaces/:id/signals', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const signals = await prisma.signalEvent.findMany({
+      where: { workspaceId: id },
+      take: 50,
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ signals });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch signals' });
+  }
+});
+
+// List drift candidates for a workspace
+app.get('/api/workspaces/:id/drifts', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const drifts = await prisma.driftCandidate.findMany({
+      where: { workspaceId: id },
+      take: 50,
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ drifts });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch drifts' });
+  }
+});
+
+// Create or update an integration for a workspace
+app.put('/api/workspaces/:id/integrations/:type', async (req: Request, res: Response) => {
+  const workspaceId = req.params.id;
+  const integrationType = req.params.type;
+  const { config, webhookSecret } = req.body;
+
+  if (!workspaceId || !integrationType) {
+    return res.status(400).json({ error: 'Missing workspace ID or integration type' });
+  }
+
+  const validTypes = ['github', 'slack', 'confluence', 'notion', 'pagerduty'];
+  if (!validTypes.includes(integrationType)) {
+    return res.status(400).json({ error: `Invalid integration type. Must be one of: ${validTypes.join(', ')}` });
+  }
+
+  try {
+    const integration = await prisma.integration.upsert({
+      where: {
+        workspaceId_type: {
+          workspaceId: workspaceId,
+          type: integrationType,
+        },
+      },
+      update: {
+        config: config || {},
+        webhookSecret: webhookSecret || null,
+        status: 'connected',
+      },
+      create: {
+        workspaceId: workspaceId,
+        type: integrationType,
+        status: 'connected',
+        config: config || {},
+        webhookSecret: webhookSecret || null,
+      },
+    });
+    // Convert BigInt id to string for JSON serialization
+    res.json({
+      integration: {
+        ...integration,
+        id: integration.id.toString(),
+        config: 'CONFIGURED'
+      }
+    });
+  } catch (error: any) {
+    console.error('[Integration] Error creating/updating integration:', error);
+    if (error.code === 'P2003') {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+    res.status(500).json({ error: 'Failed to create/update integration', details: error.message });
+  }
+});
+
+// Delete an integration for a workspace
+app.delete('/api/workspaces/:id/integrations/:type', async (req: Request, res: Response) => {
+  const workspaceId = req.params.id;
+  const integrationType = req.params.type;
+
+  if (!workspaceId || !integrationType) {
+    return res.status(400).json({ error: 'Missing workspace ID or integration type' });
+  }
+
+  try {
+    await prisma.integration.delete({
+      where: {
+        workspaceId_type: {
+          workspaceId: workspaceId,
+          type: integrationType,
+        },
+      },
+    });
+    res.json({ success: true });
+  } catch (error: any) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Integration not found' });
+    }
+    res.status(500).json({ error: 'Failed to delete integration' });
   }
 });
 

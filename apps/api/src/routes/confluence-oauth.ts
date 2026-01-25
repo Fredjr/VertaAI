@@ -1,15 +1,20 @@
 /**
  * Confluence OAuth Routes for Multi-tenant Integration
- * 
+ *
  * Flow:
  * 1. User clicks "Connect Confluence" → /auth/confluence/install
  * 2. Atlassian redirects to /auth/confluence/callback with code
- * 3. Exchange code for tokens, store in organization
+ * 3. Exchange code for tokens, store in workspace/organization
+ *
+ * Supports both:
+ * - NEW: Workspace + Integration model (Phase 1) - use workspaceId param
+ * - LEGACY: Organization model - use orgId param
  */
 
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { prisma } from '../lib/db.js';
+import { clearConfluenceCache } from '../services/confluence-client.js';
 
 const router: RouterType = Router();
 
@@ -31,21 +36,28 @@ const CONFLUENCE_SCOPES = [
 /**
  * GET /auth/confluence/install
  * Redirects to Atlassian OAuth authorization page
- * Requires orgId query param to link to existing organization
+ *
+ * Supports both:
+ * - workspaceId: New workspace model (Phase 1)
+ * - orgId: Legacy organization model
  */
 router.get('/install', (req: Request, res: Response) => {
-  const { orgId } = req.query;
+  const { workspaceId, orgId } = req.query;
+  const id = workspaceId || orgId;
+  const isWorkspace = !!workspaceId;
 
   if (!CONFLUENCE_CLIENT_ID) {
     return res.status(500).json({ error: 'Confluence client ID not configured' });
   }
 
-  if (!orgId) {
-    return res.status(400).json({ error: 'orgId query parameter required' });
+  if (!id) {
+    return res.status(400).json({ error: 'workspaceId or orgId query parameter required' });
   }
 
   const redirectUri = `${API_URL}/auth/confluence/callback`;
-  const state = `${orgId}:${generateState()}`; // Include orgId in state
+  // Encode type (w=workspace, o=org) and id in state
+  const statePrefix = isWorkspace ? 'w' : 'o';
+  const state = `${statePrefix}:${id}:${generateState()}`;
 
   // Store state in cookie for verification
   res.cookie('confluence_oauth_state', state, {
@@ -63,7 +75,7 @@ router.get('/install', (req: Request, res: Response) => {
   authUrl.searchParams.set('response_type', 'code');
   authUrl.searchParams.set('prompt', 'consent');
 
-  console.log(`[ConfluenceOAuth] Redirecting to Atlassian authorization for org ${orgId}`);
+  console.log(`[ConfluenceOAuth] Redirecting to Atlassian authorization for ${isWorkspace ? 'workspace' : 'org'} ${id}`);
   return res.redirect(authUrl.toString());
 });
 
@@ -89,9 +101,17 @@ router.get('/callback', async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, error: 'Missing authorization code or state' });
   }
 
-  // Extract orgId from state
-  const [orgId] = String(state).split(':');
-  if (!orgId) {
+  // Parse state: format is "type:id:nonce" where type is 'w' (workspace) or 'o' (org)
+  const stateParts = String(state).split(':');
+  const stateType = stateParts[0];
+  const stateId = stateParts[1];
+
+  // Handle legacy format (just "orgId:nonce")
+  const isWorkspace = stateType === 'w';
+  const isLegacyOrg = stateType === 'o';
+  const id = (isWorkspace || isLegacyOrg) ? stateId : stateType; // Legacy: stateType is actually the orgId
+
+  if (!id) {
     return res.status(400).json({ success: false, error: 'Invalid state parameter' });
   }
 
@@ -123,25 +143,68 @@ router.get('/callback', async (req: Request, res: Response) => {
     // Use the first accessible Confluence site
     const cloudId = resources[0].id;
     const siteName = resources[0].name;
+    const siteUrl = resources[0].url;
 
     console.log(`[ConfluenceOAuth] Found Confluence site: ${siteName} (${cloudId})`);
 
-    // Update organization with Confluence credentials
-    await prisma.organization.update({
-      where: { id: orgId },
-      data: {
-        confluenceCloudId: cloudId,
-        confluenceAccessToken: tokenResponse.access_token,
-        settings: {
-          confluenceSiteName: siteName,
-          confluenceRefreshToken: tokenResponse.refresh_token,
+    if (isWorkspace) {
+      // NEW: Create/update Confluence integration for workspace (Phase 1)
+      await prisma.integration.upsert({
+        where: {
+          workspaceId_type: {
+            workspaceId: id,
+            type: 'confluence',
+          },
         },
-      },
-    });
+        update: {
+          status: 'connected',
+          config: {
+            cloudId,
+            siteName,
+            siteUrl,
+            accessToken: tokenResponse.access_token,
+            refreshToken: tokenResponse.refresh_token,
+          },
+        },
+        create: {
+          workspaceId: id,
+          type: 'confluence',
+          status: 'connected',
+          config: {
+            cloudId,
+            siteName,
+            siteUrl,
+            accessToken: tokenResponse.access_token,
+            refreshToken: tokenResponse.refresh_token,
+          },
+        },
+      });
 
-    console.log(`[ConfluenceOAuth] Successfully connected Confluence for org ${orgId}: ${siteName}`);
+      // Clear cached credentials
+      clearConfluenceCache(id);
 
-    // Return success page instead of redirect
+      console.log(`[ConfluenceOAuth] Successfully connected Confluence for workspace ${id}: ${siteName}`);
+    } else {
+      // LEGACY: Update organization with Confluence credentials
+      await prisma.organization.update({
+        where: { id },
+        data: {
+          confluenceCloudId: cloudId,
+          confluenceAccessToken: tokenResponse.access_token,
+          settings: {
+            confluenceSiteName: siteName,
+            confluenceRefreshToken: tokenResponse.refresh_token,
+          },
+        },
+      });
+
+      // Clear cached credentials
+      clearConfluenceCache(id);
+
+      console.log(`[ConfluenceOAuth] Successfully connected Confluence for org ${id}: ${siteName}`);
+    }
+
+    // Return success page
     return res.send(`
       <html>
         <head><title>Confluence Connected</title></head>
@@ -149,6 +212,7 @@ router.get('/callback', async (req: Request, res: Response) => {
           <h1>✅ Confluence Connected!</h1>
           <p>Site: <strong>${siteName}</strong></p>
           <p>Cloud ID: <code>${cloudId}</code></p>
+          <p>Connected to: ${isWorkspace ? 'Workspace' : 'Organization'} <code>${id}</code></p>
           <p>You can close this window and return to Slack to test the approval flow.</p>
         </body>
       </html>

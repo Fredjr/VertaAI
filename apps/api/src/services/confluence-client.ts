@@ -1,6 +1,10 @@
 /**
  * Multi-tenant Confluence Client
- * Handles reading and writing Confluence pages for multiple organizations
+ * Handles reading and writing Confluence pages for multiple organizations/workspaces
+ *
+ * Supports both:
+ * - NEW: Workspace + Integration model (Phase 1)
+ * - LEGACY: Organization model (for backward compatibility)
  */
 
 import { prisma } from '../lib/db.js';
@@ -10,42 +14,67 @@ interface ConfluenceCredentials {
   accessToken: string;
 }
 
-// Cache of credentials per organization
+// Cache of credentials per workspace/organization
 const credentialsCache = new Map<string, ConfluenceCredentials>();
 
 /**
- * Get Confluence credentials for an organization
+ * Get Confluence credentials for a workspace or organization
+ * Tries Integration model first, then falls back to Organization model
  */
-async function getCredentials(orgId: string): Promise<ConfluenceCredentials | null> {
+async function getCredentials(workspaceOrOrgId: string): Promise<ConfluenceCredentials | null> {
   // Check cache first
-  if (credentialsCache.has(orgId)) {
-    return credentialsCache.get(orgId)!;
+  if (credentialsCache.has(workspaceOrOrgId)) {
+    return credentialsCache.get(workspaceOrOrgId)!;
   }
 
-  const org = await prisma.organization.findUnique({
-    where: { id: orgId },
-    select: { confluenceCloudId: true, confluenceAccessToken: true },
+  let cloudId: string | null = null;
+  let accessToken: string | null = null;
+
+  // Try new Integration model first (Phase 1)
+  const integration = await prisma.integration.findUnique({
+    where: {
+      workspaceId_type: {
+        workspaceId: workspaceOrOrgId,
+        type: 'confluence',
+      }
+    },
+    select: { config: true, status: true },
   });
 
-  if (!org?.confluenceCloudId || !org?.confluenceAccessToken) {
-    console.warn(`[ConfluenceClient] No Confluence credentials for org ${orgId}`);
+  if (integration?.status === 'connected' && integration.config) {
+    const config = integration.config as { cloudId?: string; accessToken?: string };
+    cloudId = config.cloudId || null;
+    accessToken = config.accessToken || null;
+  }
+
+  // Fall back to legacy Organization model
+  if (!cloudId || !accessToken) {
+    const org = await prisma.organization.findUnique({
+      where: { id: workspaceOrOrgId },
+      select: { confluenceCloudId: true, confluenceAccessToken: true },
+    });
+
+    if (org?.confluenceCloudId && org?.confluenceAccessToken) {
+      cloudId = org.confluenceCloudId;
+      accessToken = org.confluenceAccessToken;
+    }
+  }
+
+  if (!cloudId || !accessToken) {
+    console.warn(`[ConfluenceClient] No Confluence credentials for workspace/org ${workspaceOrOrgId}`);
     return null;
   }
 
-  const credentials = {
-    cloudId: org.confluenceCloudId,
-    accessToken: org.confluenceAccessToken,
-  };
-
-  credentialsCache.set(orgId, credentials);
+  const credentials = { cloudId, accessToken };
+  credentialsCache.set(workspaceOrOrgId, credentials);
   return credentials;
 }
 
 /**
- * Clear cached credentials for an organization (e.g., after token refresh)
+ * Clear cached credentials for a workspace/organization (e.g., after token refresh)
  */
-export function clearConfluenceCache(orgId: string): void {
-  credentialsCache.delete(orgId);
+export function clearConfluenceCache(workspaceOrOrgId: string): void {
+  credentialsCache.delete(workspaceOrOrgId);
 }
 
 /**

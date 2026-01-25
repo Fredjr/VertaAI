@@ -1,49 +1,75 @@
 /**
  * Multi-tenant Slack Client
- * Handles OAuth, messaging, and interactions for multiple organizations
+ * Handles OAuth, messaging, and interactions for multiple organizations/workspaces
+ *
+ * Supports both:
+ * - NEW: Workspace + Integration model (Phase 1)
+ * - LEGACY: Organization model (for backward compatibility)
  */
 
 import { WebClient, LogLevel } from '@slack/web-api';
 import { prisma } from '../lib/db.js';
 
-// Cache of Slack clients per organization
+// Cache of Slack clients per workspace/organization
 const clientCache = new Map<string, WebClient>();
 
 /**
- * Get or create a Slack WebClient for an organization
+ * Get or create a Slack WebClient for a workspace
+ * Tries Integration model first, then falls back to Organization model
  * Uses cached client if available, otherwise creates new one from stored token
  */
-export async function getSlackClient(orgId: string): Promise<WebClient | null> {
+export async function getSlackClient(workspaceOrOrgId: string): Promise<WebClient | null> {
   // Check cache first
-  if (clientCache.has(orgId)) {
-    return clientCache.get(orgId)!;
+  if (clientCache.has(workspaceOrOrgId)) {
+    return clientCache.get(workspaceOrOrgId)!;
   }
 
-  // Fetch org from database
-  const org = await prisma.organization.findUnique({
-    where: { id: orgId },
-    select: { slackBotToken: true, slackWorkspaceId: true },
+  let botToken: string | null = null;
+
+  // Try new Integration model first (Phase 1)
+  const integration = await prisma.integration.findUnique({
+    where: {
+      workspaceId_type: {
+        workspaceId: workspaceOrOrgId,
+        type: 'slack',
+      }
+    },
+    select: { config: true, status: true },
   });
 
-  if (!org?.slackBotToken) {
-    console.warn(`[SlackClient] No Slack token for org ${orgId}`);
+  if (integration?.status === 'connected' && integration.config) {
+    const config = integration.config as { botToken?: string };
+    botToken = config.botToken || null;
+  }
+
+  // Fall back to legacy Organization model
+  if (!botToken) {
+    const org = await prisma.organization.findUnique({
+      where: { id: workspaceOrOrgId },
+      select: { slackBotToken: true },
+    });
+    botToken = org?.slackBotToken || null;
+  }
+
+  if (!botToken) {
+    console.warn(`[SlackClient] No Slack token for workspace/org ${workspaceOrOrgId}`);
     return null;
   }
 
   // Create and cache client
-  const client = new WebClient(org.slackBotToken, {
+  const client = new WebClient(botToken, {
     logLevel: LogLevel.WARN,
   });
 
-  clientCache.set(orgId, client);
+  clientCache.set(workspaceOrOrgId, client);
   return client;
 }
 
 /**
- * Clear cached client for an organization (e.g., after token refresh)
+ * Clear cached client for a workspace/organization (e.g., after token refresh)
  */
-export function clearSlackClientCache(orgId: string): void {
-  clientCache.delete(orgId);
+export function clearSlackClientCache(workspaceOrOrgId: string): void {
+  clientCache.delete(workspaceOrOrgId);
 }
 
 /**
