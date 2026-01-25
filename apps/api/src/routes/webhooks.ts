@@ -244,7 +244,8 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
       try {
         const pipelineResult = await runDriftDetectionPipeline({
           signalId: signalEvent.id,
-          orgId: workspaceId, // Use workspaceId as orgId for compatibility
+          workspaceId,
+          driftCandidateId: driftCandidate.id,
           prNumber: prInfo.prNumber,
           prTitle: prInfo.prTitle,
           prBody: prInfo.prBody,
@@ -417,34 +418,15 @@ async function handlePullRequestEventLegacy(payload: any, res: Response) {
 
     console.log(`[Webhook] Created signal ${signal.id} for PR #${prInfo.prNumber}`);
 
-    // Run full drift detection pipeline (A → B → C → D → E)
-    // Note: For production, this should be queued with BullMQ
-    try {
-      const pipelineResult = await runDriftDetectionPipeline({
-        signalId: signal.id,
-        orgId: org.id,
-        prNumber: prInfo.prNumber,
-        prTitle: prInfo.prTitle,
-        prBody: prInfo.prBody,
-        repoFullName: prInfo.repoFullName,
-        authorLogin: prInfo.authorLogin,
-        mergedAt: prInfo.mergedAt,
-        changedFiles: files,
-        diff,
-      });
-
-      console.log(`[Webhook] Pipeline complete: drift_detected=${pipelineResult.driftDetected}, proposals=${pipelineResult.proposalIds.length}`);
-      if (pipelineResult.errors.length > 0) {
-        console.warn(`[Webhook] Pipeline errors: ${pipelineResult.errors.join(', ')}`);
-      }
-    } catch (pipelineError) {
-      console.error('[Webhook] Pipeline failed:', pipelineError);
-      // Don't fail the webhook - we still created the signal
-    }
+    // DEPRECATED: Legacy pipeline disabled - use tenant-routed webhooks instead
+    // The legacy pipeline uses the old Signal model, not workspace-scoped SignalEvent
+    console.warn('[Webhook] [LEGACY] Pipeline disabled. Please migrate to /webhooks/github/:workspaceId');
 
     return res.json({
-      message: 'PR processed successfully',
+      message: 'PR recorded (legacy mode - pipeline disabled)',
       signalId: signal.id,
+      deprecated: true,
+      migrateTo: '/webhooks/github/:workspaceId',
     });
 
   } catch (error) {

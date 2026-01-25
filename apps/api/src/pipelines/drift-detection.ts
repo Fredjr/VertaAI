@@ -13,7 +13,8 @@ import type { DriftTriageOutput } from '@vertaai/shared';
 
 export interface DriftDetectionInput {
   signalId: string;
-  orgId: string;
+  workspaceId: string;
+  driftCandidateId: string;
   prNumber: number;
   prTitle: string;
   prBody: string | null;
@@ -53,15 +54,31 @@ export async function runDriftDetectionPipeline(input: DriftDetectionInput): Pro
   };
 
   const triageResult = await runDriftTriage(triageInput);
-  
-  // Update signal with triage result
-  await prisma.signal.update({
-    where: { id: input.signalId },
-    data: {
-      driftAnalysis: triageResult.success ? triageResult.data : { error: triageResult.error },
-      processedAt: new Date(),
-    },
-  });
+
+  // Update drift candidate with triage result
+  if (triageResult.success && triageResult.data) {
+    // Infer drift type from impacted domains (will be enhanced in Phase 3)
+    const inferredDriftType = triageResult.data.impacted_domains.includes('deployment') ||
+                              triageResult.data.impacted_domains.includes('config')
+                              ? 'instruction' : 'process';
+
+    await prisma.driftCandidate.update({
+      where: {
+        workspaceId_id: {
+          workspaceId: input.workspaceId,
+          id: input.driftCandidateId,
+        },
+      },
+      data: {
+        driftType: inferredDriftType,
+        driftDomains: triageResult.data.impacted_domains || [],
+        evidenceSummary: triageResult.data.evidence_summary || null,
+        confidence: triageResult.data.confidence || null,
+        state: 'DRIFT_CLASSIFIED',
+        stateUpdatedAt: new Date(),
+      },
+    });
+  }
 
   if (!triageResult.success || !triageResult.data) {
     errors.push(`Triage failed: ${triageResult.error}`);
@@ -80,7 +97,7 @@ export async function runDriftDetectionPipeline(input: DriftDetectionInput): Pro
     repoFullName: input.repoFullName,
     suspectedServices: extractServicesFromFiles(input.changedFiles),
     impactedDomains: triage.impacted_domains,
-    orgId: input.orgId,
+    orgId: input.workspaceId, // Use workspaceId for backward compatibility
   });
 
   if (!docResolverResult.success || !docResolverResult.data) {
@@ -100,7 +117,8 @@ export async function runDriftDetectionPipeline(input: DriftDetectionInput): Pro
         input,
         triage,
         candidate,
-        orgId: input.orgId,
+        workspaceId: input.workspaceId,
+        driftCandidateId: input.driftCandidateId,
       });
       if (proposalId) {
         proposalIds.push(proposalId);
@@ -118,11 +136,12 @@ interface ProcessDocInput {
   input: DriftDetectionInput;
   triage: DriftTriageOutput;
   candidate: { doc_id: string; title: string; confidence: number };
-  orgId: string;
+  workspaceId: string;
+  driftCandidateId: string;
 }
 
 async function processDocCandidate(params: ProcessDocInput): Promise<string | null> {
-  const { input, triage, candidate, orgId } = params;
+  const { input, triage, candidate, workspaceId, driftCandidateId } = params;
   console.log(`[Pipeline] Processing doc candidate: ${candidate.title}`);
 
   // Fetch document content from database
@@ -176,16 +195,20 @@ async function processDocCandidate(params: ProcessDocInput): Promise<string | nu
     return null;
   }
 
-  // Create diff proposal in database
-  const proposal = await prisma.diffProposal.create({
+  // Create patch proposal in database (new workspace-scoped model)
+  const proposal = await prisma.patchProposal.create({
     data: {
-      orgId,
-      documentId: candidate.doc_id,
-      signalId: input.signalId,
-      diffContent: patchResult.data.unified_diff,
-      summary: patchResult.data.summary,
+      workspaceId,
+      driftId: driftCandidateId,
+      docSystem: 'confluence', // TODO: detect from doc source
+      docId: candidate.doc_id,
+      docTitle: candidate.title,
+      patchStyle: 'replace_steps',
+      unifiedDiff: patchResult.data.unified_diff,
+      sourcesUsed: [{ type: 'pr', ref: `${input.repoFullName}#${input.prNumber}` }],
       confidence: patchResult.data.confidence,
-      status: patchResult.data.needs_human ? 'needs_review' : 'pending',
+      summary: patchResult.data.summary,
+      status: patchResult.data.needs_human ? 'proposed' : 'proposed',
     },
   });
 

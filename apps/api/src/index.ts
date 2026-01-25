@@ -762,35 +762,53 @@ app.post('/api/test/send-proposal', async (req: Request, res: Response) => {
 });
 
 app.post('/api/test/trigger-drift', async (req: Request, res: Response) => {
-  const { orgId, prNumber, prTitle, prBody, changedFiles, diff } = req.body;
+  const { workspaceId, prNumber, prTitle, prBody, changedFiles, diff } = req.body;
 
-  if (!orgId) {
-    return res.status(400).json({ error: 'Missing orgId' });
+  if (!workspaceId) {
+    return res.status(400).json({ error: 'Missing workspaceId' });
   }
 
   try {
-    // Create a test signal
-    const signal = await prisma.signal.create({
+    const testPrNumber = prNumber || 999;
+    const signalEventId = `github_pr_test_${testPrNumber}_${Date.now()}`;
+
+    // Create a test SignalEvent (workspace-scoped)
+    const signalEvent = await prisma.signalEvent.create({
       data: {
-        orgId,
-        type: 'github_pr',
-        externalId: `Fredjr/VertaAI#${prNumber || 999}`,
-        repoFullName: 'Fredjr/VertaAI',
-        payload: {
-          prNumber: prNumber || 999,
+        workspaceId,
+        id: signalEventId,
+        sourceType: 'github_pr',
+        occurredAt: new Date(),
+        repo: 'Fredjr/VertaAI',
+        service: 'test',
+        extracted: {
+          prNumber: testPrNumber,
           prTitle: prTitle || 'Test PR for drift detection',
           prBody: prBody || 'Testing drift detection pipeline',
           changedFiles: changedFiles || [],
-          diff: diff || '',
         },
+        rawPayload: { diff: diff || '' },
+      },
+    });
+
+    // Create a DriftCandidate
+    const driftCandidate = await prisma.driftCandidate.create({
+      data: {
+        workspaceId,
+        signalEventId: signalEvent.id,
+        state: 'INGESTED',
+        sourceType: 'github_pr',
+        repo: 'Fredjr/VertaAI',
+        service: 'test',
       },
     });
 
     // Run the pipeline
     const result = await runDriftDetectionPipeline({
-      signalId: signal.id,
-      orgId,
-      prNumber: prNumber || 999,
+      signalId: signalEvent.id,
+      workspaceId,
+      driftCandidateId: driftCandidate.id,
+      prNumber: testPrNumber,
       prTitle: prTitle || 'Test PR for drift detection',
       prBody: prBody || 'Testing drift detection pipeline',
       repoFullName: 'Fredjr/VertaAI',
@@ -802,7 +820,8 @@ app.post('/api/test/trigger-drift', async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      signalId: signal.id,
+      signalEventId: signalEvent.id,
+      driftCandidateId: driftCandidate.id,
       driftDetected: result.driftDetected,
       proposalIds: result.proposalIds,
       errors: result.errors,
