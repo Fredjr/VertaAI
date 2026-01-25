@@ -21,6 +21,8 @@
     "@prisma/client": "^5.14.0",
     "@slack/bolt": "^3.18.0",
     "@slack/web-api": "^7.13.0",
+    "@upstash/qstash": "^2.8.4",
+    "@upstash/redis": "^1.36.1",
     "@vertaai/shared": "workspace:*",
     "bullmq": "^5.7.0",
     "cookie-parser": "^1.4.7",

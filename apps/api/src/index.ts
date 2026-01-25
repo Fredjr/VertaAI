@@ -6,6 +6,7 @@ import webhooksRouter from './routes/webhooks.js';
 import slackOAuthRouter from './routes/slack-oauth.js';
 import slackInteractionsRouter from './routes/slack-interactions.js';
 import confluenceOAuthRouter from './routes/confluence-oauth.js';
+import jobsRouter from './routes/jobs.js';
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -53,6 +54,9 @@ app.use('/auth/confluence', confluenceOAuthRouter);
 
 // Slack interaction routes (button clicks, modals)
 app.use('/slack/interactions', slackInteractionsRouter);
+
+// Jobs route (QStash callback endpoint for state machine processing)
+app.use('/api/jobs', jobsRouter);
 
 // Slack events endpoint (for URL verification and events)
 app.post('/slack/events', (req: Request, res: Response) => {

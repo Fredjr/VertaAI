@@ -4,6 +4,7 @@ import { Octokit } from 'octokit';
 import { prisma } from '../lib/db.js';
 import { verifyWebhookSignature, extractPRInfo, getInstallationOctokit, getPRDiff, getPRFiles } from '../lib/github.js';
 import { runDriftDetectionPipeline } from '../pipelines/drift-detection.js';
+import { enqueueJob } from '../services/queue/qstash.js';
 
 // Create Octokit with personal access token for repo webhooks (no installation)
 function getTokenOctokit(): Octokit | null {
@@ -229,51 +230,58 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
 
     console.log(`[Webhook] [V2] Created drift candidate ${driftCandidate.id} in INGESTED state`);
 
-    // TODO (Phase 2): Enqueue QStash job for async processing
-    // await enqueueJob({ workspaceId, driftId: driftCandidate.id });
+    // Phase 2: Enqueue QStash job for async state machine processing
+    const messageId = await enqueueJob({
+      workspaceId,
+      driftId: driftCandidate.id,
+    });
 
-    // For now, run the pipeline synchronously (will be removed in Phase 2)
-    // This maintains backward compatibility during migration
-    try {
-      const pipelineResult = await runDriftDetectionPipeline({
-        signalId: signalEvent.id,
-        orgId: workspaceId, // Use workspaceId as orgId for compatibility
-        prNumber: prInfo.prNumber,
-        prTitle: prInfo.prTitle,
-        prBody: prInfo.prBody,
-        repoFullName: prInfo.repoFullName,
-        authorLogin: prInfo.authorLogin,
-        mergedAt: prInfo.mergedAt,
-        changedFiles: files,
-        diff,
-      });
+    if (messageId) {
+      console.log(`[Webhook] [V2] Enqueued job ${messageId} for drift candidate ${driftCandidate.id}`);
+    } else {
+      // QStash not configured - fall back to synchronous pipeline (backward compatibility)
+      console.log(`[Webhook] [V2] QStash not configured - running synchronous pipeline`);
+      try {
+        const pipelineResult = await runDriftDetectionPipeline({
+          signalId: signalEvent.id,
+          orgId: workspaceId, // Use workspaceId as orgId for compatibility
+          prNumber: prInfo.prNumber,
+          prTitle: prInfo.prTitle,
+          prBody: prInfo.prBody,
+          repoFullName: prInfo.repoFullName,
+          authorLogin: prInfo.authorLogin,
+          mergedAt: prInfo.mergedAt,
+          changedFiles: files,
+          diff,
+        });
 
-      // Update drift candidate state based on pipeline result
-      if (pipelineResult.driftDetected && pipelineResult.proposalIds.length > 0) {
+        // Update drift candidate state based on pipeline result
+        if (pipelineResult.driftDetected && pipelineResult.proposalIds.length > 0) {
+          await prisma.driftCandidate.update({
+            where: {
+              workspaceId_id: { workspaceId, id: driftCandidate.id }
+            },
+            data: {
+              state: 'SLACK_SENT',
+              stateUpdatedAt: new Date(),
+            }
+          });
+        }
+
+        console.log(`[Webhook] [V2] Sync pipeline complete: drift_detected=${pipelineResult.driftDetected}`);
+      } catch (pipelineError) {
+        console.error('[Webhook] [V2] Sync pipeline failed:', pipelineError);
+        // Update drift candidate with error
         await prisma.driftCandidate.update({
           where: {
             workspaceId_id: { workspaceId, id: driftCandidate.id }
           },
           data: {
-            state: 'SLACK_SENT',
-            stateUpdatedAt: new Date(),
+            lastErrorMessage: String(pipelineError),
+            retryCount: { increment: 1 },
           }
         });
       }
-
-      console.log(`[Webhook] [V2] Pipeline complete: drift_detected=${pipelineResult.driftDetected}`);
-    } catch (pipelineError) {
-      console.error('[Webhook] [V2] Pipeline failed:', pipelineError);
-      // Update drift candidate with error
-      await prisma.driftCandidate.update({
-        where: {
-          workspaceId_id: { workspaceId, id: driftCandidate.id }
-        },
-        data: {
-          lastErrorMessage: String(pipelineError),
-          retryCount: { increment: 1 },
-        }
-      });
     }
 
     // Return 202 Accepted (async processing pattern)
@@ -281,6 +289,7 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
       message: 'Webhook received',
       signalEventId: signalEvent.id,
       driftId: driftCandidate.id,
+      qstashMessageId: messageId || undefined,
     });
 
   } catch (error) {

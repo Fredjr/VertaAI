@@ -1,6 +1,8 @@
 /**
  * Slack Interactions Handler
  * Handles button clicks (approve/edit/reject/snooze) from Slack messages
+ *
+ * Phase 2: Added workspace-scoped handlers for PatchProposal model with state machine
  */
 
 import { Router, Request, Response } from 'express';
@@ -11,6 +13,8 @@ import { updateSlackMessage, openSlackModal } from '../services/slack-client.js'
 import { processApproval, applyDiff } from '../pipelines/approval.js';
 import { processRejection } from '../pipelines/reject.js';
 import { getPage, updatePage, markdownToStorage } from '../services/confluence-client.js';
+import { enqueueJob } from '../services/queue/qstash.js';
+import { DriftState } from '../types/state-machine.js';
 
 const router: RouterType = Router();
 
@@ -511,6 +515,304 @@ async function findOrCreateUser(orgId: string, slackUserId: string) {
     update: {},
     create: { orgId, slackUserId },
   });
+}
+
+// ============================================================================
+// Phase 2: Workspace-Scoped State Machine Handlers
+// These functions handle actions on PatchProposal/DriftCandidate models
+// and enqueue QStash jobs for async state machine processing
+// ============================================================================
+
+/**
+ * Handle approve action for workspace-scoped PatchProposal
+ * Updates DriftCandidate state to APPROVED and enqueues job
+ */
+export async function handleWorkspaceApprove(
+  workspaceId: string,
+  patchProposalId: string,
+  slackUserId: string
+): Promise<{ success: boolean; error?: string }> {
+  console.log(`[SlackInteractions] [V2] Approving patch proposal ${patchProposalId}`);
+
+  try {
+    // Find the patch proposal
+    const patchProposal = await prisma.patchProposal.findFirst({
+      where: { workspaceId, id: patchProposalId },
+    });
+
+    if (!patchProposal) {
+      return { success: false, error: 'Patch proposal not found' };
+    }
+
+    // Update PatchProposal status
+    await prisma.patchProposal.update({
+      where: { workspaceId_id: { workspaceId, id: patchProposalId } },
+      data: { status: 'approved' },
+    });
+
+    // Find and update associated DriftCandidate
+    const driftCandidate = await prisma.driftCandidate.findFirst({
+      where: { workspaceId, id: patchProposal.driftId },
+    });
+
+    if (driftCandidate) {
+      // Update state to APPROVED
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId, id: driftCandidate.id } },
+        data: {
+          state: DriftState.APPROVED,
+          stateUpdatedAt: new Date(),
+        },
+      });
+
+      // Create approval record
+      await prisma.approval.create({
+        data: {
+          workspaceId,
+          patchId: patchProposalId,
+          action: 'approve',
+          actorSlackId: slackUserId,
+        },
+      });
+
+      // Enqueue QStash job to continue state machine (APPROVED -> WRITEBACK_VALIDATED -> ...)
+      const messageId = await enqueueJob({
+        workspaceId,
+        driftId: driftCandidate.id,
+      });
+
+      console.log(`[SlackInteractions] [V2] Approved - enqueued job ${messageId || 'sync'}`);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[SlackInteractions] [V2] Approve error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Handle reject action for workspace-scoped PatchProposal
+ * Updates DriftCandidate state to REJECTED (terminal state, no enqueue)
+ */
+export async function handleWorkspaceReject(
+  workspaceId: string,
+  patchProposalId: string,
+  slackUserId: string,
+  category: string,
+  reason?: string
+): Promise<{ success: boolean; error?: string }> {
+  console.log(`[SlackInteractions] [V2] Rejecting patch proposal ${patchProposalId} - ${category}`);
+
+  try {
+    // Find the patch proposal
+    const patchProposal = await prisma.patchProposal.findFirst({
+      where: { workspaceId, id: patchProposalId },
+    });
+
+    if (!patchProposal) {
+      return { success: false, error: 'Patch proposal not found' };
+    }
+
+    // Update PatchProposal status
+    await prisma.patchProposal.update({
+      where: { workspaceId_id: { workspaceId, id: patchProposalId } },
+      data: { status: 'rejected' },
+    });
+
+    // Find and update associated DriftCandidate
+    const driftCandidate = await prisma.driftCandidate.findFirst({
+      where: { workspaceId, id: patchProposal.driftId },
+    });
+
+    if (driftCandidate) {
+      // Update state to REJECTED (terminal state)
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId, id: driftCandidate.id } },
+        data: {
+          state: DriftState.REJECTED,
+          stateUpdatedAt: new Date(),
+        },
+      });
+
+      // Create approval record with rejection
+      await prisma.approval.create({
+        data: {
+          workspaceId,
+          patchId: patchProposalId,
+          action: 'reject',
+          actorSlackId: slackUserId,
+          rejectionCategory: category,
+          note: reason,
+        },
+      });
+
+      // Create audit event
+      await prisma.auditEvent.create({
+        data: {
+          workspaceId,
+          entityType: 'drift',
+          entityId: driftCandidate.id,
+          eventType: 'rejected',
+          payload: { category, reason, patchProposalId },
+          actorType: 'slack_user',
+          actorId: slackUserId,
+        },
+      });
+
+      // No QStash enqueue - REJECTED is a terminal state
+      console.log(`[SlackInteractions] [V2] Rejected - terminal state, no job enqueue`);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[SlackInteractions] [V2] Reject error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Handle edit action for workspace-scoped PatchProposal
+ * Updates DriftCandidate state to EDIT_REQUESTED and enqueues job
+ */
+export async function handleWorkspaceEdit(
+  workspaceId: string,
+  patchProposalId: string,
+  slackUserId: string,
+  editedDiff: string,
+  applyNow: boolean
+): Promise<{ success: boolean; error?: string }> {
+  console.log(`[SlackInteractions] [V2] Editing patch proposal ${patchProposalId}, applyNow=${applyNow}`);
+
+  try {
+    // Find the patch proposal
+    const patchProposal = await prisma.patchProposal.findFirst({
+      where: { workspaceId, id: patchProposalId },
+    });
+
+    if (!patchProposal) {
+      return { success: false, error: 'Patch proposal not found' };
+    }
+
+    // Update PatchProposal with edited diff
+    await prisma.patchProposal.update({
+      where: { workspaceId_id: { workspaceId, id: patchProposalId } },
+      data: {
+        unifiedDiff: editedDiff,
+        status: applyNow ? 'approved' : 'edited',
+      },
+    });
+
+    // Find and update associated DriftCandidate
+    const driftCandidate = await prisma.driftCandidate.findFirst({
+      where: { workspaceId, id: patchProposal.driftId },
+    });
+
+    if (driftCandidate) {
+      const newState = applyNow ? DriftState.APPROVED : DriftState.EDIT_REQUESTED;
+
+      // Update state
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId, id: driftCandidate.id } },
+        data: {
+          state: newState,
+          stateUpdatedAt: new Date(),
+        },
+      });
+
+      // Create approval record
+      await prisma.approval.create({
+        data: {
+          workspaceId,
+          patchId: patchProposalId,
+          action: applyNow ? 'approve' : 'edit',
+          actorSlackId: slackUserId,
+          editedDiff,
+        },
+      });
+
+      // Enqueue QStash job to continue state machine
+      const messageId = await enqueueJob({
+        workspaceId,
+        driftId: driftCandidate.id,
+      });
+
+      console.log(`[SlackInteractions] [V2] Edited - enqueued job ${messageId || 'sync'}`);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[SlackInteractions] [V2] Edit error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Handle snooze action for workspace-scoped PatchProposal
+ * Updates DriftCandidate state to SNOOZED (human-gated state, waits for snooze to expire)
+ */
+export async function handleWorkspaceSnooze(
+  workspaceId: string,
+  patchProposalId: string,
+  slackUserId: string,
+  snoozeHours: number = 24
+): Promise<{ success: boolean; error?: string }> {
+  console.log(`[SlackInteractions] [V2] Snoozing patch proposal ${patchProposalId} for ${snoozeHours}h`);
+
+  try {
+    // Find the patch proposal
+    const patchProposal = await prisma.patchProposal.findFirst({
+      where: { workspaceId, id: patchProposalId },
+    });
+
+    if (!patchProposal) {
+      return { success: false, error: 'Patch proposal not found' };
+    }
+
+    const snoozeUntil = new Date(Date.now() + snoozeHours * 60 * 60 * 1000);
+
+    // Update PatchProposal status
+    await prisma.patchProposal.update({
+      where: { workspaceId_id: { workspaceId, id: patchProposalId } },
+      data: { status: 'snoozed' },
+    });
+
+    // Find and update associated DriftCandidate
+    const driftCandidate = await prisma.driftCandidate.findFirst({
+      where: { workspaceId, id: patchProposal.driftId },
+    });
+
+    if (driftCandidate) {
+      // Update state to SNOOZED (human-gated state)
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId, id: driftCandidate.id } },
+        data: {
+          state: DriftState.SNOOZED,
+          stateUpdatedAt: new Date(),
+        },
+      });
+
+      // Create approval record with snooze info
+      await prisma.approval.create({
+        data: {
+          workspaceId,
+          patchId: patchProposalId,
+          action: 'snooze',
+          actorSlackId: slackUserId,
+          snoozeUntil,
+        },
+      });
+
+      // No immediate QStash enqueue - SNOOZED is human-gated
+      // Phase 3 will add scheduled job to check snooze expiry
+      console.log(`[SlackInteractions] [V2] Snoozed until ${snoozeUntil.toISOString()}`);
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error('[SlackInteractions] [V2] Snooze error:', error);
+    return { success: false, error: error.message };
+  }
 }
 
 export default router;
