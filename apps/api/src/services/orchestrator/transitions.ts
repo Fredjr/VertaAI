@@ -30,6 +30,7 @@ import {
   checkOwnershipBaseline,
   checkCoverageBaseline,
   checkEnvironmentBaseline,
+  checkProcessBaseline,
   findPatternMatches,
   INSTRUCTION_PATTERNS,
   ENVIRONMENT_PATTERNS,
@@ -391,6 +392,16 @@ async function handleDocsFetched(drift: any): Promise<TransitionResult> {
       evidence: coverageCheck.matches.slice(0, 5),
     };
     console.log(`[Transitions] Coverage baseline: hasMatch=${coverageCheck.hasMatch}`);
+  } else if (driftType === 'process') {
+    // Check for process patterns (step sequences, decision trees, order keywords)
+    const processCheck = checkProcessBaseline(docContent);
+    baselineResult = {
+      driftType,
+      hasMatch: processCheck.hasMatch,
+      matchCount: processCheck.matches.length,
+      evidence: processCheck.matches.slice(0, 5),
+    };
+    console.log(`[Transitions] Process baseline: hasMatch=${processCheck.hasMatch}, ${processCheck.matches.length} patterns found`);
   } else if (driftType === 'environment') {
     // Check for environment patterns
     const matches = findPatternMatches(docContent, ENVIRONMENT_PATTERNS);

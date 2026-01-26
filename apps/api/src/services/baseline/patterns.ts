@@ -305,3 +305,50 @@ export function checkEnvironmentBaseline(
   };
 }
 
+/**
+ * Check if document contains process/step sequences that may need updating.
+ * Per spec Section 5.4.6 - Process Drift Baseline Checks
+ *
+ * @param docText - Current document content
+ * @param signalSteps - Optional steps from incident timeline to compare
+ */
+export function checkProcessBaseline(
+  docText: string,
+  signalSteps?: string[]
+): BaselineCheckResult {
+  // Find all process patterns in the document
+  const matches = findPatternMatches(docText, PROCESS_PATTERNS);
+  const flatMatches = matches.flatMap(m => m.matches);
+
+  // Extract step indicators for comparison
+  const stepIndicators = ['First', 'Then', 'Next', 'Finally', 'Step 1', 'Step 2', 'Step 3'];
+  const orderKeywords = ['before', 'after', 'prior to', 'following'];
+  const conditionalLogic = ['If', 'Else', 'When', 'Unless'];
+
+  const foundStepIndicators = stepIndicators.filter(s =>
+    docText.toLowerCase().includes(s.toLowerCase())
+  );
+  const foundOrderKeywords = orderKeywords.filter(k =>
+    docText.toLowerCase().includes(k.toLowerCase())
+  );
+  const foundConditionalLogic = conditionalLogic.filter(c =>
+    docText.toLowerCase().includes(c.toLowerCase())
+  );
+
+  const allProcessIndicators = [
+    ...flatMatches,
+    ...foundStepIndicators,
+    ...foundOrderKeywords,
+    ...foundConditionalLogic,
+  ];
+
+  return {
+    driftType: 'process',
+    hasMatch: allProcessIndicators.length > 0,
+    matches: [...new Set(allProcessIndicators)].slice(0, 10),
+    mismatchReason: allProcessIndicators.length > 0
+      ? `Document contains ${foundStepIndicators.length} step indicators, ${foundOrderKeywords.length} order keywords, and ${foundConditionalLogic.length} conditional logic patterns that may need updating`
+      : undefined,
+  };
+}
+

@@ -114,15 +114,16 @@ export function validateEvidenceForRiskyChanges(
 }
 
 // Validator 6: Patch style matches drift type
+// Per spec Section 5.11.2 - patchStyleAllowedForDriftType
 export function validatePatchStyleMatchesDriftType(
   patchStyle: string,
   driftType: string
 ): ValidationResult {
   const validCombos: Record<string, string[]> = {
     instruction: ['replace_steps', 'add_note'],
-    process: ['reorder_steps', 'replace_steps', 'add_section'],
-    ownership: ['update_owner_block'],
-    coverage: ['add_section', 'link_patch'],
+    process: ['reorder_steps', 'add_note'],  // Per spec: reorder_steps or add_note (MVP: prefer note)
+    ownership: ['update_owner_block', 'add_note'],  // Per spec: update_owner_block or add_note
+    coverage: ['add_section', 'add_note'],  // Per spec: add_section or add_note
     environment: ['replace_steps', 'add_note'],
   };
 
