@@ -119,29 +119,64 @@ export const DRIFT_MATRIX: DriftMatrixEntry[] = [
 // Patch Style Selection
 // ============================================================================
 
+// ============================================================================
+// PROCESS PATCH SAFETY THRESHOLDS
+// Per spec Section D & G - Guardrails for process drift patches
+// ============================================================================
+const PROCESS_PATCH_SAFETY = {
+  // Minimum confidence required for reorder_steps patch
+  minConfidenceForReorder: 0.75,
+  // Minimum drift score required for reorder_steps patch
+  minDriftScoreForReorder: 0.6,
+};
+
 /**
  * Select appropriate patch style based on drift type, source, and confidence.
  * Higher confidence allows more aggressive patch styles.
- * 
+ *
+ * Per spec Section D & G: Process drift has additional safety checks.
+ * - reorder_steps requires confidence ≥ 0.75 AND drift_score ≥ 0.6
+ * - Otherwise defaults to add_note (safer)
+ *
  * @param driftType - The type of drift detected
  * @param source - The signal source
  * @param confidence - The confidence score (0-1)
+ * @param driftScore - Optional drift score (0-1) for additional safety checks
  * @returns The recommended patch style
  */
 export function selectPatchStyle(
   driftType: DriftType,
   source: SignalSource,
-  confidence: number
+  confidence: number,
+  driftScore?: number
 ): PatchStyle {
   const entry = DRIFT_MATRIX.find(
     e => e.driftType === driftType && e.source === source
   );
-  
+
   if (!entry) {
     // Safe fallback for unknown combinations
     return 'add_note';
   }
-  
+
+  // PROCESS DRIFT SAFETY MODE
+  // Per spec Section D & G: Require higher thresholds for reorder_steps
+  if (driftType === 'process') {
+    const meetsConfidenceThreshold = confidence >= PROCESS_PATCH_SAFETY.minConfidenceForReorder;
+    const meetsDriftScoreThreshold = driftScore !== undefined
+      ? driftScore >= PROCESS_PATCH_SAFETY.minDriftScoreForReorder
+      : false;
+
+    // Only allow reorder_steps if BOTH thresholds are met
+    if (entry.patchStyles.includes('reorder_steps')) {
+      if (meetsConfidenceThreshold && meetsDriftScoreThreshold) {
+        return 'reorder_steps';
+      }
+      // Fall back to add_note for safety
+      return 'add_note';
+    }
+  }
+
   // Higher confidence = allow more aggressive patch style (first in array)
   const threshold = entry.confidenceRange.max * 0.9;
   if (confidence >= threshold) {

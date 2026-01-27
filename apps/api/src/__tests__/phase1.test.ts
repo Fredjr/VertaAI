@@ -451,3 +451,40 @@ If errors occur, then escalate to on-call.
     expect(result.recommended_action).toBe('generate_patch');
   });
 });
+
+// ============================================================================
+// PROCESS PATCH SAFETY MODE TESTS
+// ============================================================================
+import { selectPatchStyle } from '../config/driftMatrix.js';
+
+describe('Process Patch Safety Mode', () => {
+  it('should return reorder_steps only when confidence AND drift_score meet thresholds', () => {
+    // High confidence (0.8) AND high drift score (0.7) = reorder_steps
+    const style1 = selectPatchStyle('process', 'incident', 0.8, 0.7);
+    expect(style1).toBe('reorder_steps');
+  });
+
+  it('should return add_note when confidence is high but drift_score is low', () => {
+    // High confidence (0.8) but low drift score (0.4) = add_note (safety)
+    const style = selectPatchStyle('process', 'incident', 0.8, 0.4);
+    expect(style).toBe('add_note');
+  });
+
+  it('should return add_note when drift_score is high but confidence is low', () => {
+    // Low confidence (0.6) but high drift score (0.8) = add_note (safety)
+    const style = selectPatchStyle('process', 'incident', 0.6, 0.8);
+    expect(style).toBe('add_note');
+  });
+
+  it('should return add_note when drift_score is undefined for process drift', () => {
+    // No drift score provided = add_note (safety)
+    const style = selectPatchStyle('process', 'incident', 0.8);
+    expect(style).toBe('add_note');
+  });
+
+  it('should not apply safety mode to non-process drift types', () => {
+    // Ownership drift with high confidence should get update_owner_block
+    const style = selectPatchStyle('ownership', 'pagerduty', 0.85);
+    expect(style).toBe('update_owner_block');
+  });
+});
