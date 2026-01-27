@@ -116,6 +116,12 @@ model DriftCandidate {
   docCandidates    Json @default("[]") @map("doc_candidates")
   baselineFindings Json @default("[]") @map("baseline_findings")
 
+  // Doc resolution tracking (per spec Section C)
+  docsResolutionStatus     String? @map("docs_resolution_status") // 'mapped' | 'explicit_link' | 'search_candidate' | 'needs_mapping'
+  docsResolutionMethod     String? @map("docs_resolution_method") // 'mapping' | 'pr_link' | 'confluence_search' | 'none'
+  docsResolutionConfidence Float?  @map("docs_resolution_confidence")
+  noWritebackMode          Boolean @default(false) @map("no_writeback_mode") // Set when writeback should be skipped
+
   // Owner resolution
   ownerResolution Json? @map("owner_resolution")
 
@@ -229,6 +235,7 @@ model DocMappingV2 {
   isPrimary                Boolean   @default(false) @map("is_primary")
   hasManagedRegion         Boolean   @default(false) @map("has_managed_region")
   managedRegionInstalledAt DateTime? @map("managed_region_installed_at")
+  docClass                 String?   @map("doc_class") // e.g., 'Operational_Runbook', 'Architecture_Doc', 'API_Reference'
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
