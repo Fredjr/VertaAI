@@ -51,6 +51,7 @@ const TRANSITION_HANDLERS: Partial<Record<DriftState, TransitionHandler>> = {
   [DriftState.DRIFT_CLASSIFIED]: handleDriftClassified,
   [DriftState.DOCS_RESOLVED]: handleDocsResolved,
   [DriftState.DOCS_FETCHED]: handleDocsFetched,
+  [DriftState.DOC_CONTEXT_EXTRACTED]: handleDocContextExtracted,
   [DriftState.BASELINE_CHECKED]: handleBaselineChecked,
   [DriftState.PATCH_PLANNED]: handlePatchPlanned,
   [DriftState.PATCH_GENERATED]: handlePatchGenerated,
@@ -300,7 +301,7 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
 
 /**
  * DOCS_RESOLVED -> DOCS_FETCHED
- * Fetch doc content from Confluence/Notion and extract DocContext
+ * Fetch doc content from Confluence/Notion
  */
 async function handleDocsResolved(drift: any): Promise<TransitionResult> {
   const docCandidates = drift.docCandidates || [];
@@ -332,37 +333,17 @@ async function handleDocsResolved(drift: any): Promise<TransitionResult> {
     console.log(`[Transitions] Fetched doc: system=${docMapping.docSystem}, revision=${docRevision}`);
   }
 
-  // Extract DocContext for deterministic slicing
-  const driftType = (drift.driftType || 'instruction') as import('../../types/doc-context.js').DriftType;
-  const driftDomains = drift.driftDomains || [];
-  const signal = drift.signalEvent;
-  const evidenceKeywords = extractEvidenceKeywords(signal);
-
-  const docContext = extractDocContext({
-    workspaceId: drift.workspaceId,
-    docSystem: (docMapping?.docSystem as 'confluence' | 'notion') || 'confluence',
-    docId,
-    docUrl: docMapping?.docUrl || primaryDoc.doc_url || '',
-    docTitle: docMapping?.docTitle || primaryDoc.doc_title || 'Unknown',
-    docText: docContent,
-    baseRevision: docRevision || 'unknown',
-    driftType,
-    driftDomains,
-    evidenceKeywords,
-  });
-
-  console.log(`[Transitions] DocContext extracted: ${docContext.extractedSections.length} sections, managed=${!docContext.flags.managedRegionMissing}`);
-
-  // Store fetched content and DocContext in baselineFindings (existing JSON field)
-  // Cast to satisfy Prisma's JSON type requirements
+  // Store fetched content in baselineFindings (DocContext extraction happens in next state)
   const updatedFindings = [{
     docId,
     docContent,
     docRevision,
     fetchedAt: new Date().toISOString(),
-    docContext: JSON.parse(JSON.stringify(docContext)), // Serialize DocContext for Prisma JSON
-    llmPayload: JSON.parse(JSON.stringify(buildLlmPayload(docContext))), // Serialize LLM payload
+    docSystem: docMapping?.docSystem || 'confluence',
+    docUrl: docMapping?.docUrl || primaryDoc.doc_url || '',
+    docTitle: docMapping?.docTitle || primaryDoc.doc_title || 'Unknown',
   }] as unknown as import('@prisma/client').Prisma.InputJsonValue;
+
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
     data: {
@@ -416,13 +397,63 @@ function extractEvidenceKeywords(signal: any): string[] {
 }
 
 /**
- * DOCS_FETCHED -> BASELINE_CHECKED
- * Check baseline patterns against doc content
+ * DOCS_FETCHED -> DOC_CONTEXT_EXTRACTED
+ * Extract DocContext for deterministic slicing (prevents hallucination)
  */
 async function handleDocsFetched(drift: any): Promise<TransitionResult> {
+  // Get doc content from baselineFindings (stored by handleDocsResolved)
+  const findings = drift.baselineFindings || [];
+  const finding = findings[0] || {};
+  const docContent = finding.docContent || '';
+  const docId = finding.docId;
+
+  // Extract DocContext for deterministic slicing
+  const driftType = (drift.driftType || 'instruction') as import('../../types/doc-context.js').DriftType;
+  const driftDomains = drift.driftDomains || [];
+  const signal = drift.signalEvent;
+  const evidenceKeywords = extractEvidenceKeywords(signal);
+
+  const docContext = extractDocContext({
+    workspaceId: drift.workspaceId,
+    docSystem: (finding.docSystem as 'confluence' | 'notion') || 'confluence',
+    docId,
+    docUrl: finding.docUrl || '',
+    docTitle: finding.docTitle || 'Unknown',
+    docText: docContent,
+    baseRevision: finding.docRevision || 'unknown',
+    driftType,
+    driftDomains,
+    evidenceKeywords,
+  });
+
+  console.log(`[Transitions] DocContext extracted: ${docContext.extractedSections.length} sections, managed=${!docContext.flags.managedRegionMissing}`);
+
+  // Store DocContext in baselineFindings
+  const updatedFindings = [{
+    ...finding,
+    docContext: JSON.parse(JSON.stringify(docContext)),
+    llmPayload: JSON.parse(JSON.stringify(buildLlmPayload(docContext))),
+  }] as unknown as import('@prisma/client').Prisma.InputJsonValue;
+
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: {
+      baselineFindings: updatedFindings,
+    },
+  });
+
+  return { state: DriftState.DOC_CONTEXT_EXTRACTED, enqueueNext: true };
+}
+
+/**
+ * DOC_CONTEXT_EXTRACTED -> BASELINE_CHECKED
+ * Check baseline patterns against doc content
+ */
+async function handleDocContextExtracted(drift: any): Promise<TransitionResult> {
   // Get doc content from baselineFindings
   const findings = drift.baselineFindings || [];
-  const docContent = findings[0]?.docContent || '';
+  const finding = findings[0] || {};
+  const docContent = finding.docContent || '';
   const driftType = drift.driftType || 'instruction';
   const signal = drift.signalEvent;
   const extracted = signal?.extracted || {};
@@ -489,10 +520,11 @@ async function handleDocsFetched(drift: any): Promise<TransitionResult> {
     console.log(`[Transitions] Environment baseline: ${flatMatches.length} matches found`);
   }
 
-  // Store baseline check results in baselineFindings (existing JSON field)
-  const updatedFindings = findings.length > 0
-    ? [{ ...findings[0], baselineCheck: baselineResult }]
-    : [{ baselineCheck: baselineResult }];
+  // Store baseline check results in baselineFindings
+  const updatedFindings = [{
+    ...finding,
+    baselineCheck: baselineResult,
+  }] as unknown as import('@prisma/client').Prisma.InputJsonValue;
 
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },

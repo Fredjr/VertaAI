@@ -204,8 +204,10 @@ Common issues and troubleshooting.
     it('should extract all headings with levels', () => {
       const outline = buildHeadingsOutline(sampleDoc);
       expect(outline.length).toBeGreaterThan(0);
-      expect(outline[0].heading).toBe('Deployment Runbook');
-      expect(outline[0].level).toBe(1);
+      const firstHeading = outline[0];
+      expect(firstHeading).toBeDefined();
+      expect(firstHeading!.heading).toBe('Deployment Runbook');
+      expect(firstHeading!.level).toBe(1);
       expect(outline.some(h => h.heading === 'Deploy Steps')).toBe(true);
     });
   });
