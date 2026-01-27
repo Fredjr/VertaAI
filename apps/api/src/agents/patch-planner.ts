@@ -39,6 +39,11 @@ export interface PatchPlannerInput {
   prTitle: string;
   prDescription: string | null;
   diffExcerpt: string;
+  // DocContext info for respecting edit boundaries (optional for backward compatibility)
+  docContext?: {
+    allowedEditRanges?: Array<{ startChar: number; endChar: number; reason: string }>;
+    managedRegionMissing?: boolean;
+  };
 }
 
 /**

@@ -37,6 +37,9 @@ import {
 } from '../baseline/patterns.js';
 import { selectPatchStyle } from '../../config/driftMatrix.js';
 
+// Phase 6 imports - DocContext extraction
+import { extractDocContext, buildLlmPayload } from '../docs/docContextExtractor.js';
+
 // Type alias for transition handlers
 type TransitionHandler = (drift: any) => Promise<TransitionResult>;
 
@@ -297,7 +300,7 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
 
 /**
  * DOCS_RESOLVED -> DOCS_FETCHED
- * Fetch doc content from Confluence/Notion
+ * Fetch doc content from Confluence/Notion and extract DocContext
  */
 async function handleDocsResolved(drift: any): Promise<TransitionResult> {
   const docCandidates = drift.docCandidates || [];
@@ -329,8 +332,37 @@ async function handleDocsResolved(drift: any): Promise<TransitionResult> {
     console.log(`[Transitions] Fetched doc: system=${docMapping.docSystem}, revision=${docRevision}`);
   }
 
-  // Store fetched content in baselineFindings (existing JSON field)
-  const updatedFindings = [{ docId, docContent, docRevision, fetchedAt: new Date().toISOString() }];
+  // Extract DocContext for deterministic slicing
+  const driftType = (drift.driftType || 'instruction') as import('../../types/doc-context.js').DriftType;
+  const driftDomains = drift.driftDomains || [];
+  const signal = drift.signalEvent;
+  const evidenceKeywords = extractEvidenceKeywords(signal);
+
+  const docContext = extractDocContext({
+    workspaceId: drift.workspaceId,
+    docSystem: (docMapping?.docSystem as 'confluence' | 'notion') || 'confluence',
+    docId,
+    docUrl: docMapping?.docUrl || primaryDoc.doc_url || '',
+    docTitle: docMapping?.docTitle || primaryDoc.doc_title || 'Unknown',
+    docText: docContent,
+    baseRevision: docRevision || 'unknown',
+    driftType,
+    driftDomains,
+    evidenceKeywords,
+  });
+
+  console.log(`[Transitions] DocContext extracted: ${docContext.extractedSections.length} sections, managed=${!docContext.flags.managedRegionMissing}`);
+
+  // Store fetched content and DocContext in baselineFindings (existing JSON field)
+  // Cast to satisfy Prisma's JSON type requirements
+  const updatedFindings = [{
+    docId,
+    docContent,
+    docRevision,
+    fetchedAt: new Date().toISOString(),
+    docContext: JSON.parse(JSON.stringify(docContext)), // Serialize DocContext for Prisma JSON
+    llmPayload: JSON.parse(JSON.stringify(buildLlmPayload(docContext))), // Serialize LLM payload
+  }] as unknown as import('@prisma/client').Prisma.InputJsonValue;
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
     data: {
@@ -339,6 +371,48 @@ async function handleDocsResolved(drift: any): Promise<TransitionResult> {
   });
 
   return { state: DriftState.DOCS_FETCHED, enqueueNext: true };
+}
+
+/**
+ * Extract evidence keywords from signal for DocContext section targeting
+ */
+function extractEvidenceKeywords(signal: any): string[] {
+  if (!signal) return [];
+
+  const keywords: string[] = [];
+  const extracted = signal.extracted || {};
+
+  // Extract keywords from PR title
+  if (extracted.title) {
+    const words = extracted.title.split(/\s+/).filter((w: string) => w.length > 3);
+    keywords.push(...words.slice(0, 5));
+  }
+
+  // Extract from file paths (service names, directories)
+  if (extracted.changed_files && Array.isArray(extracted.changed_files)) {
+    for (const file of extracted.changed_files.slice(0, 10)) {
+      const parts = file.split('/');
+      for (const part of parts) {
+        if (part.length > 3 && !part.includes('.')) {
+          keywords.push(part);
+        }
+      }
+    }
+  }
+
+  // Extract from PR description (limited to key terms)
+  if (extracted.description) {
+    const desc = extracted.description.toLowerCase();
+    const techTerms = ['deploy', 'config', 'migration', 'rollback', 'feature', 'fix', 'update'];
+    for (const term of techTerms) {
+      if (desc.includes(term)) {
+        keywords.push(term);
+      }
+    }
+  }
+
+  // Deduplicate and return
+  return [...new Set(keywords.map((k: string) => k.toLowerCase()))].slice(0, 15);
 }
 
 /**
@@ -435,9 +509,11 @@ async function handleDocsFetched(drift: any): Promise<TransitionResult> {
  * Plan the patch using Agent C (Patch Planner)
  */
 async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
-  // Get doc content from baselineFindings
+  // Get doc content and DocContext from baselineFindings
   const findings = drift.baselineFindings || [];
-  const docContent = findings[0]?.docContent || '';
+  const finding = findings[0] || {};
+  const llmPayload = finding.llmPayload;
+  const docContext = finding.docContext;
   const docCandidates = drift.docCandidates || [];
   const primaryDoc = docCandidates[0] || {};
 
@@ -446,15 +522,37 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
   const prData = rawPayload.pull_request || {};
   const extracted = signal?.extracted || {};
 
+  // Build doc content for planner - use DocContext if available
+  let docContentForPlanner: string;
+  if (llmPayload) {
+    // Use bounded LLM payload from DocContext
+    docContentForPlanner = JSON.stringify({
+      outline: llmPayload.outline,
+      managedRegion: llmPayload.managedRegionText,
+      sections: llmPayload.extractedSections,
+      flags: llmPayload.flags,
+    }, null, 2);
+    console.log(`[Transitions] Using DocContext for patch planning (${llmPayload.extractedSections?.length || 0} sections)`);
+  } else {
+    // Fallback to raw content (legacy)
+    docContentForPlanner = (finding.docContent || '').substring(0, 15000);
+    console.log(`[Transitions] Using raw doc content for patch planning (fallback)`);
+  }
+
   // Call Agent C: Patch Planner
   const plannerResult = await runPatchPlanner({
     docId: primaryDoc.doc_id || primaryDoc.docId || 'unknown',
-    docTitle: primaryDoc.title || 'Unknown Document',
-    docContent,
+    docTitle: primaryDoc.title || llmPayload?.docTitle || 'Unknown Document',
+    docContent: docContentForPlanner,
     impactedDomains: drift.driftDomains || [],
     prTitle: extracted.prTitle || prData.title || '',
     prDescription: extracted.prBody || prData.body || '',
     diffExcerpt: (rawPayload.diff || '').substring(0, 4000),
+    // Pass DocContext info for planner to use
+    docContext: docContext ? {
+      allowedEditRanges: docContext.allowedEditRanges,
+      managedRegionMissing: docContext.flags?.managedRegionMissing,
+    } : undefined,
   });
 
   if (!plannerResult.success || !plannerResult.data) {
@@ -508,10 +606,12 @@ async function handlePatchPlanned(drift: any): Promise<TransitionResult> {
   const prData = rawPayload.pull_request || {};
   const extracted = signal?.extracted || {};
 
-  // Get patch plan from baselineFindings
+  // Get patch plan and DocContext from baselineFindings
   const findings = drift.baselineFindings || [];
-  const patchPlan = findings[0]?.patchPlan || {};
-  const docContent = findings[0]?.docContent || '';
+  const finding = findings[0] || {};
+  const patchPlan = finding.patchPlan || {};
+  const llmPayload = finding.llmPayload;
+  const docContext = finding.docContext;
   const primaryDoc = docCandidates[0];
 
   // Select patch style from drift matrix
@@ -521,17 +621,40 @@ async function handlePatchPlanned(drift: any): Promise<TransitionResult> {
     drift.confidence || 0.5
   );
 
+  // Build doc content for generator - use DocContext if available
+  let docContentForGenerator: string;
+  if (llmPayload) {
+    // Use bounded LLM payload from DocContext
+    docContentForGenerator = JSON.stringify({
+      outline: llmPayload.outline,
+      managedRegion: llmPayload.managedRegionText,
+      sections: llmPayload.extractedSections,
+      allowedEditRanges: llmPayload.allowedEditRanges,
+      flags: llmPayload.flags,
+    }, null, 2);
+    console.log(`[Transitions] Using DocContext for patch generation`);
+  } else {
+    // Fallback to raw content (legacy)
+    docContentForGenerator = (finding.docContent || '').substring(0, 15000);
+    console.log(`[Transitions] Using raw doc content for patch generation (fallback)`);
+  }
+
   // Call Agent D: Patch Generator with correct input shape
   const generatorResult = await runPatchGenerator({
     docId: primaryDoc.doc_id || primaryDoc.docId || 'unknown',
-    docTitle: primaryDoc.title || 'Unknown Document',
-    docContent,
+    docTitle: primaryDoc.title || llmPayload?.docTitle || 'Unknown Document',
+    docContent: docContentForGenerator,
     patchPlan: patchPlan.targets ? patchPlan : { targets: [], constraints: [], needs_human: true },
     prId: `${signal?.repo || 'unknown'}#${extracted.prNumber || prData.number || '0'}`,
     prTitle: extracted.prTitle || prData.title || 'PR',
     prDescription: extracted.prBody || prData.body || '',
     changedFiles: (extracted.changedFiles || []).map((f: any) => f.filename || f),
     diffExcerpt: (rawPayload.diff || '').substring(0, 4000),
+    // Pass DocContext info for generator to respect edit boundaries
+    docContext: docContext ? {
+      allowedEditRanges: docContext.allowedEditRanges,
+      managedRegionMissing: docContext.flags?.managedRegionMissing,
+    } : undefined,
   });
 
   let unifiedDiff: string;

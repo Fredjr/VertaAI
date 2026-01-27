@@ -170,3 +170,142 @@ describe('Phase 1: Foundation - Workspace Scoping', () => {
   });
 });
 
+// DocContext extraction tests (unit tests - no API calls needed)
+import {
+  extractDocContext,
+  buildHeadingsOutline,
+  buildLlmPayload,
+  validatePatchWithinRanges,
+} from '../services/docs/docContextExtractor.js';
+
+describe('DocContext Extraction', () => {
+  const sampleDoc = `# Deployment Runbook
+
+## Overview
+This document describes deployment procedures.
+
+<!-- DRIFT_AGENT_MANAGED_START -->
+## Deploy Steps
+1. First, run tests
+2. Then, deploy to staging
+3. Finally, deploy to production
+<!-- DRIFT_AGENT_MANAGED_END -->
+
+## Owner
+Contact: @platform-team
+Team: Platform Engineering
+Slack: #platform-support
+
+## FAQ
+Common issues and troubleshooting.
+`;
+
+  describe('buildHeadingsOutline', () => {
+    it('should extract all headings with levels', () => {
+      const outline = buildHeadingsOutline(sampleDoc);
+      expect(outline.length).toBeGreaterThan(0);
+      expect(outline[0].heading).toBe('Deployment Runbook');
+      expect(outline[0].level).toBe(1);
+      expect(outline.some(h => h.heading === 'Deploy Steps')).toBe(true);
+    });
+  });
+
+  describe('extractDocContext', () => {
+    it('should extract DocContext with managed region', () => {
+      const docContext = extractDocContext({
+        workspaceId: 'test-ws',
+        docSystem: 'confluence',
+        docId: 'doc-123',
+        docUrl: 'https://example.com/doc',
+        docTitle: 'Deployment Runbook',
+        docText: sampleDoc,
+        baseRevision: '1',
+        driftType: 'instruction',
+        driftDomains: ['deployment'],
+      });
+
+      expect(docContext.docId).toBe('doc-123');
+      expect(docContext.outline.length).toBeGreaterThan(0);
+      expect(docContext.managedRegion).not.toBeNull();
+      expect(docContext.managedRegion?.text).toContain('Deploy Steps');
+      expect(docContext.flags.managedRegionMissing).toBe(false);
+    });
+
+    it('should extract owner block for ownership drift', () => {
+      const docContext = extractDocContext({
+        workspaceId: 'test-ws',
+        docSystem: 'confluence',
+        docId: 'doc-123',
+        docUrl: 'https://example.com/doc',
+        docTitle: 'Deployment Runbook',
+        docText: sampleDoc,
+        baseRevision: '1',
+        driftType: 'ownership',
+        driftDomains: ['ownership_routing'],
+      });
+
+      expect(docContext.ownerBlock).not.toBeNull();
+      expect(docContext.ownerBlock?.text).toContain('@platform-team');
+    });
+
+    it('should set flag when managed region is missing', () => {
+      const docWithoutManagedRegion = '# Simple Doc\n\nNo managed region here.';
+      const docContext = extractDocContext({
+        workspaceId: 'test-ws',
+        docSystem: 'confluence',
+        docId: 'doc-123',
+        docUrl: 'https://example.com/doc',
+        docTitle: 'Simple Doc',
+        docText: docWithoutManagedRegion,
+        baseRevision: '1',
+        driftType: 'instruction',
+        driftDomains: ['deployment'],
+      });
+
+      expect(docContext.flags.managedRegionMissing).toBe(true);
+    });
+  });
+
+  describe('buildLlmPayload', () => {
+    it('should build bounded payload for LLM', () => {
+      const docContext = extractDocContext({
+        workspaceId: 'test-ws',
+        docSystem: 'confluence',
+        docId: 'doc-123',
+        docUrl: 'https://example.com/doc',
+        docTitle: 'Deployment Runbook',
+        docText: sampleDoc,
+        baseRevision: '1',
+        driftType: 'instruction',
+        driftDomains: ['deployment'],
+      });
+
+      const payload = buildLlmPayload(docContext);
+      expect(payload.docId).toBe('doc-123');
+      expect(payload.outline.length).toBeGreaterThan(0);
+      expect(payload.managedRegionText).not.toBeNull();
+      expect(payload.managedRegionText!).toContain('Deploy Steps');
+    });
+  });
+
+  describe('validatePatchWithinRanges', () => {
+    it('should validate patch within allowed ranges', () => {
+      const original = 'ABC123XYZ';
+      const patched = 'ABC456XYZ'; // Only middle part changed
+      const ranges = [{ startChar: 3, endChar: 6, reason: 'managed_region' as const }];
+
+      const result = validatePatchWithinRanges(original, patched, ranges);
+      expect(result.valid).toBe(true);
+    });
+
+    it('should detect violations outside allowed ranges', () => {
+      const original = 'ABC123XYZ';
+      const patched = 'XXX123XYZ'; // Beginning changed (outside range)
+      const ranges = [{ startChar: 3, endChar: 6, reason: 'managed_region' as const }];
+
+      const result = validatePatchWithinRanges(original, patched, ranges);
+      expect(result.valid).toBe(false);
+      expect(result.violations.length).toBeGreaterThan(0);
+    });
+  });
+});

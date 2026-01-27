@@ -68,6 +68,11 @@ export interface PatchGeneratorInput {
   prDescription: string | null;
   diffExcerpt: string;
   changedFiles: string[];
+  // DocContext info for respecting edit boundaries (optional for backward compatibility)
+  docContext?: {
+    allowedEditRanges?: Array<{ startChar: number; endChar: number; reason: string }>;
+    managedRegionMissing?: boolean;
+  };
 }
 
 /**
