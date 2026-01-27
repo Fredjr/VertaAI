@@ -16,7 +16,8 @@ import { prisma } from '../../lib/db.js';
 // Types
 // ============================================================================
 
-export type DocResolutionStatus = 'explicit_link' | 'mapped' | 'search_candidate' | 'needs_mapping';
+// Per spec Section 6.1: status values for doc resolution
+export type DocResolutionStatus = 'explicit_link' | 'mapped' | 'search_candidate' | 'needs_mapping' | 'ignored';
 export type DocResolutionMethod = 'pr_link' | 'mapping' | 'confluence_search' | 'notion_search' | 'none';
 
 export interface DocCandidate {
@@ -26,6 +27,7 @@ export interface DocCandidate {
   docUrl: string | null;
   isPrimary: boolean;
   hasManagedRegion: boolean;
+  allowWriteback: boolean; // Per spec: controls if writeback is allowed for this doc
   matchReason: string;
   confidence: number;
 }
@@ -45,6 +47,23 @@ export interface DocResolutionInput {
   service: string | null;
   prBody?: string | null;
   prTitle?: string | null;
+  // Per spec Section 6.1: flag to indicate doc resolution should be skipped (e.g., for non-doc-impacting changes)
+  shouldIgnore?: boolean;
+  ignoreReason?: string;
+  // Per spec Section 1.1 + Section 7: workspace policy for doc resolution
+  policy?: WorkspacePolicy;
+}
+
+/**
+ * WorkspacePolicy - Per spec Section 1.1
+ * Controls per-workspace doc resolution behavior
+ */
+export interface WorkspacePolicy {
+  primaryDocRequired: boolean;        // If true, fail if no primary doc mapping exists
+  allowPrLinkOverride: boolean;       // Allow PR links to override mappings
+  allowSearchSuggestMapping: boolean; // Allow search-based suggestions (P2)
+  minConfidenceForSuggest: number;    // Min confidence for search suggest
+  allowedConfluenceSpaces?: string[]; // Space key allowlist (empty = allow all)
 }
 
 // ============================================================================
@@ -131,12 +150,31 @@ export function extractDocLinksFromPR(prBody: string | null | undefined): Array<
  * P0: PR link (explicit doc reference)
  * P1: Mapping (DocMappingV2 lookup)
  * P2: Search (not implemented - returns needs_mapping)
+ *
+ * Per spec Section 6.1: If shouldIgnore=true, returns 'ignored' status → COMPLETED
+ * Per spec Section 7: If policy.primaryDocRequired=true and no primary mapping, returns 'needs_mapping'
  */
 export async function resolveDocsForDrift(input: DocResolutionInput): Promise<DocResolutionResult> {
-  const { workspaceId, repo, service, prBody } = input;
-  
-  console.log(`[DocResolution] Resolving docs for workspace=${workspaceId}, repo=${repo}, service=${service}`);
-  
+  const { workspaceId, repo, service, prBody, shouldIgnore, ignoreReason, policy } = input;
+
+  console.log(`[DocResolution] Resolving docs for workspace=${workspaceId}, repo=${repo}, service=${service}, policy.primaryDocRequired=${policy?.primaryDocRequired}`);
+
+  // -------------------------------------------------------------------------
+  // Handle 'ignored' status (per spec Section 6.1)
+  // This is used when a drift candidate should not trigger doc updates
+  // -------------------------------------------------------------------------
+  if (shouldIgnore) {
+    console.log(`[DocResolution] Returning 'ignored' status: ${ignoreReason || 'no reason provided'}`);
+    return {
+      status: 'ignored',
+      method: 'none',
+      confidence: 0,
+      noWritebackMode: true,
+      candidates: [],
+      notes: ignoreReason || 'Doc resolution skipped - change does not require doc update',
+    };
+  }
+
   // -------------------------------------------------------------------------
   // P0: Check for explicit doc links in PR body
   // -------------------------------------------------------------------------
@@ -169,11 +207,13 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
           docUrl: mapping.docUrl,
           isPrimary: mapping.isPrimary,
           hasManagedRegion: mapping.hasManagedRegion,
+          allowWriteback: mapping.allowWriteback,
           matchReason: 'Explicit link in PR body',
           confidence: 0.95,
         });
       } else {
         // Doc not in mappings but linked in PR - create candidate with lower confidence
+        // allowWriteback=false for unmapped docs (safety)
         p0Candidates.push({
           docId: link.docId || link.url,
           docSystem: link.docSystem,
@@ -181,6 +221,7 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
           docUrl: link.url,
           isPrimary: false,
           hasManagedRegion: false,
+          allowWriteback: false, // Unmapped docs don't allow writeback
           matchReason: 'Explicit link in PR body (not in mappings)',
           confidence: 0.75,
         });
@@ -194,11 +235,15 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
         return b.confidence - a.confidence;
       });
 
+      // noWritebackMode is true if selected doc doesn't allow writeback or is not primary
+      const selectedDoc = p0Candidates[0];
+      const noWritebackMode = selectedDoc ? (!selectedDoc.isPrimary || !selectedDoc.allowWriteback) : true;
+
       return {
         status: 'explicit_link',
         method: 'pr_link',
         confidence: p0Candidates[0]?.confidence ?? 0.75,
-        noWritebackMode: !p0Candidates[0]?.isPrimary,
+        noWritebackMode,
         candidates: p0Candidates.slice(0, 3),
         notes: `Found ${prLinks.length} doc link(s) in PR body`,
       };
@@ -235,6 +280,7 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
       docUrl: m.docUrl,
       isPrimary: m.isPrimary,
       hasManagedRegion: m.hasManagedRegion,
+      allowWriteback: m.allowWriteback,
       matchReason: m.repo === repo ? 'Repo mapping' : 'Service mapping',
       confidence: m.isPrimary ? 0.85 : 0.70,
     }));
@@ -242,11 +288,28 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
     // Primary docs get higher confidence
     const primaryDoc = p1Candidates.find(c => c.isPrimary);
 
+    // Per spec Section 7: If policy.primaryDocRequired=true and no primary doc, return NEEDS_MAPPING
+    if (policy?.primaryDocRequired && !primaryDoc) {
+      console.log(`[DocResolution] Policy gate: primaryDocRequired=true but no primary doc found`);
+      return {
+        status: 'needs_mapping',
+        method: 'mapping',
+        confidence: 0,
+        noWritebackMode: true,
+        candidates: p1Candidates.slice(0, 3), // Include non-primary candidates for reference
+        notes: 'Policy requires a primary doc mapping, but none found. Please mark one doc as primary.',
+      };
+    }
+
+    // noWritebackMode is true if the selected doc doesn't allow writeback
+    const selectedDoc = primaryDoc || p1Candidates[0];
+    const noWritebackMode = selectedDoc ? !selectedDoc.allowWriteback : true;
+
     return {
       status: 'mapped',
       method: 'mapping',
       confidence: primaryDoc?.confidence ?? p1Candidates[0]?.confidence ?? 0.70,
-      noWritebackMode: false,
+      noWritebackMode,
       candidates: p1Candidates.slice(0, 3),
       notes: `Found ${mappings.length} mapping(s) for repo/service`,
     };

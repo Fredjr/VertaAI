@@ -30,6 +30,7 @@ import {
   checkCoverageBaseline,
   checkEnvironmentBaseline,
   checkProcessBaseline,
+  checkProcessBaselineDetailed,
   findPatternMatches,
   INSTRUCTION_PATTERNS,
   ENVIRONMENT_PATTERNS,
@@ -274,29 +275,98 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
   const rawPayload = signal?.rawPayload || {};
   const prData = rawPayload.pull_request || {};
 
+  // Fetch workspace policy for doc resolution (per spec Section 1.1 + Section 7)
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: drift.workspaceId },
+    select: {
+      primaryDocRequired: true,
+      allowPrLinkOverride: true,
+      allowSearchSuggestMapping: true,
+      minConfidenceForSuggest: true,
+      allowedConfluenceSpaces: true,
+    },
+  });
+
   const resolutionResult = await resolveDocsForDrift({
     workspaceId: drift.workspaceId,
     repo: signal?.repo || null,
     service: drift.service || null,
     prBody: extracted.prBody || prData.body || null,
     prTitle: extracted.prTitle || prData.title || null,
+    policy: workspace ? {
+      primaryDocRequired: workspace.primaryDocRequired,
+      allowPrLinkOverride: workspace.allowPrLinkOverride,
+      allowSearchSuggestMapping: workspace.allowSearchSuggestMapping,
+      minConfidenceForSuggest: workspace.minConfidenceForSuggest,
+      allowedConfluenceSpaces: workspace.allowedConfluenceSpaces,
+    } : undefined,
   });
 
   console.log(`[Transitions] Doc resolution: status=${resolutionResult.status}, method=${resolutionResult.method}, candidates=${resolutionResult.candidates.length}`);
 
-  // Handle NEEDS_MAPPING case
+  // Handle NEEDS_MAPPING case with notification deduplication (per spec Section 7)
   if (resolutionResult.status === 'needs_mapping') {
+    // Generate needs_mapping_key for deduplication: "workspace_id:repo"
+    const needsMappingKey = `${drift.workspaceId}:${signal?.repo || drift.service || 'unknown'}`;
+
+    // Check if we've already notified for this key in the past week
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const recentNotification = await prisma.driftCandidate.findFirst({
+      where: {
+        workspaceId: drift.workspaceId,
+        needsMappingKey,
+        needsMappingNotifiedAt: { gte: oneWeekAgo },
+      },
+      select: { id: true, needsMappingNotifiedAt: true },
+    });
+
+    // Update current candidate with needs_mapping tracking
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: {
+        needsMappingKey,
+        // Only set notifiedAt if we're actually going to notify (no recent notification)
+        needsMappingNotifiedAt: recentNotification ? null : new Date(),
+        docsResolutionStatus: 'needs_mapping',
+        docsResolutionMethod: 'none',
+      },
+    });
+
+    // If recently notified, skip the Slack notification spam
+    const shouldNotify = !recentNotification;
+    console.log(`[Transitions] NEEDS_MAPPING: key=${needsMappingKey}, shouldNotify=${shouldNotify}, recentNotification=${recentNotification?.needsMappingNotifiedAt}`);
+
     return {
       state: DriftState.FAILED_NEEDS_MAPPING,
       enqueueNext: false,
       error: {
         code: FailureCode.NEEDS_DOC_MAPPING,
-        message: resolutionResult.notes || 'No doc mapping found - human needs to configure doc mapping'
+        message: resolutionResult.notes || 'No doc mapping found - human needs to configure doc mapping',
+        // Include deduplication info for downstream handlers
+        shouldNotify,
+        needsMappingKey,
       },
     };
   }
 
-  // No candidates found (shouldn't happen if status != needs_mapping, but handle gracefully)
+  // Handle IGNORED status (per spec Section 6.1)
+  // status=ignored → transition to COMPLETED (no doc update needed)
+  if (resolutionResult.status === 'ignored') {
+    console.log(`[Transitions] Doc resolution ignored: ${resolutionResult.notes}`);
+
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: {
+        docsResolutionStatus: 'ignored',
+        docsResolutionMethod: 'none',
+        noWritebackMode: true,
+      },
+    });
+
+    return { state: DriftState.COMPLETED, enqueueNext: false };
+  }
+
+  // No candidates found (shouldn't happen if status != needs_mapping/ignored, but handle gracefully)
   if (resolutionResult.candidates.length === 0) {
     return { state: DriftState.COMPLETED, enqueueNext: false };
   }
@@ -311,9 +381,13 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
     doc_url: c.docUrl,
     is_primary: c.isPrimary,
     has_managed_region: c.hasManagedRegion,
+    allow_writeback: c.allowWriteback,
     match_reason: c.matchReason,
     confidence: c.confidence,
   }));
+
+  // Get the selected (first) doc for tracking (per spec Section 0.1)
+  const selectedDoc = resolutionResult.candidates[0];
 
   // Store doc candidates and resolution metadata
   await prisma.driftCandidate.update({
@@ -324,6 +398,10 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
       docsResolutionMethod: resolutionResult.method,
       docsResolutionConfidence: resolutionResult.confidence,
       noWritebackMode: resolutionResult.noWritebackMode,
+      // Per spec Section 0.1 - store selected doc details for observability
+      selectedDocId: selectedDoc?.docId || null,
+      selectedDocUrl: selectedDoc?.docUrl || null,
+      selectedDocTitle: selectedDoc?.docTitle || null,
     },
   });
 
@@ -490,7 +568,32 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
   const extracted = signal?.extracted || {};
 
   // Use baseline patterns based on drift type
-  let baselineResult: { driftType: string; hasMatch: boolean; matchCount: number; evidence: string[] } = {
+  // Extended type to support processResult for process drift (per spec Section D)
+  let baselineResult: {
+    driftType: string;
+    hasMatch: boolean;
+    matchCount: number;
+    evidence: string[];
+    processResult?: {
+      detected: boolean;
+      confidence_suggestion: number;
+      affected_section_ids: string[];
+      findings: Array<{
+        kind: string;
+        doc_snippet: string;
+        doc_location: { section_id?: string; start_char: number; end_char: number };
+        matched_patterns: string[];
+      }>;
+      delta: {
+        doc_order_summary: string;
+        pr_flow_summary: string;
+        mismatch_type: string;
+      };
+      recommended_patch_style: string;
+      recommended_action: string;
+      rationale: string;
+    };
+  } = {
     driftType,
     hasMatch: false,
     matchCount: 0,
@@ -529,15 +632,37 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
     };
     console.log(`[Transitions] Coverage baseline: hasMatch=${coverageCheck.hasMatch}`);
   } else if (driftType === 'process') {
-    // Check for process patterns (step sequences, decision trees, order keywords)
-    const processCheck = checkProcessBaseline(docContent);
+    // Check for process patterns using detailed analysis
+    // Per spec Section D - Use checkProcessBaselineDetailed() for structured ProcessDriftResult
+    const signal = drift.signalEvent;
+    const rawPayload = signal?.rawPayload || {};
+    const prData = rawPayload.pull_request || {};
+    const extracted = signal?.extracted || {};
+
+    const processResult = checkProcessBaselineDetailed(docContent, {
+      prTitle: extracted.prTitle || prData.title || undefined,
+      prDescription: extracted.prBody || prData.body || undefined,
+      changedFiles: extracted.changedFiles || prData.changed_files || undefined,
+    });
+
     baselineResult = {
       driftType,
-      hasMatch: processCheck.hasMatch,
-      matchCount: processCheck.matches.length,
-      evidence: processCheck.matches.slice(0, 5),
+      hasMatch: processResult.detected,
+      matchCount: processResult.findings.length,
+      evidence: processResult.findings.slice(0, 5).map(f => f.doc_snippet),
+      // Store the full ProcessDriftResult for downstream use
+      processResult: {
+        detected: processResult.detected,
+        confidence_suggestion: processResult.confidence_suggestion,
+        affected_section_ids: processResult.affected_section_ids,
+        findings: processResult.findings,
+        delta: processResult.delta,
+        recommended_patch_style: processResult.recommended_patch_style,
+        recommended_action: processResult.recommended_action,
+        rationale: processResult.rationale,
+      },
     };
-    console.log(`[Transitions] Process baseline: hasMatch=${processCheck.hasMatch}, ${processCheck.matches.length} patterns found`);
+    console.log(`[Transitions] Process baseline (detailed): detected=${processResult.detected}, findings=${processResult.findings.length}, recommended_style=${processResult.recommended_patch_style}`);
   } else if (driftType === 'environment') {
     // Check for environment patterns
     const matches = findPatternMatches(docContent, ENVIRONMENT_PATTERNS);

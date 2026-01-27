@@ -82,6 +82,9 @@ export interface TransitionResult {
   error?: {
     code: FailureCode;
     message: string;
+    // Per spec Section 7: Needs-mapping notification deduplication info
+    shouldNotify?: boolean;
+    needsMappingKey?: string;
   };
 }
 

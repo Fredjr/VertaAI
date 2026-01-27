@@ -32,6 +32,13 @@ model Workspace {
   mediumConfidenceThreshold Float   @default(0.55) @map("medium_confidence_threshold")
   digestChannel             String? @map("digest_channel")
 
+  // Workspace policy for doc resolution (per spec Section 1.1 + Section 7)
+  primaryDocRequired        Boolean @default(false) @map("primary_doc_required") // If true, fail if no primary doc mapping exists
+  allowPrLinkOverride       Boolean @default(true) @map("allow_pr_link_override") // Allow PR links to override mappings
+  allowSearchSuggestMapping Boolean @default(false) @map("allow_search_suggest_mapping") // Allow search-based suggestions (P2)
+  minConfidenceForSuggest   Float   @default(0.6) @map("min_confidence_for_suggest") // Min confidence for search suggest
+  allowedConfluenceSpaces   String[] @default([]) @map("allowed_confluence_spaces") // Space key allowlist (empty = allow all)
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -117,16 +124,26 @@ model DriftCandidate {
   baselineFindings Json @default("[]") @map("baseline_findings")
 
   // Doc resolution tracking (per spec Section C)
-  docsResolutionStatus     String? @map("docs_resolution_status") // 'mapped' | 'explicit_link' | 'search_candidate' | 'needs_mapping'
+  docsResolutionStatus     String? @map("docs_resolution_status") // 'mapped' | 'explicit_link' | 'search_candidate' | 'needs_mapping' | 'ignored'
   docsResolutionMethod     String? @map("docs_resolution_method") // 'mapping' | 'pr_link' | 'confluence_search' | 'none'
   docsResolutionConfidence Float?  @map("docs_resolution_confidence")
   noWritebackMode          Boolean @default(false) @map("no_writeback_mode") // Set when writeback should be skipped
+
+  // Selected doc details (per spec Section 0.1)
+  selectedDocId    String? @map("selected_doc_id")
+  selectedDocUrl   String? @map("selected_doc_url")
+  selectedDocTitle String? @map("selected_doc_title")
 
   // Owner resolution
   ownerResolution Json? @map("owner_resolution")
 
   // Deduplication (fingerprint = hash of workspace + service + drift_type + domains + doc_id + key_tokens)
   fingerprint String?
+
+  // Needs-mapping notification deduplication (per spec Section 7)
+  // Key format: "workspace_id:repo" - used to prevent spam for same repo
+  needsMappingKey        String?   @map("needs_mapping_key")
+  needsMappingNotifiedAt DateTime? @map("needs_mapping_notified_at")
 
   // Correlated signals (from SignalJoiner - Phase 4)
   correlatedSignals  Json    @default("[]") @map("correlated_signals")
@@ -148,6 +165,7 @@ model DriftCandidate {
   @@unique([workspaceId, fingerprint])
   @@index([workspaceId, state, stateUpdatedAt(sort: Desc)])
   @@index([workspaceId, service])
+  @@index([workspaceId, needsMappingKey, needsMappingNotifiedAt])
   @@map("drift_candidates")
 }
 
@@ -236,6 +254,7 @@ model DocMappingV2 {
   hasManagedRegion         Boolean   @default(false) @map("has_managed_region")
   managedRegionInstalledAt DateTime? @map("managed_region_installed_at")
   docClass                 String?   @map("doc_class") // e.g., 'Operational_Runbook', 'Architecture_Doc', 'API_Reference'
+  allowWriteback           Boolean   @default(true) @map("allow_writeback") // Per spec: controls if writeback is allowed for this mapping
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
