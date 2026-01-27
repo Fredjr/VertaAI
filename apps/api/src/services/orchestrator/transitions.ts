@@ -278,11 +278,12 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
 
   if (!result.success || !result.data?.doc_candidates?.length) {
     // No docs found - needs human mapping
+    // Use dedicated FAILED_NEEDS_MAPPING state for clear visibility
     if (result.data?.needs_human) {
       return {
-        state: DriftState.FAILED,
+        state: DriftState.FAILED_NEEDS_MAPPING,
         enqueueNext: false,
-        error: { code: FailureCode.NEEDS_DOC_MAPPING, message: 'No doc mapping found' },
+        error: { code: FailureCode.NEEDS_DOC_MAPPING, message: 'No doc mapping found - human needs to configure doc mapping' },
       };
     }
     return { state: DriftState.COMPLETED, enqueueNext: false };

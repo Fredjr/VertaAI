@@ -34,6 +34,7 @@ export enum DriftState {
   // Terminal states
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+  FAILED_NEEDS_MAPPING = 'FAILED_NEEDS_MAPPING', // Specific failure: no doc mapping found
 }
 
 // Failure codes from Section 15.9.9
@@ -95,6 +96,7 @@ export interface JobPayload {
 export const TERMINAL_STATES: DriftState[] = [
   DriftState.COMPLETED,
   DriftState.FAILED,
+  DriftState.FAILED_NEEDS_MAPPING,
   DriftState.REJECTED,
 ];
 

@@ -315,7 +315,7 @@ Common issues and troubleshooting.
 // ============================================================================
 // PROCESS DRIFT RESULT TESTS
 // ============================================================================
-import { checkProcessBaselineDetailed, ProcessDriftResult } from '../services/baseline/patterns';
+import { checkProcessBaselineDetailed, ProcessDriftResult, ProcessBaselineFinding } from '../services/baseline/patterns.js';
 
 describe('ProcessDriftResult - checkProcessBaselineDetailed', () => {
   it('should detect step lists and return structured result', () => {
@@ -353,7 +353,7 @@ Before releasing:
     const result = checkProcessBaselineDetailed(docText);
 
     expect(result.detected).toBe(true);
-    const approvalFindings = result.findings.filter(f => f.kind === 'approval_gate');
+    const approvalFindings = result.findings.filter((f: ProcessBaselineFinding) => f.kind === 'approval_gate');
     expect(approvalFindings.length).toBeGreaterThan(0);
     expect(result.confidence_suggestion).toBeGreaterThanOrEqual(0.5);
   });
@@ -372,8 +372,8 @@ If something goes wrong:
     const result = checkProcessBaselineDetailed(docText);
 
     expect(result.detected).toBe(true);
-    const rollbackFindings = result.findings.filter(f => f.kind === 'rollback_gate');
-    const escalationFindings = result.findings.filter(f => f.kind === 'escalation_gate');
+    const rollbackFindings = result.findings.filter((f: ProcessBaselineFinding) => f.kind === 'rollback_gate');
+    const escalationFindings = result.findings.filter((f: ProcessBaselineFinding) => f.kind === 'escalation_gate');
     expect(rollbackFindings.length).toBeGreaterThan(0);
     expect(escalationFindings.length).toBeGreaterThan(0);
   });
