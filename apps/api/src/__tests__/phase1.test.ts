@@ -311,3 +311,143 @@ Common issues and troubleshooting.
     });
   });
 });
+
+// ============================================================================
+// PROCESS DRIFT RESULT TESTS
+// ============================================================================
+import { checkProcessBaselineDetailed, ProcessDriftResult } from '../services/baseline/patterns';
+
+describe('ProcessDriftResult - checkProcessBaselineDetailed', () => {
+  it('should detect step lists and return structured result', () => {
+    const docText = `
+# Deployment Runbook
+
+## Steps
+1. First, check the current version
+2. Then, run the deployment script
+3. Next, verify the deployment
+4. Finally, update the dashboard
+
+If deployment fails, then rollback.
+`;
+
+    const result = checkProcessBaselineDetailed(docText);
+
+    expect(result.detected).toBe(true);
+    expect(result.confidence_suggestion).toBeGreaterThanOrEqual(0.3);
+    expect(result.findings.length).toBeGreaterThan(0);
+    expect(result.delta.doc_order_summary).toContain('step lists');
+    expect(result.rationale).toContain('Process drift analysis');
+  });
+
+  it('should detect approval gates', () => {
+    const docText = `
+# Release Process
+
+Before releasing:
+1. Get sign-off from the team lead
+2. The change requires approval from security team
+3. Must be approved by the on-call engineer
+`;
+
+    const result = checkProcessBaselineDetailed(docText);
+
+    expect(result.detected).toBe(true);
+    const approvalFindings = result.findings.filter(f => f.kind === 'approval_gate');
+    expect(approvalFindings.length).toBeGreaterThan(0);
+    expect(result.confidence_suggestion).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('should detect rollback and escalation gates', () => {
+    const docText = `
+# Incident Response
+
+If something goes wrong:
+- Rollback if metrics degrade by more than 10%
+- Recovery steps include reverting the last commit
+- Escalate to on-call if issue persists
+- Page on-call engineer for SEV1 incidents
+`;
+
+    const result = checkProcessBaselineDetailed(docText);
+
+    expect(result.detected).toBe(true);
+    const rollbackFindings = result.findings.filter(f => f.kind === 'rollback_gate');
+    const escalationFindings = result.findings.filter(f => f.kind === 'escalation_gate');
+    expect(rollbackFindings.length).toBeGreaterThan(0);
+    expect(escalationFindings.length).toBeGreaterThan(0);
+  });
+
+  it('should determine mismatch type from PR title', () => {
+    const docText = `
+# Steps
+1. First step
+2. Second step
+`;
+
+    const result = checkProcessBaselineDetailed(docText, {
+      prTitle: 'Reorder deployment steps for faster rollout',
+    });
+
+    expect(result.delta.mismatch_type).toBe('order_change');
+    expect(result.delta.pr_flow_summary.toLowerCase()).toContain('reorder');
+  });
+
+  it('should recommend add_section for new gate PR', () => {
+    const docText = `
+# Simple Process
+Just run the script.
+`;
+
+    const result = checkProcessBaselineDetailed(docText, {
+      prTitle: 'Add approval gate for production deployments',
+    });
+
+    expect(result.delta.mismatch_type).toBe('new_gate');
+    expect(result.recommended_patch_style).toBe('add_section');
+  });
+
+  it('should recommend review_queue for low confidence', () => {
+    const docText = `
+# Overview
+This is a general overview document with no process steps.
+`;
+
+    const result = checkProcessBaselineDetailed(docText);
+
+    expect(result.detected).toBe(false);
+    expect(result.confidence_suggestion).toBeLessThan(0.5);
+    expect(result.recommended_action).toBe('review_queue');
+  });
+
+  it('should recommend generate_patch for high confidence with step list', () => {
+    const docText = `
+# Deployment Runbook
+
+## Prerequisites
+- Check version
+
+## Steps
+1. First, verify environment
+2. Then, deploy to staging
+3. Next, run integration tests
+4. Finally, deploy to production
+
+## Rollback
+Rollback if tests fail.
+
+## Approval
+Requires approval from team lead.
+
+If errors occur, then escalate to on-call.
+`;
+
+    const result = checkProcessBaselineDetailed(docText, {
+      prTitle: 'Update deployment steps order',
+    });
+
+    expect(result.detected).toBe(true);
+    expect(result.confidence_suggestion).toBeGreaterThanOrEqual(0.7);
+    expect(result.recommended_action).toBe('generate_patch');
+  });
+});

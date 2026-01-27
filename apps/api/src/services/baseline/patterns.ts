@@ -216,6 +216,51 @@ export interface BaselineCheckResult {
   mismatchReason?: string;
 }
 
+// ============================================================================
+// PROCESS DRIFT RESULT TYPES
+// Per spec Section D - Structured process drift detection
+// ============================================================================
+
+export type ProcessFindingKind =
+  | 'step_list'
+  | 'decision_logic'
+  | 'approval_gate'
+  | 'rollback_gate'
+  | 'escalation_gate';
+
+export type ProcessMismatchType =
+  | 'order_change'
+  | 'new_gate'
+  | 'removed_gate'
+  | 'decision_change'
+  | 'unknown';
+
+export interface ProcessBaselineFinding {
+  kind: ProcessFindingKind;
+  doc_snippet: string;
+  doc_location: {
+    section_id?: string;
+    start_char: number;
+    end_char: number;
+  };
+  matched_patterns: string[];
+}
+
+export interface ProcessDriftResult {
+  detected: boolean;
+  confidence_suggestion: number;
+  affected_section_ids: string[];
+  findings: ProcessBaselineFinding[];
+  delta: {
+    doc_order_summary: string;
+    pr_flow_summary: string;
+    mismatch_type: ProcessMismatchType;
+  };
+  recommended_patch_style: 'add_note' | 'reorder_steps' | 'add_section';
+  recommended_action: 'generate_patch' | 'annotate_only' | 'review_queue';
+  rationale: string;
+}
+
 /**
  * Check if document references old instruction that should be updated.
  * @param docText - Current document content
@@ -352,3 +397,197 @@ export function checkProcessBaseline(
   };
 }
 
+// ============================================================================
+// PROCESS DRIFT DETAILED ANALYSIS
+// Per spec Section D - Enhanced process drift detection with structured result
+// ============================================================================
+
+// Gate detection patterns
+const APPROVAL_GATE_PATTERNS = [
+  /requires?\s+approval/gi,
+  /get\s+sign[\-\s]?off/gi,
+  /must\s+be\s+approved/gi,
+  /approval\s+from/gi,
+  /needs?\s+review/gi,
+];
+
+const ROLLBACK_GATE_PATTERNS = [
+  /rollback\s+if/gi,
+  /revert\s+when/gi,
+  /rollback\s+procedure/gi,
+  /undo\s+steps?/gi,
+  /recovery\s+steps?/gi,
+];
+
+const ESCALATION_GATE_PATTERNS = [
+  /escalate\s+to/gi,
+  /page\s+(on[\-\s]?call|oncall)/gi,
+  /contact\s+on[\-\s]?call/gi,
+  /notify\s+(?:manager|lead|team)/gi,
+  /alert\s+(?:sev|severity)/gi,
+];
+
+/**
+ * Find process-related snippets in document and return their locations
+ */
+function findProcessFindings(
+  docText: string,
+  patterns: RegExp[],
+  kind: ProcessFindingKind
+): ProcessBaselineFinding[] {
+  const findings: ProcessBaselineFinding[] = [];
+
+  for (const pattern of patterns) {
+    const regex = new RegExp(pattern.source, pattern.flags);
+    let match;
+    while ((match = regex.exec(docText)) !== null) {
+      // Expand snippet to include surrounding context (50 chars before/after)
+      const snippetStart = Math.max(0, match.index - 50);
+      const snippetEnd = Math.min(docText.length, match.index + match[0].length + 50);
+      const snippet = docText.substring(snippetStart, snippetEnd);
+
+      findings.push({
+        kind,
+        doc_snippet: snippet.replace(/\n/g, ' ').trim(),
+        doc_location: {
+          start_char: match.index,
+          end_char: match.index + match[0].length,
+        },
+        matched_patterns: [match[0]],
+      });
+    }
+  }
+
+  return findings;
+}
+
+/**
+ * Enhanced process drift detection with structured result.
+ * Per spec Section D - Process Drift Handler
+ *
+ * @param docText - Current document content
+ * @param prInfo - PR information for comparison
+ */
+export function checkProcessBaselineDetailed(
+  docText: string,
+  prInfo?: {
+    prTitle?: string;
+    prDescription?: string;
+    changedFiles?: string[];
+  }
+): ProcessDriftResult {
+  // Step 1: Extract all process-related findings from document
+  const stepListMatches = findPatternMatches(docText, PROCESS_PATTERNS);
+  const stepListFindings: ProcessBaselineFinding[] = stepListMatches.flatMap(m =>
+    m.matches.map(matchStr => {
+      const idx = docText.indexOf(matchStr);
+      return {
+        kind: 'step_list' as ProcessFindingKind,
+        doc_snippet: matchStr,
+        doc_location: { start_char: idx >= 0 ? idx : 0, end_char: idx >= 0 ? idx + matchStr.length : 0 },
+        matched_patterns: [matchStr],
+      };
+    })
+  );
+
+  // Find decision logic (if/else patterns)
+  const decisionPatterns = [/if\s+.+\s*[,:]?\s*then/gi, /when\s+.+\s*[,:]?\s*do/gi, /unless\s+.+/gi];
+  const decisionFindings = findProcessFindings(docText, decisionPatterns, 'decision_logic');
+
+  // Find gates
+  const approvalFindings = findProcessFindings(docText, APPROVAL_GATE_PATTERNS, 'approval_gate');
+  const rollbackFindings = findProcessFindings(docText, ROLLBACK_GATE_PATTERNS, 'rollback_gate');
+  const escalationFindings = findProcessFindings(docText, ESCALATION_GATE_PATTERNS, 'escalation_gate');
+
+  // Combine all findings
+  const allFindings = [
+    ...stepListFindings,
+    ...decisionFindings,
+    ...approvalFindings,
+    ...rollbackFindings,
+    ...escalationFindings,
+  ];
+
+  // Step 2: Extract PR flow summary from PR info
+  let prFlowSummary = 'No PR info available';
+  let mismatchType: ProcessMismatchType = 'unknown';
+
+  if (prInfo) {
+    const prKeywords: string[] = [];
+
+    // Extract keywords from PR title
+    if (prInfo.prTitle) {
+      const title = prInfo.prTitle.toLowerCase();
+      if (title.includes('reorder') || title.includes('order')) mismatchType = 'order_change';
+      if (title.includes('add') && (title.includes('step') || title.includes('gate'))) mismatchType = 'new_gate';
+      if (title.includes('remove') && (title.includes('step') || title.includes('gate'))) mismatchType = 'removed_gate';
+      if (title.includes('change') && (title.includes('if') || title.includes('when'))) mismatchType = 'decision_change';
+      prKeywords.push(...title.split(/\s+/).filter(w => w.length > 3).slice(0, 10));
+    }
+
+    // Extract from changed files
+    if (prInfo.changedFiles) {
+      const relevantFiles = prInfo.changedFiles.filter(f =>
+        f.includes('deploy') || f.includes('workflow') || f.includes('runbook')
+      );
+      prKeywords.push(...relevantFiles.map(f => f.split('/').pop() || ''));
+    }
+
+    prFlowSummary = prKeywords.join(', ') || 'No relevant keywords';
+  }
+
+  // Step 3: Calculate confidence and determine action
+  const hasStepList = stepListFindings.length > 0;
+  const hasGates = approvalFindings.length + rollbackFindings.length + escalationFindings.length > 0;
+  const hasDecisionLogic = decisionFindings.length > 0;
+
+  let confidenceSuggestion = 0.3; // Base confidence
+  if (hasStepList) confidenceSuggestion += 0.2;
+  if (hasGates) confidenceSuggestion += 0.2;
+  if (hasDecisionLogic) confidenceSuggestion += 0.15;
+  if (prInfo?.prTitle) confidenceSuggestion += 0.1;
+
+  // Cap at 0.95
+  confidenceSuggestion = Math.min(0.95, confidenceSuggestion);
+
+  // Step 4: Determine recommended patch style
+  let recommendedPatchStyle: 'add_note' | 'reorder_steps' | 'add_section' = 'add_note';
+  if (mismatchType === 'order_change' && confidenceSuggestion >= 0.7) {
+    recommendedPatchStyle = 'reorder_steps';
+  } else if (mismatchType === 'new_gate' || allFindings.length === 0) {
+    recommendedPatchStyle = 'add_section';
+  }
+
+  // Step 5: Determine recommended action
+  let recommendedAction: 'generate_patch' | 'annotate_only' | 'review_queue' = 'annotate_only';
+  if (confidenceSuggestion >= 0.7 && hasStepList) {
+    recommendedAction = 'generate_patch';
+  } else if (confidenceSuggestion < 0.5) {
+    recommendedAction = 'review_queue';
+  }
+
+  // Build doc order summary
+  const docOrderSummary = allFindings.length > 0
+    ? `Found ${stepListFindings.length} step lists, ${decisionFindings.length} decision points, ${approvalFindings.length + rollbackFindings.length + escalationFindings.length} gates`
+    : 'No process structures detected';
+
+  // Extract affected section IDs (placeholder - would use DocContext in full implementation)
+  const affectedSectionIds = [...new Set(allFindings.slice(0, 5).map((_, i) => `section-${i}`))];
+
+  return {
+    detected: allFindings.length > 0,
+    confidence_suggestion: confidenceSuggestion,
+    affected_section_ids: affectedSectionIds,
+    findings: allFindings.slice(0, 10), // Limit to 10 findings
+    delta: {
+      doc_order_summary: docOrderSummary,
+      pr_flow_summary: prFlowSummary,
+      mismatch_type: mismatchType,
+    },
+    recommended_patch_style: recommendedPatchStyle,
+    recommended_action: recommendedAction,
+    rationale: `Process drift analysis: confidence=${confidenceSuggestion.toFixed(2)}, ` +
+      `findings=${allFindings.length}, mismatch_type=${mismatchType}. ` +
+      `Recommended: ${recommendedAction} with ${recommendedPatchStyle} style.`,
+  };
+}
