@@ -20,6 +20,17 @@ import { prisma } from '../../lib/db.js';
 export type DocResolutionStatus = 'explicit_link' | 'mapped' | 'search_candidate' | 'needs_mapping' | 'ignored';
 export type DocResolutionMethod = 'pr_link' | 'mapping' | 'confluence_search' | 'notion_search' | 'none';
 
+/**
+ * DocResolutionAttempt - Per spec Section 1.1
+ * Tracks each resolution step for debugging (flight recorder)
+ */
+export interface DocResolutionAttempt {
+  step: 'parse_pr_links' | 'mapping_lookup' | 'confluence_search' | 'notion_search' | 'rerank';
+  ok: boolean;
+  info?: Record<string, unknown>;
+  error?: string;
+}
+
 export interface DocCandidate {
   docId: string;
   docSystem: 'confluence' | 'notion';
@@ -28,7 +39,8 @@ export interface DocCandidate {
   isPrimary: boolean;
   hasManagedRegion: boolean;
   allowWriteback: boolean; // Per spec: controls if writeback is allowed for this doc
-  matchReason: string;
+  spaceKey?: string;       // Per spec: Confluence space key for filtering
+  reasons: string[];       // Per spec: multiple reasons for match (was matchReason: string)
   confidence: number;
 }
 
@@ -38,6 +50,13 @@ export interface DocResolutionResult {
   confidence: number;
   noWritebackMode: boolean;
   candidates: DocCandidate[];
+  // Per spec Section 1.1 - Flight recorder and thresholds
+  repoFullName?: string;           // Repository full name for traceability
+  attempts: DocResolutionAttempt[]; // Resolution step log for debugging
+  thresholds: {
+    minConfidenceForSuggest: number;
+    minConfidenceForAutoselect: number;
+  };
   notes?: string;
 }
 
@@ -159,6 +178,18 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
 
   console.log(`[DocResolution] Resolving docs for workspace=${workspaceId}, repo=${repo}, service=${service}, policy.primaryDocRequired=${policy?.primaryDocRequired}`);
 
+  // Track resolution attempts for debugging (flight recorder)
+  const attempts: DocResolutionAttempt[] = [];
+
+  // Default thresholds (can be overridden by policy)
+  const thresholds = {
+    minConfidenceForSuggest: policy?.minConfidenceForSuggest ?? 0.5,
+    minConfidenceForAutoselect: 0.75,
+  };
+
+  // Build repo full name for traceability
+  const repoFullName = repo || undefined;
+
   // -------------------------------------------------------------------------
   // Handle 'ignored' status (per spec Section 6.1)
   // This is used when a drift candidate should not trigger doc updates
@@ -171,6 +202,9 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
       confidence: 0,
       noWritebackMode: true,
       candidates: [],
+      repoFullName,
+      attempts: [],
+      thresholds,
       notes: ignoreReason || 'Doc resolution skipped - change does not require doc update',
     };
   }
@@ -179,19 +213,25 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
   // P0: Check for explicit doc links in PR body
   // -------------------------------------------------------------------------
   const prLinks = extractDocLinksFromPR(prBody);
-  
+
+  attempts.push({
+    step: 'parse_pr_links',
+    ok: prLinks.length > 0,
+    info: { linksFound: prLinks.length, links: prLinks.map(l => l.url) },
+  });
+
   if (prLinks.length > 0) {
     console.log(`[DocResolution] P0: Found ${prLinks.length} doc links in PR body`);
-    
+
     // Look up these docs in DocMappingV2 to get full metadata
     const p0Candidates: DocCandidate[] = [];
-    
+
     for (const link of prLinks) {
       // Try to find by URL first
       let mapping = await prisma.docMappingV2.findFirst({
         where: { workspaceId, docUrl: link.url },
       });
-      
+
       // If not found by URL and we have a docId, try by docId
       if (!mapping && link.docId) {
         mapping = await prisma.docMappingV2.findFirst({
@@ -208,7 +248,8 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
           isPrimary: mapping.isPrimary,
           hasManagedRegion: mapping.hasManagedRegion,
           allowWriteback: mapping.allowWriteback,
-          matchReason: 'Explicit link in PR body',
+          spaceKey: mapping.spaceKey ?? undefined,
+          reasons: ['Explicit link in PR body', 'Found in doc mappings'],
           confidence: 0.95,
         });
       } else {
@@ -222,7 +263,7 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
           isPrimary: false,
           hasManagedRegion: false,
           allowWriteback: false, // Unmapped docs don't allow writeback
-          matchReason: 'Explicit link in PR body (not in mappings)',
+          reasons: ['Explicit link in PR body', 'Not in doc mappings - reduced confidence'],
           confidence: 0.75,
         });
       }
@@ -245,6 +286,9 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
         confidence: p0Candidates[0]?.confidence ?? 0.75,
         noWritebackMode,
         candidates: p0Candidates.slice(0, 3),
+        repoFullName,
+        attempts,
+        thresholds,
         notes: `Found ${prLinks.length} doc link(s) in PR body`,
       };
     }
@@ -270,6 +314,12 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
     take: 5,
   });
 
+  attempts.push({
+    step: 'mapping_lookup',
+    ok: mappings.length > 0,
+    info: { mappingsFound: mappings.length, repo, service },
+  });
+
   if (mappings.length > 0) {
     console.log(`[DocResolution] P1: Found ${mappings.length} mappings`);
 
@@ -281,7 +331,11 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
       isPrimary: m.isPrimary,
       hasManagedRegion: m.hasManagedRegion,
       allowWriteback: m.allowWriteback,
-      matchReason: m.repo === repo ? 'Repo mapping' : 'Service mapping',
+      spaceKey: m.spaceKey ?? undefined,
+      reasons: [
+        m.repo === repo ? 'Matched by repository' : 'Matched by service',
+        m.isPrimary ? 'Primary doc mapping' : 'Secondary doc mapping',
+      ],
       confidence: m.isPrimary ? 0.85 : 0.70,
     }));
 
@@ -297,6 +351,9 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
         confidence: 0,
         noWritebackMode: true,
         candidates: p1Candidates.slice(0, 3), // Include non-primary candidates for reference
+        repoFullName,
+        attempts,
+        thresholds,
         notes: 'Policy requires a primary doc mapping, but none found. Please mark one doc as primary.',
       };
     }
@@ -311,6 +368,9 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
       confidence: primaryDoc?.confidence ?? p1Candidates[0]?.confidence ?? 0.70,
       noWritebackMode,
       candidates: p1Candidates.slice(0, 3),
+      repoFullName,
+      attempts,
+      thresholds,
       notes: `Found ${mappings.length} mapping(s) for repo/service`,
     };
   }
@@ -329,6 +389,9 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
     confidence: 0,
     noWritebackMode: true,
     candidates: [],
+    repoFullName,
+    attempts,
+    thresholds,
     notes: 'No doc mappings found for this repo/service. Please configure doc mappings.',
   };
 }

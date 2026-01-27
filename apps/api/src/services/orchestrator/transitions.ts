@@ -11,6 +11,7 @@ import { runPatchPlanner } from '../../agents/patch-planner.js';
 import { runPatchGenerator } from '../../agents/patch-generator.js';
 import { runSlackComposer } from '../../agents/slack-composer.js';
 import { prisma } from '../../lib/db.js';
+import { Prisma } from '@prisma/client';
 
 // Phase 3 imports
 import { computeDriftFingerprint, extractKeyTokens } from '../dedup/fingerprint.js';
@@ -389,7 +390,8 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
     is_primary: c.isPrimary,
     has_managed_region: c.hasManagedRegion,
     allow_writeback: c.allowWriteback,
-    match_reason: c.matchReason,
+    space_key: c.spaceKey,
+    match_reasons: c.reasons, // Per spec: multiple reasons (was match_reason: string)
     confidence: c.confidence,
   }));
 
@@ -397,6 +399,7 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
   const selectedDoc = resolutionResult.candidates[0];
 
   // Store doc candidates and resolution metadata
+  // Per spec Section 0.1: Store full docsResolution blob for flight recorder debugging
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
     data: {
@@ -405,6 +408,8 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
       docsResolutionMethod: resolutionResult.method,
       docsResolutionConfidence: resolutionResult.confidence,
       noWritebackMode: resolutionResult.noWritebackMode,
+      // Per spec Section 0.1 - Full flight recorder blob for debugging
+      docsResolution: resolutionResult as unknown as Prisma.InputJsonValue,
       // Per spec Section 0.1 - store selected doc details for observability
       selectedDocId: selectedDoc?.docId || null,
       selectedDocUrl: selectedDoc?.docUrl || null,
@@ -544,21 +549,43 @@ async function handleDocsFetched(drift: any): Promise<TransitionResult> {
 
   console.log(`[Transitions] DocContext extracted: ${docContext.extractedSections.length} sections, managed=${!docContext.flags.managedRegionMissing}`);
 
-  // Store DocContext in baselineFindings
+  // Per spec Section 0.1: Compute doc_context_sha256 for stable fingerprinting
+  // Use a simple hash of the extracted sections' text for deduplication/caching
+  const contextSlice = docContext.extractedSections
+    .map(s => s.text)
+    .join('|||');
+  const docContextSha256 = await computeSimpleHash(contextSlice);
+
+  // Store DocContext in baselineFindings (legacy format)
   const updatedFindings = [{
     ...finding,
     docContext: JSON.parse(JSON.stringify(docContext)),
     llmPayload: JSON.parse(JSON.stringify(buildLlmPayload(docContext))),
   }] as unknown as import('@prisma/client').Prisma.InputJsonValue;
 
+  // Per spec Section 0.1: Store docContext, baseRevision, and sha256 in dedicated columns
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
     data: {
       baselineFindings: updatedFindings,
+      // Per spec Section 0.1 - Idempotency + debuggability fields
+      docContext: docContext as unknown as Prisma.InputJsonValue, // Full DocContext snapshot
+      baseRevision: finding.docRevision || null,              // Confluence/Notion version at fetch
+      docContextSha256,                                        // Stable fingerprint for cache/dedup
     },
   });
 
   return { state: DriftState.DOC_CONTEXT_EXTRACTED, enqueueNext: true };
+}
+
+/**
+ * Simple hash function for computing doc context fingerprint.
+ * Uses Web Crypto API for SHA-256.
+ */
+async function computeSimpleHash(text: string): Promise<string> {
+  // In Node.js environment, use crypto module
+  const crypto = await import('crypto');
+  return crypto.createHash('sha256').update(text).digest('hex');
 }
 
 /**
@@ -630,6 +657,7 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
     processResult?: {
       detected: boolean;
       confidence_suggestion: number;
+      mismatch_type: string;
       affected_section_ids: string[];
       findings: Array<{
         kind: string;
@@ -637,11 +665,8 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
         doc_location: { section_id?: string; start_char: number; end_char: number };
         matched_patterns: string[];
       }>;
-      delta: {
-        doc_order_summary: string;
-        pr_flow_summary: string;
-        mismatch_type: string;
-      };
+      doc_flow: string[];
+      pr_flow: string[];
       recommended_patch_style: string;
       recommended_action: string;
       rationale: string;
@@ -732,14 +757,22 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
   }
 
   // ==========================================================================
-  // B) PROCESS DRIFT - Already implemented with checkProcessBaselineDetailed
+  // B) PROCESS DRIFT - Per spec Section 3.2 with PR signal comparison
   // ==========================================================================
   else if (driftType === 'process') {
-    const processResult = checkProcessBaselineDetailed(docContent, {
-      prTitle: extracted.prTitle || prData.title || undefined,
-      prDescription: extracted.prBody || prData.body || undefined,
-      changedFiles: extracted.changedFiles || prData.changed_files || undefined,
-    });
+    // Get section IDs from DocContext if available
+    const sectionIds = docContext?.extracted_sections?.map((s: { section_id: string }) => s.section_id) || [];
+
+    const processResult = checkProcessBaselineDetailed(
+      docContent,
+      {
+        prTitle: extracted.prTitle || prData.title || undefined,
+        prDescription: extracted.prBody || prData.body || undefined,
+        diffExcerpt: extracted.diff || prData.diff || undefined,
+        changedFiles: extracted.changedFiles || prData.changed_files || undefined,
+      },
+      sectionIds
+    );
 
     baselineResult = {
       driftType,
@@ -749,15 +782,17 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
       processResult: {
         detected: processResult.detected,
         confidence_suggestion: processResult.confidence_suggestion,
+        mismatch_type: processResult.mismatch_type,
         affected_section_ids: processResult.affected_section_ids,
         findings: processResult.findings,
-        delta: processResult.delta,
+        doc_flow: processResult.doc_flow,
+        pr_flow: processResult.pr_flow,
         recommended_patch_style: processResult.recommended_patch_style,
         recommended_action: processResult.recommended_action,
         rationale: processResult.rationale,
       },
     };
-    console.log(`[Transitions] Process baseline (detailed): detected=${processResult.detected}, findings=${processResult.findings.length}, recommended_style=${processResult.recommended_patch_style}`);
+    console.log(`[Transitions] Process baseline (detailed): detected=${processResult.detected}, mismatch_type=${processResult.mismatch_type}, findings=${processResult.findings.length}, pr_signals=${processResult.pr_flow.length}`);
   }
 
   // ==========================================================================

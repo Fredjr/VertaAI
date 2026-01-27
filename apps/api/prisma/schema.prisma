@@ -134,6 +134,16 @@ model DriftCandidate {
   selectedDocUrl   String? @map("selected_doc_url")
   selectedDocTitle String? @map("selected_doc_title")
 
+  // Idempotency + debuggability fields (per spec Section 0.1)
+  // Black box flight recorder - full DocResolutionResult blob for debugging resolution steps
+  docsResolution   Json?   @map("docs_resolution")
+  // DocContext snapshot - for LLM call reproducibility
+  docContext       Json?   @map("doc_context")
+  // Confluence version at fetch time - for detecting concurrent edits
+  baseRevision     String? @map("base_revision")
+  // Stable fingerprint of context slice - for cache/dedup
+  docContextSha256 String? @map("doc_context_sha256")
+
   // Owner resolution
   ownerResolution Json? @map("owner_resolution")
 
@@ -250,6 +260,7 @@ model DocMappingV2 {
   docId                    String    @map("doc_id")
   docTitle                 String    @map("doc_title")
   docUrl                   String?   @map("doc_url")
+  spaceKey                 String?   @map("space_key") // Confluence space key for doc resolution
   isPrimary                Boolean   @default(false) @map("is_primary")
   hasManagedRegion         Boolean   @default(false) @map("has_managed_region")
   managedRegionInstalledAt DateTime? @map("managed_region_installed_at")
