@@ -7,7 +7,6 @@ import {
   TransitionResult,
 } from '../../types/state-machine.js';
 import { runDriftTriage } from '../../agents/drift-triage.js';
-import { runDocResolver } from '../../agents/doc-resolver.js';
 import { runPatchPlanner } from '../../agents/patch-planner.js';
 import { runPatchGenerator } from '../../agents/patch-generator.js';
 import { runSlackComposer } from '../../agents/slack-composer.js';
@@ -39,6 +38,9 @@ import { selectPatchStyle } from '../../config/driftMatrix.js';
 
 // Phase 6 imports - DocContext extraction
 import { extractDocContext, buildLlmPayload } from '../docs/docContextExtractor.js';
+
+// Phase 7 imports - Doc resolution with priority order
+import { resolveDocsForDrift } from '../docs/docResolution.js';
 
 // Type alias for transition handlers
 type TransitionHandler = (drift: any) => Promise<TransitionResult>;
@@ -267,33 +269,61 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
     console.log(`[Transitions] Fingerprint stored: ${fingerprint}`);
   }
 
-  const resolverInput = {
-    repoFullName: signal?.repo || '',
-    suspectedServices: [drift.service || 'unknown'],
-    impactedDomains: drift.driftDomains || [],
-    orgId: drift.workspaceId, // Use workspaceId
-  };
+  // Phase 7: Use new doc resolution with priority order (P0 → P1 → P2 → NEEDS_MAPPING)
+  const extracted = signal?.extracted || {};
+  const rawPayload = signal?.rawPayload || {};
+  const prData = rawPayload.pull_request || {};
 
-  const result = await runDocResolver(resolverInput);
+  const resolutionResult = await resolveDocsForDrift({
+    workspaceId: drift.workspaceId,
+    repo: signal?.repo || null,
+    service: drift.service || null,
+    prBody: extracted.prBody || prData.body || null,
+    prTitle: extracted.prTitle || prData.title || null,
+  });
 
-  if (!result.success || !result.data?.doc_candidates?.length) {
-    // No docs found - needs human mapping
-    // Use dedicated FAILED_NEEDS_MAPPING state for clear visibility
-    if (result.data?.needs_human) {
-      return {
-        state: DriftState.FAILED_NEEDS_MAPPING,
-        enqueueNext: false,
-        error: { code: FailureCode.NEEDS_DOC_MAPPING, message: 'No doc mapping found - human needs to configure doc mapping' },
-      };
-    }
+  console.log(`[Transitions] Doc resolution: status=${resolutionResult.status}, method=${resolutionResult.method}, candidates=${resolutionResult.candidates.length}`);
+
+  // Handle NEEDS_MAPPING case
+  if (resolutionResult.status === 'needs_mapping') {
+    return {
+      state: DriftState.FAILED_NEEDS_MAPPING,
+      enqueueNext: false,
+      error: {
+        code: FailureCode.NEEDS_DOC_MAPPING,
+        message: resolutionResult.notes || 'No doc mapping found - human needs to configure doc mapping'
+      },
+    };
+  }
+
+  // No candidates found (shouldn't happen if status != needs_mapping, but handle gracefully)
+  if (resolutionResult.candidates.length === 0) {
     return { state: DriftState.COMPLETED, enqueueNext: false };
   }
 
-  // Store doc candidates
+  // Transform candidates to legacy format for compatibility with downstream handlers
+  const docCandidates = resolutionResult.candidates.map(c => ({
+    doc_id: c.docId,
+    docId: c.docId,
+    system: c.docSystem,
+    title: c.docTitle,
+    doc_title: c.docTitle,
+    doc_url: c.docUrl,
+    is_primary: c.isPrimary,
+    has_managed_region: c.hasManagedRegion,
+    match_reason: c.matchReason,
+    confidence: c.confidence,
+  }));
+
+  // Store doc candidates and resolution metadata
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
     data: {
-      docCandidates: result.data.doc_candidates,
+      docCandidates,
+      docsResolutionStatus: resolutionResult.status,
+      docsResolutionMethod: resolutionResult.method,
+      docsResolutionConfidence: resolutionResult.confidence,
+      noWritebackMode: resolutionResult.noWritebackMode,
     },
   });
 
