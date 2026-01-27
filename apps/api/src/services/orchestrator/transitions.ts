@@ -43,6 +43,13 @@ import { extractDocContext, buildLlmPayload } from '../docs/docContextExtractor.
 // Phase 7 imports - Doc resolution with priority order
 import { resolveDocsForDrift } from '../docs/docResolution.js';
 
+// Gap Filling imports - EvidencePack extraction and tool migration detection
+import {
+  extractEvidencePack,
+  detectToolMigrations,
+  extractScenarioKeywords,
+} from '../baseline/evidencePack.js';
+
 // Type alias for transition handlers
 type TransitionHandler = (drift: any) => Promise<TransitionResult>;
 
@@ -556,24 +563,70 @@ async function handleDocsFetched(drift: any): Promise<TransitionResult> {
 
 /**
  * DOC_CONTEXT_EXTRACTED -> BASELINE_CHECKED
- * Check baseline patterns against doc content
+ * Check baseline patterns against doc content using EvidencePack vs BaselineAnchors comparison
+ *
+ * Per Spec - Comparison logic: drift-vs-Confluence baseline across 5 drift types
+ * Core principle: Compare Evidence from PR vs Baseline from doc
  */
 async function handleDocContextExtracted(drift: any): Promise<TransitionResult> {
-  // Get doc content from baselineFindings
+  // Get doc content and DocContext from baselineFindings
   const findings = drift.baselineFindings || [];
   const finding = findings[0] || {};
   const docContent = finding.docContent || '';
+  const docContext = finding.docContext;
   const driftType = drift.driftType || 'instruction';
   const signal = drift.signalEvent;
+  const rawPayload = signal?.rawPayload || {};
+  const prData = rawPayload.pull_request || {};
   const extracted = signal?.extracted || {};
 
-  // Use baseline patterns based on drift type
-  // Extended type to support processResult for process drift (per spec Section D)
+  // --- Build EvidencePack from PR data ---
+  const changedFilesRaw = extracted.changedFiles || prData.changed_files || [];
+  const changedFiles: string[] = Array.isArray(changedFilesRaw)
+    ? changedFilesRaw.map((f: any) => typeof f === 'string' ? f : f.filename || '')
+    : [];
+
+  const evidencePack = extractEvidencePack({
+    prTitle: extracted.prTitle || prData.title || '',
+    prBody: extracted.prBody || prData.body || null,
+    changedFiles,
+    diff: extracted.diff || '',
+    ruleHits: drift.ruleHits || [],
+  });
+
+  // --- Get BaselineAnchors from DocContext ---
+  const baselineAnchors = docContext?.baselineAnchors?.anchors || {
+    commands: [],
+    tool_mentions: [],
+    config_keys: [],
+    endpoints: [],
+    step_markers: [],
+    decision_markers: [],
+    owner_refs: [],
+    coverage_keywords_present: [],
+  };
+
+  // Extended baseline result type
   let baselineResult: {
     driftType: string;
     hasMatch: boolean;
     matchCount: number;
     evidence: string[];
+    comparisonDetails?: {
+      prArtifacts: string[];
+      docArtifacts: string[];
+      conflicts: string[];
+      recommendation: string;
+    };
+    toolMigration?: {
+      oldTool: string;
+      newTool: string;
+      confidence: number;
+    };
+    authoritativeOwner?: {
+      primary: string | null;
+      source: string;
+    };
     processResult?: {
       detected: boolean;
       confidence_suggestion: number;
@@ -600,45 +653,88 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
     evidence: [],
   };
 
+  // ==========================================================================
+  // A) INSTRUCTION DRIFT - Gap 3
+  // Compare EvidencePack artifacts vs DocContext baselineAnchors
+  // ==========================================================================
   if (driftType === 'instruction') {
-    // Check for instruction patterns (commands, config keys, etc.)
-    const matches = findPatternMatches(docContent, INSTRUCTION_PATTERNS);
-    const flatMatches = matches.flatMap(m => m.matches);
-    baselineResult = {
-      driftType,
-      hasMatch: flatMatches.length > 0,
-      matchCount: flatMatches.length,
-      evidence: flatMatches.slice(0, 5),
-    };
-    console.log(`[Transitions] Instruction baseline: ${flatMatches.length} matches found`);
-  } else if (driftType === 'ownership') {
-    // Check for ownership patterns
-    const ownerCheck = checkOwnershipBaseline(docContent, extracted.authorLogin || '');
-    baselineResult = {
-      driftType,
-      hasMatch: ownerCheck.hasMatch,
-      matchCount: ownerCheck.matches.length,
-      evidence: ownerCheck.matches.slice(0, 5),
-    };
-    console.log(`[Transitions] Ownership baseline: hasMatch=${ownerCheck.hasMatch}`);
-  } else if (driftType === 'coverage') {
-    // Check for coverage gaps
-    const coverageCheck = checkCoverageBaseline(docContent, extracted.prTitle || '');
-    baselineResult = {
-      driftType,
-      hasMatch: coverageCheck.hasMatch,
-      matchCount: coverageCheck.matches.length,
-      evidence: coverageCheck.matches.slice(0, 5),
-    };
-    console.log(`[Transitions] Coverage baseline: hasMatch=${coverageCheck.hasMatch}`);
-  } else if (driftType === 'process') {
-    // Check for process patterns using detailed analysis
-    // Per spec Section D - Use checkProcessBaselineDetailed() for structured ProcessDriftResult
-    const signal = drift.signalEvent;
-    const rawPayload = signal?.rawPayload || {};
-    const prData = rawPayload.pull_request || {};
-    const extracted = signal?.extracted || {};
+    const prCommands = evidencePack.extracted.commands;
+    const prConfigKeys = evidencePack.extracted.config_keys;
+    const prEndpoints = evidencePack.extracted.endpoints;
+    const prKeywords = evidencePack.extracted.keywords;
 
+    const docCommands = baselineAnchors.commands;
+    const docConfigKeys = baselineAnchors.config_keys;
+    const docEndpoints = baselineAnchors.endpoints;
+
+    // Find conflicts: PR has artifact that conflicts with doc artifact
+    const conflicts: string[] = [];
+
+    // Check for command conflicts (PR changed command, doc has old version)
+    for (const prCmd of prCommands) {
+      for (const docCmd of docCommands) {
+        // Same base command but different arguments/flags
+        const prBase = prCmd.split(' ')[0];
+        const docBase = docCmd.split(' ')[0];
+        if (prBase === docBase && prCmd !== docCmd) {
+          conflicts.push(`Command conflict: PR="${prCmd}" vs Doc="${docCmd}"`);
+        }
+      }
+    }
+
+    // Check for config key changes
+    for (const prKey of prConfigKeys) {
+      for (const docKey of docConfigKeys) {
+        // PR mentions a config key that exists in doc (potential update)
+        if (prKey === docKey && prKeywords.some(k =>
+          ['rename', 'deprecate', 'migrate', 'replace', 'change', 'update'].includes(k)
+        )) {
+          conflicts.push(`Config change detected: ${prKey}`);
+        }
+      }
+    }
+
+    // Check for endpoint changes
+    for (const prEndpoint of prEndpoints) {
+      for (const docEndpoint of docEndpoints) {
+        // Same path prefix but different full path
+        const prPath = prEndpoint.replace(/^https?:\/\/[^/]+/, '');
+        const docPath = docEndpoint.replace(/^https?:\/\/[^/]+/, '');
+        if (prPath.split('/').slice(0, 3).join('/') === docPath.split('/').slice(0, 3).join('/') && prPath !== docPath) {
+          conflicts.push(`Endpoint change: ${docPath} → ${prPath}`);
+        }
+      }
+    }
+
+    // Check if PR keywords indicate change + doc has related artifacts
+    const changeKeywords = ['rename', 'deprecate', 'migrate', 'replace', 'change', 'update', 'remove'];
+    const hasChangeIntent = prKeywords.some(k => changeKeywords.includes(k));
+    const docHasRelatedArtifacts = docCommands.length > 0 || docConfigKeys.length > 0 || docEndpoints.length > 0;
+
+    if (hasChangeIntent && docHasRelatedArtifacts && conflicts.length === 0) {
+      // Even without explicit conflicts, flag if PR has change intent and doc has artifacts
+      conflicts.push(`Change intent detected (${prKeywords.filter(k => changeKeywords.includes(k)).join(', ')}) with doc artifacts present`);
+    }
+
+    baselineResult = {
+      driftType,
+      hasMatch: conflicts.length > 0 || (prCommands.length > 0 && docCommands.length > 0),
+      matchCount: conflicts.length,
+      evidence: conflicts.slice(0, 5),
+      comparisonDetails: {
+        prArtifacts: [...prCommands, ...prConfigKeys, ...prEndpoints].slice(0, 10),
+        docArtifacts: [...docCommands, ...docConfigKeys, ...docEndpoints].slice(0, 10),
+        conflicts,
+        recommendation: conflicts.length > 0 ? 'replace_steps' : 'add_note',
+      },
+    };
+    console.log(`[Transitions] Instruction drift comparison: ${conflicts.length} conflicts, PR artifacts=${prCommands.length + prConfigKeys.length + prEndpoints.length}, Doc artifacts=${docCommands.length + docConfigKeys.length + docEndpoints.length}`);
+  }
+
+  // ==========================================================================
+  // B) PROCESS DRIFT - Already implemented with checkProcessBaselineDetailed
+  // ==========================================================================
+  else if (driftType === 'process') {
     const processResult = checkProcessBaselineDetailed(docContent, {
       prTitle: extracted.prTitle || prData.title || undefined,
       prDescription: extracted.prBody || prData.body || undefined,
@@ -650,7 +746,6 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
       hasMatch: processResult.detected,
       matchCount: processResult.findings.length,
       evidence: processResult.findings.slice(0, 5).map(f => f.doc_snippet),
-      // Store the full ProcessDriftResult for downstream use
       processResult: {
         detected: processResult.detected,
         confidence_suggestion: processResult.confidence_suggestion,
@@ -663,23 +758,195 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
       },
     };
     console.log(`[Transitions] Process baseline (detailed): detected=${processResult.detected}, findings=${processResult.findings.length}, recommended_style=${processResult.recommended_patch_style}`);
-  } else if (driftType === 'environment') {
-    // Check for environment patterns
-    const matches = findPatternMatches(docContent, ENVIRONMENT_PATTERNS);
-    const flatMatches = matches.flatMap(m => m.matches);
-    baselineResult = {
-      driftType,
-      hasMatch: flatMatches.length > 0,
-      matchCount: flatMatches.length,
-      evidence: flatMatches.slice(0, 5),
-    };
-    console.log(`[Transitions] Environment baseline: ${flatMatches.length} matches found`);
   }
 
-  // Store baseline check results in baselineFindings
+  // ==========================================================================
+  // C) OWNERSHIP DRIFT - Gap 4: Use resolveOwner() for authoritative source
+  // ==========================================================================
+  else if (driftType === 'ownership') {
+    // Resolve authoritative owner using proper ownership resolver
+    const service = drift.service || signal?.service || null;
+    const repo = drift.repo || signal?.repo || extracted.repo || null;
+
+    const ownerResolution = await resolveOwner(drift.workspaceId, service, repo);
+    const authoritativeOwner = ownerResolution.primary?.ref || ownerResolution.fallback?.ref || null;
+    const ownerSource = ownerResolution.primary?.source || ownerResolution.fallback?.source || 'unknown';
+
+    // Extract owner refs from doc
+    const docOwnerRefs = baselineAnchors.owner_refs;
+
+    // Check if doc owner matches authoritative owner
+    let ownerMismatch = false;
+    const mismatches: string[] = [];
+
+    if (authoritativeOwner && docOwnerRefs.length > 0) {
+      // Normalize for comparison
+      const normalizedAuth = authoritativeOwner.toLowerCase().replace(/^[@#]/, '');
+      const docOwnersNormalized = docOwnerRefs.map((o: string) => o.toLowerCase().replace(/^[@#]/, ''));
+
+      // Check if any doc owner matches authoritative
+      const hasMatch = docOwnersNormalized.some((docOwner: string) =>
+        docOwner.includes(normalizedAuth) || normalizedAuth.includes(docOwner)
+      );
+
+      if (!hasMatch) {
+        ownerMismatch = true;
+        mismatches.push(`Doc owner(s): ${docOwnerRefs.join(', ')} ≠ Authoritative: ${authoritativeOwner} (source: ${ownerSource})`);
+      }
+    } else if (authoritativeOwner && docOwnerRefs.length === 0) {
+      // Doc has no owner refs but we have an authoritative owner
+      ownerMismatch = true;
+      mismatches.push(`Doc missing owner, authoritative owner: ${authoritativeOwner} (source: ${ownerSource})`);
+    }
+
+    baselineResult = {
+      driftType,
+      hasMatch: ownerMismatch,
+      matchCount: mismatches.length,
+      evidence: mismatches,
+      authoritativeOwner: {
+        primary: authoritativeOwner,
+        source: ownerSource,
+      },
+      comparisonDetails: {
+        prArtifacts: [authoritativeOwner || 'unknown'],
+        docArtifacts: docOwnerRefs,
+        conflicts: mismatches,
+        recommendation: ownerMismatch ? 'update_owner_block' : 'no_action',
+      },
+    };
+    console.log(`[Transitions] Ownership drift comparison: mismatch=${ownerMismatch}, authoritative=${authoritativeOwner} (${ownerSource}), docOwners=${docOwnerRefs.join(', ')}`);
+  }
+
+  // ==========================================================================
+  // D) COVERAGE DRIFT - Gap 5: Extract scenario keywords from PR
+  // ==========================================================================
+  else if (driftType === 'coverage') {
+    // Extract scenario keywords from PR using dedicated function
+    const prScenarios = extractScenarioKeywords(
+      extracted.prTitle || prData.title || '',
+      extracted.prBody || prData.body || null,
+      extracted.diff || ''
+    );
+
+    // Get scenarios already covered in doc
+    const docScenarios = baselineAnchors.coverage_keywords_present;
+
+    // Find scenarios in PR that are NOT in doc
+    const missingScenarios = prScenarios.filter(scenario => {
+      const normalizedScenario = scenario.toLowerCase().replace(/[-_\s]/g, '');
+      return !docScenarios.some((docScenario: string) => {
+        const normalizedDoc = docScenario.toLowerCase().replace(/[-_\s]/g, '');
+        return normalizedDoc.includes(normalizedScenario) || normalizedScenario.includes(normalizedDoc);
+      });
+    });
+
+    const hasCoverageGap = missingScenarios.length > 0;
+
+    baselineResult = {
+      driftType,
+      hasMatch: hasCoverageGap,
+      matchCount: missingScenarios.length,
+      evidence: missingScenarios.map(s => `PR introduces "${s}" scenario not documented`),
+      comparisonDetails: {
+        prArtifacts: prScenarios,
+        docArtifacts: docScenarios,
+        conflicts: missingScenarios,
+        recommendation: hasCoverageGap ? 'add_section' : 'no_action',
+      },
+    };
+    console.log(`[Transitions] Coverage drift comparison: gap=${hasCoverageGap}, prScenarios=[${prScenarios.join(', ')}], docScenarios=[${docScenarios.join(', ')}], missing=[${missingScenarios.join(', ')}]`);
+  }
+
+  // ==========================================================================
+  // E) ENVIRONMENT DRIFT - Gap 6: Detect tool migration patterns
+  // ==========================================================================
+  else if (driftType === 'environment') {
+    // Get changed files with status for migration detection
+    const changedFilesWithStatus = (rawPayload.files || []).map((f: any) => ({
+      filename: f.filename || '',
+      status: f.status || 'modified',
+    }));
+
+    // Detect tool migrations from file changes
+    const migrations = detectToolMigrations(changedFilesWithStatus);
+
+    // Get tool mentions from doc
+    const docTools = baselineAnchors.tool_mentions;
+
+    // Find migrations where doc still references old tool
+    const relevantMigrations: Array<{
+      oldTool: string;
+      newTool: string;
+      confidence: number;
+      docHasOldTool: boolean;
+    }> = [];
+
+    for (const migration of migrations) {
+      // Check if doc mentions the old tool
+      const docHasOldTool = docTools.some((tool: string) =>
+        tool.toLowerCase().includes(migration.oldTool.toLowerCase().replace('_', ' ')) ||
+        migration.oldTool.toLowerCase().includes(tool.toLowerCase())
+      );
+
+      if (docHasOldTool) {
+        relevantMigrations.push({
+          ...migration,
+          docHasOldTool: true,
+        });
+      }
+    }
+
+    // Also check PR tool mentions vs doc tool mentions for simple replacements
+    const prTools = evidencePack.extracted.tool_mentions;
+    const toolConflicts: string[] = [];
+
+    // Check if PR introduces new tools that doc doesn't mention
+    for (const prTool of prTools) {
+      const prToolNorm = prTool.toLowerCase();
+      const docHasTool = docTools.some((t: string) => t.toLowerCase() === prToolNorm);
+
+      if (!docHasTool && evidencePack.extracted.keywords.some(k =>
+        ['migrate', 'replace', 'switch', 'upgrade'].includes(k)
+      )) {
+        toolConflicts.push(`PR introduces ${prTool} (migration/replacement detected)`);
+      }
+    }
+
+    const hasEnvironmentDrift = relevantMigrations.length > 0 || toolConflicts.length > 0;
+    const bestMigration = relevantMigrations[0];
+
+    baselineResult = {
+      driftType,
+      hasMatch: hasEnvironmentDrift,
+      matchCount: relevantMigrations.length + toolConflicts.length,
+      evidence: [
+        ...relevantMigrations.map(m => `Tool migration: ${m.oldTool} → ${m.newTool} (confidence: ${(m.confidence * 100).toFixed(0)}%, doc references old tool)`),
+        ...toolConflicts,
+      ].slice(0, 5),
+      toolMigration: bestMigration ? {
+        oldTool: bestMigration.oldTool,
+        newTool: bestMigration.newTool,
+        confidence: bestMigration.confidence,
+      } : undefined,
+      comparisonDetails: {
+        prArtifacts: prTools,
+        docArtifacts: docTools,
+        conflicts: relevantMigrations.map(m => `${m.oldTool} → ${m.newTool}`),
+        recommendation: relevantMigrations.some(m => m.confidence > 0.7) ? 'replace_steps' : 'add_note',
+      },
+    };
+    console.log(`[Transitions] Environment drift comparison: drift=${hasEnvironmentDrift}, migrations=${relevantMigrations.length}, prTools=[${prTools.join(', ')}], docTools=[${docTools.join(', ')}]`);
+  }
+
+  // Store baseline check results in baselineFindings along with evidencePack
   const updatedFindings = [{
     ...finding,
     baselineCheck: baselineResult,
+    evidencePack: {
+      extracted: evidencePack.extracted,
+      rule_hits: evidencePack.rule_hits,
+    },
   }] as unknown as import('@prisma/client').Prisma.InputJsonValue;
 
   await prisma.driftCandidate.update({

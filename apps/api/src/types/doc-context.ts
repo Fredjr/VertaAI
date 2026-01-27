@@ -106,6 +106,29 @@ export interface DocContextFlags {
 }
 
 // ============================================================================
+// Baseline Anchors Type (Per Spec)
+// Structured extraction of doc content for drift comparison
+// ============================================================================
+
+export interface BaselineAnchors {
+  // Raw text from managed region and owner block
+  managed_region_text: string;
+  owner_block_text: string | null;
+
+  // Structured anchors extracted from document
+  anchors: {
+    commands: string[];              // kubectl, helm, docker commands
+    tool_mentions: string[];         // helm, kubectl, argo, circleci etc
+    config_keys: string[];           // ENV_VAR style keys
+    endpoints: string[];             // /v1/... patterns
+    step_markers: string[];          // Step 1/2, First/Then
+    decision_markers: string[];      // If/Else/When
+    owner_refs: string[];            // team/channel/email
+    coverage_keywords_present: string[]; // canary, rollback, etc.
+  };
+}
+
+// ============================================================================
 // Main DocContext Type
 // ============================================================================
 
@@ -143,6 +166,9 @@ export interface DocContext {
 
   // Safety flags
   flags: DocContextFlags;
+
+  // Baseline anchors for drift comparison (Per Spec)
+  baselineAnchors: BaselineAnchors;
 }
 
 // ============================================================================

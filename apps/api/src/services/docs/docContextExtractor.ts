@@ -20,6 +20,7 @@ import {
   AllowedEditRange,
   DocContextBudgets,
   DocContextFlags,
+  BaselineAnchors,
   computeSha256,
   computeSectionId,
 } from '../../types/doc-context.js';
@@ -143,7 +144,10 @@ export function extractDocContext(input: DocContextInput): DocContext {
     tooLargeToSlice: docText.length > config.maxDocCharsSentToLlm * 2,
     lowStructure: outline.length < 2,
   };
-  
+
+  // Step 9: Extract baseline anchors for drift comparison (Per Spec)
+  const baselineAnchors = extractBaselineAnchors(docText, managedRegion, ownerBlock);
+
   return {
     workspaceId: input.workspaceId,
     docSystem: input.docSystem,
@@ -161,6 +165,7 @@ export function extractDocContext(input: DocContextInput): DocContext {
     allowedEditRanges,
     budgets,
     flags,
+    baselineAnchors,
   };
 }
 
@@ -450,6 +455,135 @@ function computeUsedChars(
   }
 
   return total;
+}
+
+// ============================================================================
+// Baseline Anchors Extraction (Per Spec)
+// ============================================================================
+
+// Command patterns to extract from doc
+const DOC_COMMAND_PATTERNS: RegExp[] = [
+  /`(kubectl\s+[^`]+)`/gi,
+  /`(helm\s+[^`]+)`/gi,
+  /`(terraform\s+[^`]+)`/gi,
+  /`(docker\s+[^`]+)`/gi,
+  /`(aws\s+[^`]+)`/gi,
+  /`(gcloud\s+[^`]+)`/gi,
+  /`(npm\s+[^`]+)`/gi,
+  /`(yarn\s+[^`]+)`/gi,
+  /`(make\s+\w+)`/gi,
+  /`(\.\/[^\s`]+)`/gi,
+  /\$\s*(kubectl\s+[^\n]+)/gi,
+  /\$\s*(helm\s+[^\n]+)/gi,
+];
+
+// Tool mention patterns
+const DOC_TOOL_PATTERNS: RegExp[] = [
+  /\b(kubectl|helm|terraform|docker|podman)\b/gi,
+  /\b(aws|gcloud|az|azure)\b/gi,
+  /\b(circleci|buildkite|jenkins|travis|github\s*actions?|gitlab[\s-]?ci)\b/gi,
+  /\b(argocd|flux|spinnaker|harness)\b/gi,
+  /\b(datadog|newrelic|grafana|prometheus|splunk|honeycomb)\b/gi,
+  /\b(launchdarkly|split\.io|optimizely|flagsmith)\b/gi,
+];
+
+// Config key patterns
+const DOC_CONFIG_PATTERNS: RegExp[] = [
+  /\b([A-Z][A-Z0-9_]{2,})\b/g,  // FOO_BAR style
+  /`([A-Z][A-Z0-9_]{2,})`/g,    // `FOO_BAR` in backticks
+];
+
+// Endpoint patterns
+const DOC_ENDPOINT_PATTERNS: RegExp[] = [
+  /["'`](\/v\d+\/[^"'`\s]+)["'`]/gi,
+  /["'`](\/api\/[^"'`\s]+)["'`]/gi,
+  /https?:\/\/[^\s"'`]+/gi,
+];
+
+// Step marker patterns
+const STEP_MARKER_PATTERNS: RegExp[] = [
+  /\bstep\s+\d+/gi,
+  /^\s*\d+[\.\)]\s+/gm,
+  /\b(first|second|third|then|next|finally|lastly)\b/gi,
+];
+
+// Decision marker patterns
+const DECISION_MARKER_PATTERNS: RegExp[] = [
+  /\bif\b[^.]*\bthen\b/gi,
+  /\bwhen\b[^.]*\bdo\b/gi,
+  /\belse\b/gi,
+  /\bunless\b/gi,
+  /\botherwise\b/gi,
+];
+
+// Owner reference patterns
+const OWNER_REF_PATTERNS: RegExp[] = [
+  /@[a-zA-Z0-9_-]+/g,           // @mentions
+  /#[a-zA-Z0-9_-]+/g,           // #channels
+  /owner:\s*([^\n]+)/gi,
+  /team:\s*([^\n]+)/gi,
+  /contact:\s*([^\n]+)/gi,
+  /maintainer:\s*([^\n]+)/gi,
+  /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, // emails
+];
+
+/**
+ * Extract baseline anchors from document for drift comparison.
+ * This provides the "baseline" side of drift detection.
+ */
+function extractBaselineAnchors(
+  docText: string,
+  managedRegion: ManagedRegionContext | null,
+  ownerBlock: OwnerBlock | null
+): BaselineAnchors {
+  // Use managed region text if available, otherwise full doc
+  const textToAnalyze = managedRegion?.text || docText;
+
+  return {
+    managed_region_text: managedRegion?.text || '',
+    owner_block_text: ownerBlock?.text || null,
+    anchors: {
+      commands: extractUniqueMatches(textToAnalyze, DOC_COMMAND_PATTERNS, 30),
+      tool_mentions: extractUniqueMatches(textToAnalyze, DOC_TOOL_PATTERNS, 20),
+      config_keys: extractUniqueMatches(textToAnalyze, DOC_CONFIG_PATTERNS, 30),
+      endpoints: extractUniqueMatches(textToAnalyze, DOC_ENDPOINT_PATTERNS, 20),
+      step_markers: extractUniqueMatches(textToAnalyze, STEP_MARKER_PATTERNS, 20),
+      decision_markers: extractUniqueMatches(textToAnalyze, DECISION_MARKER_PATTERNS, 15),
+      owner_refs: extractUniqueMatches(ownerBlock?.text || docText, OWNER_REF_PATTERNS, 15),
+      coverage_keywords_present: findCoverageKeywordsInDoc(textToAnalyze),
+    },
+  };
+}
+
+/**
+ * Extract unique matches from text using multiple patterns.
+ */
+function extractUniqueMatches(text: string, patterns: RegExp[], limit: number): string[] {
+  const matches = new Set<string>();
+
+  for (const pattern of patterns) {
+    const regex = new RegExp(pattern.source, pattern.flags);
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      // Use capture group if present, otherwise full match
+      const value = (match[1] || match[0]).trim().toLowerCase();
+      if (value.length > 1 && value.length < 100) {
+        matches.add(value);
+      }
+    }
+  }
+
+  return [...matches].slice(0, limit);
+}
+
+/**
+ * Find coverage keywords present in document.
+ */
+function findCoverageKeywordsInDoc(text: string): string[] {
+  const textLower = text.toLowerCase();
+  return COVERAGE_KEYWORDS.filter(keyword =>
+    textLower.includes(keyword.toLowerCase())
+  );
 }
 
 // ============================================================================
