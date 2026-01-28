@@ -2,11 +2,20 @@ import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { Octokit } from 'octokit';
 import { prisma } from '../lib/db.js';
-import { verifyWebhookSignature, extractPRInfo, getInstallationOctokit, getPRDiff, getPRFiles } from '../lib/github.js';
+import { extractPRInfo, getInstallationOctokit, getPRDiff as getLegacyPRDiff, getPRFiles as getLegacyPRFiles } from '../lib/github.js';
+import { verifyWebhookSignature as legacyVerifySignature } from '../lib/github.js';
+import {
+  getGitHubClient,
+  getWorkspaceWebhookSecret,
+  verifyWebhookSignature,
+  getPRDiff,
+  getPRFiles
+} from '../services/github-client.js';
 import { runDriftDetectionPipeline } from '../pipelines/drift-detection.js';
 import { enqueueJob } from '../services/queue/qstash.js';
 
-// Create Octokit with personal access token for repo webhooks (no installation)
+// LEGACY: Create Octokit with personal access token for repo webhooks (no installation)
+// Used only by legacy endpoint - will be deprecated
 function getTokenOctokit(): Octokit | null {
   const token = process.env.GITHUB_TOKEN;
   if (!token) {
@@ -35,10 +44,9 @@ router.post('/github/:workspaceId', async (req: Request, res: Response) => {
 
   console.log(`[Webhook] Received ${event} event for workspace ${workspaceId} (delivery: ${deliveryId})`);
 
-  // 1. Load workspace and GitHub integration
+  // 1. Load workspace
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
-    include: { integrations: { where: { type: 'github' } } }
   });
 
   if (!workspace) {
@@ -46,16 +54,14 @@ router.post('/github/:workspaceId', async (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Workspace not found' });
   }
 
-  const integration = workspace.integrations[0];
-
-  // 2. Verify webhook signature (use workspace-specific secret if available)
-  const secret = integration?.webhookSecret || process.env.GH_WEBHOOK_SECRET;
+  // 2. Get workspace-specific webhook secret (from Integration.config or Integration.webhookSecret)
+  const secret = await getWorkspaceWebhookSecret(workspaceId);
   if (!secret) {
     console.error('[Webhook] No webhook secret configured for workspace');
     return res.status(500).json({ error: 'Webhook secret not configured' });
   }
 
-  // Use raw body for signature verification (preserves original formatting)
+  // 3. Verify webhook signature using workspace-specific secret
   const payload = (req as any).rawBody || JSON.stringify(req.body);
   if (!verifyWebhookSignature(payload, signature, secret)) {
     console.error('[Webhook] Invalid signature');
@@ -100,7 +106,7 @@ router.post('/github', async (req: Request, res: Response) => {
 
   // Use raw body for signature verification (preserves original formatting)
   const payload = (req as any).rawBody || JSON.stringify(req.body);
-  if (!verifyWebhookSignature(payload, signature, secret)) {
+  if (!legacyVerifySignature(payload, signature, secret)) {
     console.error('[Webhook] Invalid signature');
     return res.status(401).json({ error: 'Invalid signature' });
   }
@@ -165,25 +171,24 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
     // Infer service from repo name (simple heuristic - can be improved)
     const inferredService = prInfo.repoName;
 
-    // Get PR diff and files for analysis
+    // Get PR diff and files for analysis using WORKSPACE-SCOPED GitHub client
     let diff = '';
     let files: Array<{ filename: string; status: string; additions: number; deletions: number }> = [];
 
     try {
-      let octokit: Octokit | null = null;
-      if (prInfo.installationId) {
-        octokit = await getInstallationOctokit(prInfo.installationId);
-      } else {
-        octokit = getTokenOctokit();
-      }
+      // Use workspace-scoped GitHub client (multi-tenant)
+      // This fetches credentials from Integration.config for this workspace
+      const octokit = await getGitHubClient(workspaceId, prInfo.installationId);
 
       if (octokit) {
-        console.log(`[Webhook] [V2] Fetching PR diff and files`);
+        console.log(`[Webhook] [V2] Fetching PR diff and files using workspace-scoped client`);
         [diff, files] = await Promise.all([
           getPRDiff(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
           getPRFiles(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
         ]);
         console.log(`[Webhook] [V2] Fetched ${files.length} files, diff length: ${diff.length}`);
+      } else {
+        console.warn(`[Webhook] [V2] No GitHub client available for workspace ${workspaceId}`);
       }
     } catch (error: any) {
       console.error('[Webhook] [V2] Error fetching PR details:', error.message);
@@ -358,7 +363,7 @@ async function handlePullRequestEventLegacy(payload: any, res: Response) {
       return res.json({ message: 'PR already processed' });
     }
 
-    // Get PR diff and files for analysis
+    // LEGACY: Get PR diff and files for analysis using environment credentials
     let diff = '';
     let files: Array<{ filename: string; status: string; additions: number; deletions: number }> = [];
 
@@ -372,19 +377,19 @@ async function handlePullRequestEventLegacy(payload: any, res: Response) {
       }
 
       if (octokit) {
-        console.log(`[Webhook] Fetching PR diff and files using ${prInfo.installationId ? 'GitHub App' : 'token'} auth`);
+        console.log(`[Webhook] [LEGACY] Fetching PR diff and files using ${prInfo.installationId ? 'GitHub App' : 'token'} auth`);
         [diff, files] = await Promise.all([
-          getPRDiff(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
-          getPRFiles(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
+          getLegacyPRDiff(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
+          getLegacyPRFiles(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
         ]);
-        console.log(`[Webhook] Fetched ${files.length} files, diff length: ${diff.length}`);
+        console.log(`[Webhook] [LEGACY] Fetched ${files.length} files, diff length: ${diff.length}`);
       } else {
-        console.warn('[Webhook] No GitHub auth available - set GITHUB_TOKEN env var to enable PR diff fetching');
-        console.log(`[Webhook] Will use PR title/body for drift detection (${prInfo.changedFiles} files changed)`);
+        console.warn('[Webhook] [LEGACY] No GitHub auth available - set GITHUB_TOKEN env var to enable PR diff fetching');
+        console.log(`[Webhook] [LEGACY] Will use PR title/body for drift detection (${prInfo.changedFiles} files changed)`);
       }
     } catch (error: any) {
-      console.error('[Webhook] Error fetching PR details:', error.message);
-      console.log(`[Webhook] Will use PR title/body for drift detection (${prInfo.changedFiles} files changed)`);
+      console.error('[Webhook] [LEGACY] Error fetching PR details:', error.message);
+      console.log(`[Webhook] [LEGACY] Will use PR title/body for drift detection (${prInfo.changedFiles} files changed)`);
     }
 
     // If we couldn't fetch files but have changedFiles count, create placeholder entries
