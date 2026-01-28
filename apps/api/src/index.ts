@@ -8,6 +8,8 @@ import slackOAuthRouter from './routes/slack-oauth.js';
 import slackInteractionsRouter from './routes/slack-interactions.js';
 import confluenceOAuthRouter from './routes/confluence-oauth.js';
 import notionOAuthRouter from './routes/notion-oauth.js';
+import githubOAuthRouter from './routes/github-oauth.js';
+import onboardingRouter from './routes/onboarding.js';
 import jobsRouter from './routes/jobs.js';
 
 const app: Application = express();
@@ -57,6 +59,12 @@ app.use('/auth/confluence', confluenceOAuthRouter);
 
 // Notion OAuth routes (multi-tenant integration - Phase 4)
 app.use('/auth/notion', notionOAuthRouter);
+
+// GitHub OAuth routes (multi-tenant GitHub App installation)
+app.use('/auth/github', githubOAuthRouter);
+
+// Onboarding API routes (setup status, webhook URLs, doc mappings)
+app.use('/api/workspaces', onboardingRouter);
 
 // Slack interaction routes (button clicks, modals)
 app.use('/slack/interactions', slackInteractionsRouter);
