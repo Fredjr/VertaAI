@@ -183,6 +183,37 @@ router.get('/callback', async (req: Request, res: Response) => {
       // Clear cached credentials
       clearConfluenceCache(id);
 
+      // AUTO-CREATE DEFAULT DOC MAPPING
+      // This allows drift detection to work immediately without manual configuration
+      // The mapping uses repo=null which acts as a "catch-all" for any repo
+      const existingMapping = await prisma.docMappingV2.findFirst({
+        where: { workspaceId: id },
+      });
+
+      if (!existingMapping) {
+        // Fetch the default Confluence space to use
+        const defaultSpace = await getDefaultConfluenceSpace(tokenResponse.access_token, cloudId);
+
+        if (defaultSpace) {
+          await prisma.docMappingV2.create({
+            data: {
+              workspaceId: id,
+              repo: null, // Catch-all for any repo
+              service: null,
+              docId: defaultSpace.id,
+              docTitle: defaultSpace.name,
+              docSystem: 'confluence',
+              docUrl: `${siteUrl}/wiki/spaces/${defaultSpace.key}`,
+              isPrimary: true,
+              spaceKey: defaultSpace.key,
+            },
+          });
+          console.log(`[ConfluenceOAuth] Auto-created default doc mapping for space: ${defaultSpace.name}`);
+        } else {
+          console.warn(`[ConfluenceOAuth] Could not auto-create doc mapping - no spaces found`);
+        }
+      }
+
       console.log(`[ConfluenceOAuth] Successfully connected Confluence for workspace ${id}: ${siteName}`);
     } else {
       // LEGACY: Update organization with Confluence credentials
@@ -204,7 +235,12 @@ router.get('/callback', async (req: Request, res: Response) => {
       console.log(`[ConfluenceOAuth] Successfully connected Confluence for org ${id}: ${siteName}`);
     }
 
-    // Return success page
+    // Redirect back to onboarding page (for workspaces) or show success page (for legacy orgs)
+    if (isWorkspace) {
+      return res.redirect(`${APP_URL}/onboarding?workspace=${id}&confluence=connected`);
+    }
+
+    // LEGACY: Return success page for organization flow
     return res.send(`
       <html>
         <head><title>Confluence Connected</title></head>
@@ -212,7 +248,7 @@ router.get('/callback', async (req: Request, res: Response) => {
           <h1>✅ Confluence Connected!</h1>
           <p>Site: <strong>${siteName}</strong></p>
           <p>Cloud ID: <code>${cloudId}</code></p>
-          <p>Connected to: ${isWorkspace ? 'Workspace' : 'Organization'} <code>${id}</code></p>
+          <p>Connected to: Organization <code>${id}</code></p>
           <p>You can close this window and return to Slack to test the approval flow.</p>
         </body>
       </html>
@@ -253,6 +289,44 @@ async function getAccessibleResources(accessToken: string): Promise<any[]> {
   });
 
   return response.json();
+}
+
+/**
+ * Get the default Confluence space to use for doc mappings
+ * Fetches all spaces and returns the first one (usually the main documentation space)
+ */
+async function getDefaultConfluenceSpace(accessToken: string, cloudId: string): Promise<{ id: string; key: string; name: string } | null> {
+  try {
+    const response = await fetch(`https://api.atlassian.com/ex/confluence/${cloudId}/wiki/api/v2/spaces?limit=10`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`[ConfluenceOAuth] Failed to fetch spaces: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const spaces = data.results || [];
+
+    if (spaces.length === 0) {
+      return null;
+    }
+
+    // Return the first space
+    const space = spaces[0];
+    return {
+      id: space.id,
+      key: space.key,
+      name: space.name,
+    };
+  } catch (error) {
+    console.error(`[ConfluenceOAuth] Error fetching spaces:`, error);
+    return null;
+  }
 }
 
 function generateState(): string {

@@ -10,6 +10,7 @@ import confluenceOAuthRouter from './routes/confluence-oauth.js';
 import notionOAuthRouter from './routes/notion-oauth.js';
 import githubOAuthRouter from './routes/github-oauth.js';
 import onboardingRouter from './routes/onboarding.js';
+import slackChannelsRouter from './routes/slack-channels.js';
 import jobsRouter from './routes/jobs.js';
 
 const app: Application = express();
@@ -65,6 +66,9 @@ app.use('/auth/github', githubOAuthRouter);
 
 // Onboarding API routes (setup status, webhook URLs, doc mappings)
 app.use('/api/workspaces', onboardingRouter);
+
+// Slack channels API routes (list channels, set default)
+app.use('/api/workspaces', slackChannelsRouter);
 
 // Slack interaction routes (button clicks, modals)
 app.use('/slack/interactions', slackInteractionsRouter);

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 interface SetupStatus {
@@ -15,6 +15,15 @@ interface SetupStatus {
   progress: { connected: number; required: number; percentage: number };
   stats: { signalEvents: number; driftCandidates: number; docMappings: number };
   webhookUrls: { github: string; pagerduty: string };
+}
+
+interface SlackChannel {
+  id: string;
+  name: string;
+  isPrivate: boolean;
+  isMember: boolean;
+  memberCount: number;
+  isSelected: boolean;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -39,23 +48,16 @@ function LoadingSpinner() {
 function OnboardingContent() {
   const searchParams = useSearchParams();
   const workspaceId = searchParams.get('workspace');
-  
+
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
+  const [channels, setChannels] = useState<SlackChannel[]>([]);
+  const [channelsLoading, setChannelsLoading] = useState(false);
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
+  const [savingChannel, setSavingChannel] = useState(false);
 
-  useEffect(() => {
-    if (!workspaceId) {
-      setError('No workspace ID provided. Add ?workspace=YOUR_WORKSPACE_ID to the URL.');
-      setLoading(false);
-      return;
-    }
-
-    fetchStatus();
-  }, [workspaceId]);
-
-  const fetchStatus = async () => {
+  const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/setup-status`);
       if (!res.ok) throw new Error('Failed to fetch setup status');
@@ -66,13 +68,61 @@ function OnboardingContent() {
     } finally {
       setLoading(false);
     }
+  }, [workspaceId]);
+
+  const fetchChannels = useCallback(async () => {
+    if (!workspaceId) return;
+    setChannelsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/slack/channels`);
+      if (res.ok) {
+        const data = await res.json();
+        setChannels(data.channels || []);
+        setSelectedChannelId(data.currentChannelId || null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch channels:', err);
+    } finally {
+      setChannelsLoading(false);
+    }
+  }, [workspaceId]);
+
+  const handleChannelSelect = async (channelId: string) => {
+    if (!workspaceId || savingChannel) return;
+    setSavingChannel(true);
+    try {
+      const res = await fetch(`${API_URL}/api/workspaces/${workspaceId}/slack/channels/default`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId }),
+      });
+      if (res.ok) {
+        setSelectedChannelId(channelId);
+        setChannels(prev => prev.map(ch => ({ ...ch, isSelected: ch.id === channelId })));
+      }
+    } catch (err) {
+      console.error('Failed to save channel:', err);
+    } finally {
+      setSavingChannel(false);
+    }
   };
 
-  const copyToClipboard = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(key);
-    setTimeout(() => setCopied(null), 2000);
-  };
+  useEffect(() => {
+    if (!workspaceId) {
+      setError('No workspace ID provided. Add ?workspace=YOUR_WORKSPACE_ID to the URL.');
+      setLoading(false);
+      return;
+    }
+
+    fetchStatus();
+  }, [workspaceId, fetchStatus]);
+
+  // Fetch Slack channels when Slack is connected
+  useEffect(() => {
+    if (status?.integrations.slack.connected) {
+      fetchChannels();
+    }
+  }, [status?.integrations.slack.connected, fetchChannels]);
 
   if (loading) {
     return (
@@ -153,7 +203,7 @@ function OnboardingContent() {
             description="Receive drift notifications and approve updates"
             connected={status.integrations.slack.connected}
             details={status.integrations.slack.teamName}
-            connectUrl={`${API_URL}/auth/slack/install`}
+            connectUrl={`${API_URL}/auth/slack/install?workspaceId=${workspaceId}`}
             connectLabel="Add to Slack"
           />
 
@@ -170,35 +220,74 @@ function OnboardingContent() {
           />
         </div>
 
-        {/* Webhook URLs */}
-        {status.integrations.github.connected && (
+        {/* Slack Channel Selector - show when Slack is connected */}
+        {status.integrations.slack.connected && (
           <div className="mb-8 p-6 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800">
-            <h3 className="font-semibold text-lg mb-4">📡 Webhook Configuration</h3>
+            <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+              <span>📢</span> Notification Channel
+            </h3>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Configure these webhook URLs in your GitHub repository settings to receive PR events.
+              Choose which Slack channel should receive drift notifications
             </p>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  GitHub Webhook URL
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={status.webhookUrls.github}
-                    className="flex-1 px-3 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg text-sm font-mono"
-                  />
-                  <button
-                    onClick={() => copyToClipboard(status.webhookUrls.github, 'github')}
-                    className="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm transition"
-                  >
-                    {copied === 'github' ? '✓ Copied' : 'Copy'}
-                  </button>
-                </div>
+            {channelsLoading ? (
+              <div className="flex items-center gap-2 text-gray-500">
+                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-primary-600"></div>
+                Loading channels...
               </div>
+            ) : channels.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {channels.filter(ch => ch.isMember).slice(0, 10).map((channel) => (
+                  <button
+                    key={channel.id}
+                    onClick={() => handleChannelSelect(channel.id)}
+                    disabled={savingChannel}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
+                      selectedChannelId === channel.id
+                        ? 'bg-primary-600 text-white'
+                        : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                    } ${savingChannel ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    {channel.isPrivate ? '🔒' : '#'} {channel.name}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">No channels found. Invite the VertaAI bot to a channel.</p>
+            )}
+          </div>
+        )}
+
+        {/* Doc Mapping Info - show when Confluence is connected */}
+        {status.integrations.confluence.connected && (
+          <div className="mb-8 p-6 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800">
+            <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+              <span>🗺️</span> Documentation Mapping
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+              VertaAI uses smart search to find the right documentation for each PR.
+              {status.stats.docMappings > 0
+                ? ` You have ${status.stats.docMappings} doc mapping(s) configured.`
+                : ' No explicit mappings needed - we\'ll search your Confluence automatically.'}
+            </p>
+            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                <strong>How it works:</strong> When a PR is merged, VertaAI searches your {status.integrations.confluence.siteName}
+                for relevant docs using keywords from the PR. You&apos;ll see suggested docs in Slack and can approve the right one.
+              </p>
             </div>
+          </div>
+        )}
+
+        {/* All Connected Success Message */}
+        {status.progress.percentage === 100 && (
+          <div className="mb-8 p-6 bg-green-50 dark:bg-green-900/30 rounded-xl border border-green-200 dark:border-green-700">
+            <h3 className="font-semibold text-lg mb-2 text-green-800 dark:text-green-200 flex items-center gap-2">
+              <span>🎉</span> You&apos;re All Set!
+            </h3>
+            <p className="text-green-700 dark:text-green-300 text-sm">
+              VertaAI is now connected to your GitHub, Slack, and documentation system.
+              When you merge a PR that requires documentation updates, you&apos;ll receive a notification in Slack with a suggested patch.
+            </p>
           </div>
         )}
 
@@ -211,29 +300,25 @@ function OnboardingContent() {
           </div>
         )}
 
-        {/* Next Steps */}
-        <div className="p-6 bg-blue-50 dark:bg-blue-900/30 rounded-xl border border-blue-200 dark:border-blue-800">
-          <h3 className="font-semibold text-lg mb-2 text-blue-800 dark:text-blue-200">
-            📋 Next Steps
-          </h3>
-          <ol className="list-decimal list-inside space-y-2 text-blue-700 dark:text-blue-300 text-sm">
-            {!status.integrations.github.connected && (
-              <li>Install the VertaAI GitHub App on your repositories</li>
-            )}
-            {!status.integrations.confluence.connected && !status.integrations.notion.connected && (
-              <li>Connect Confluence or Notion to access your docs</li>
-            )}
-            {!status.integrations.slack.connected && (
-              <li>Add VertaAI to Slack for notifications</li>
-            )}
-            {status.integrations.github.connected && status.webhookUrls && (
-              <li>Copy the webhook URL above and add it to your GitHub repo settings</li>
-            )}
-            {status.progress.percentage === 100 && (
-              <li>You&apos;re all set! Merge a PR to see drift detection in action.</li>
-            )}
-          </ol>
-        </div>
+        {/* Next Steps - only show if not all connected */}
+        {status.progress.percentage < 100 && (
+          <div className="p-6 bg-blue-50 dark:bg-blue-900/30 rounded-xl border border-blue-200 dark:border-blue-800">
+            <h3 className="font-semibold text-lg mb-2 text-blue-800 dark:text-blue-200">
+              📋 Next Steps
+            </h3>
+            <ol className="list-decimal list-inside space-y-2 text-blue-700 dark:text-blue-300 text-sm">
+              {!status.integrations.github.connected && (
+                <li>Install the VertaAI GitHub App on your repositories</li>
+              )}
+              {!status.integrations.confluence.connected && !status.integrations.notion.connected && (
+                <li>Connect Confluence or Notion to access your docs</li>
+              )}
+              {!status.integrations.slack.connected && (
+                <li>Add VertaAI to Slack for notifications</li>
+              )}
+            </ol>
+          </div>
+        )}
       </div>
     </main>
   );

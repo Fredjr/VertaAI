@@ -1,16 +1,17 @@
 /**
  * Doc Resolution Service
- * 
+ *
  * Implements the doc resolution pipeline with priority order:
  * P0: PR link → explicit doc reference in PR body
  * P1: mapping → DocMappingV2 lookup by repo/service
- * P2: search → Confluence/Notion search (not implemented yet)
+ * P2: search → Confluence/Notion search fallback (top-K)
  * else: NEEDS_MAPPING
- * 
+ *
  * @see VERTAAI_MVP_SPEC.md Section C - Doc Resolution
  */
 
 import { prisma } from '../../lib/db.js';
+import { searchPages } from '../confluence-client.js';
 
 // ============================================================================
 // Types
@@ -376,13 +377,101 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
   }
 
   // -------------------------------------------------------------------------
-  // P2: Search fallback (not implemented - would use Confluence CQL / Notion API)
+  // P2: Search fallback - Use Confluence CQL search to find relevant docs
   // -------------------------------------------------------------------------
-  console.log(`[DocResolution] P2: No mappings found, would search (not implemented)`);
+  console.log(`[DocResolution] P2: No mappings found, attempting Confluence search fallback`);
 
-  // For now, return NEEDS_MAPPING
-  // In future: implement Confluence CQL search or Notion database search
+  // Build search query from repo name, service, and PR title
+  const searchTerms: string[] = [];
+  if (repo) {
+    // Extract repo name without org (e.g., "my-repo" from "org/my-repo")
+    const repoName = repo.includes('/') ? repo.split('/')[1] : repo;
+    if (repoName) searchTerms.push(repoName);
+  }
+  if (service) searchTerms.push(service);
+  if (input.prTitle) {
+    // Add key words from PR title (filter out common words)
+    const titleWords = input.prTitle
+      .toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 3 && !['the', 'and', 'for', 'with', 'from', 'this', 'that', 'update', 'fix', 'add', 'remove'].includes(w))
+      .slice(0, 3);
+    searchTerms.push(...titleWords);
+  }
 
+  if (searchTerms.length === 0) {
+    console.log(`[DocResolution] P2: No search terms available`);
+    return {
+      status: 'needs_mapping',
+      method: 'none',
+      confidence: 0,
+      noWritebackMode: true,
+      candidates: [],
+      repoFullName,
+      attempts,
+      thresholds,
+      notes: 'No doc mappings found and no search terms available.',
+    };
+  }
+
+  const searchQuery = searchTerms.join(' ');
+  console.log(`[DocResolution] P2: Searching Confluence with query: "${searchQuery}"`);
+
+  try {
+    const searchResults = await searchPages(workspaceId, searchQuery, 5);
+
+    attempts.push({
+      step: 'confluence_search',
+      ok: searchResults.length > 0,
+      info: { query: searchQuery, resultsFound: searchResults.length },
+    });
+
+    if (searchResults.length > 0) {
+      console.log(`[DocResolution] P2: Found ${searchResults.length} search results`);
+
+      // Convert search results to candidates
+      // Lower confidence for search results (0.5-0.65 range)
+      const p2Candidates: DocCandidate[] = searchResults.map((result, index) => ({
+        docId: result.id,
+        docSystem: 'confluence' as const,
+        docTitle: result.title,
+        docUrl: null, // Search results don't include URL
+        isPrimary: false,
+        hasManagedRegion: false,
+        allowWriteback: false, // Don't allow writeback for search results (safety)
+        spaceKey: result.spaceKey,
+        reasons: [
+          'Found via Confluence search',
+          `Matched query: "${searchQuery}"`,
+          `Result #${index + 1} of ${searchResults.length}`,
+        ],
+        // Confidence decreases with position (0.65, 0.60, 0.55, 0.50, 0.45)
+        confidence: Math.max(0.45, 0.65 - (index * 0.05)),
+      }));
+
+      return {
+        status: 'search_candidate',
+        method: 'confluence_search',
+        confidence: p2Candidates[0]?.confidence ?? 0.5,
+        noWritebackMode: true, // Always read-only for search results
+        candidates: p2Candidates.slice(0, 3),
+        repoFullName,
+        attempts,
+        thresholds,
+        notes: `Found ${searchResults.length} potential doc(s) via Confluence search. Please verify and approve.`,
+      };
+    }
+  } catch (error: any) {
+    console.error(`[DocResolution] P2: Confluence search failed:`, error);
+    attempts.push({
+      step: 'confluence_search',
+      ok: false,
+      error: error.message,
+    });
+  }
+
+  // No results from P2 search
   return {
     status: 'needs_mapping',
     method: 'none',
@@ -392,7 +481,7 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
     repoFullName,
     attempts,
     thresholds,
-    notes: 'No doc mappings found for this repo/service. Please configure doc mappings.',
+    notes: 'No doc mappings found and Confluence search returned no results.',
   };
 }
 
