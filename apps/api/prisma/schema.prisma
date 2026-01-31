@@ -39,6 +39,10 @@ model Workspace {
   minConfidenceForSuggest   Float   @default(0.6) @map("min_confidence_for_suggest") // Min confidence for search suggest
   allowedConfluenceSpaces   String[] @default([]) @map("allowed_confluence_spaces") // Space key allowlist (empty = allow all)
 
+  // Workflow preferences (Phase 5 - Settings page)
+  // JSON structure: { enabledDriftTypes: string[], enabledInputSources: string[], enabledOutputTargets: string[], outputTargetPriority: string[] }
+  workflowPreferences Json @default("{}") @map("workflow_preferences")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

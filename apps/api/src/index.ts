@@ -12,6 +12,8 @@ import githubOAuthRouter from './routes/github-oauth.js';
 import onboardingRouter from './routes/onboarding.js';
 import slackChannelsRouter from './routes/slack-channels.js';
 import jobsRouter from './routes/jobs.js';
+import settingsRouter from './routes/settings.js';  // Phase 5: Workflow Settings
+import datadogRouter from './routes/datadog.js';  // Phase 5: Datadog/Grafana Webhooks
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -51,6 +53,7 @@ app.get('/health', async (_req: Request, res: Response) => {
 // Webhook routes
 app.use('/webhooks', webhooksRouter);
 app.use('/webhooks/pagerduty', pagerdutyRouter);
+app.use('/webhooks', datadogRouter);  // Phase 5: Datadog/Grafana alert webhooks
 
 // Slack OAuth routes (multi-tenant installation)
 app.use('/auth/slack', slackOAuthRouter);
@@ -69,6 +72,9 @@ app.use('/api/workspaces', onboardingRouter);
 
 // Slack channels API routes (list channels, set default)
 app.use('/api/workspaces', slackChannelsRouter);
+
+// Settings API routes (Phase 5 - Workflow preferences)
+app.use('/api/workspaces', settingsRouter);
 
 // Slack interaction routes (button clicks, modals)
 app.use('/slack/interactions', slackInteractionsRouter);

@@ -456,6 +456,26 @@ function ActiveWorkflowsSummary({ status }: { status: SetupStatus }) {
     });
   }
 
+  // Phase 5: IaC changes (Terraform/Pulumi) - detected from GitHub PRs
+  if (status.integrations.github.connected) {
+    workflows.push({
+      icon: '🏗️',
+      source: 'Terraform/Pulumi Changes',
+      targets: 'README.md & Confluence',
+      driftTypes: 'environment drift',
+      enabled: status.integrations.confluence.connected || status.integrations.notion.connected,
+    });
+  }
+
+  // Phase 5: Datadog/Grafana alerts (placeholder - shows what's possible)
+  workflows.push({
+    icon: '📊',
+    source: 'Datadog/Grafana Alerts',
+    targets: 'README & Runbooks',
+    driftTypes: 'environment drift',
+    enabled: false,
+  });
+
   if (workflows.length === 0) {
     return null;
   }
@@ -496,10 +516,19 @@ function ActiveWorkflowsSummary({ status }: { status: SetupStatus }) {
             {workflow.enabled ? (
               <span className="text-green-600 text-sm">✓ Active</span>
             ) : (
-              <span className="text-gray-400 text-xs">Connect docs</span>
+              <span className="text-gray-400 text-xs">Connect to enable</span>
             )}
           </div>
         ))}
+      </div>
+      {/* Link to Settings page */}
+      <div className="mt-4 pt-4 border-t border-primary-200 dark:border-primary-800">
+        <a
+          href={`/settings?workspace=${status.workspace.id}`}
+          className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 flex items-center gap-1"
+        >
+          ⚙️ Customize workflow settings →
+        </a>
       </div>
     </div>
   );

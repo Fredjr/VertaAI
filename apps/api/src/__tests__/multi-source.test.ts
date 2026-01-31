@@ -261,7 +261,10 @@ describe('Adapter Types', () => {
       expect(DOC_SYSTEMS).toContain('github_readme');
       expect(DOC_SYSTEMS).toContain('github_swagger');
       expect(DOC_SYSTEMS).toContain('backstage');
-      expect(DOC_SYSTEMS.length).toBe(5);
+      // Phase 5: Code Comments and GitBook
+      expect(DOC_SYSTEMS).toContain('github_code_comments');
+      expect(DOC_SYSTEMS).toContain('gitbook');
+      expect(DOC_SYSTEMS.length).toBe(7);
     });
   });
 });

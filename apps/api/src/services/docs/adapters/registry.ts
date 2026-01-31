@@ -13,6 +13,8 @@ import { createNotionAdapter, NotionAdapter } from './notionAdapter.js';
 import { createReadmeAdapter, ReadmeAdapter } from './readmeAdapter.js';
 import { createSwaggerAdapter, type SwaggerAdapterConfig } from './swaggerAdapter.js';
 import { createBackstageAdapter, type BackstageAdapterConfig } from './backstageAdapter.js';
+import { createCodeCommentsAdapter, type CodeCommentsAdapterConfig } from './codeCommentsAdapter.js';
+import { createGitBookAdapter, type GitBookAdapterConfig } from './gitbookAdapter.js';
 import type { DocAdapter, DocCategory, DocSystem } from './types.js';
 
 // Type for adapter factory functions
@@ -61,7 +63,25 @@ function registerBuiltInAdapters(): void {
     return createBackstageAdapter({ installationId, owner: owner || '', repo: repo || '', filePath });
   });
 
-  // TODO: Register more adapters as they are implemented
+  // Code Comments adapter (Phase 5 - JSDoc/TSDoc)
+  adapterFactories.set('github_code_comments', (config: unknown) => {
+    const { installationId, owner, repo, accessToken, appId, privateKey } = config as CodeCommentsAdapterConfig;
+    if (!installationId) {
+      throw new Error('GitHub installation ID required for Code Comments adapter');
+    }
+    return createCodeCommentsAdapter({ installationId, owner: owner || '', repo: repo || '', accessToken, appId, privateKey });
+  });
+
+  // GitBook adapter (Phase 5)
+  adapterFactories.set('gitbook', (config: unknown) => {
+    const { installationId, owner, repo, accessToken, appId, privateKey, docsPath, summaryFile } = config as GitBookAdapterConfig;
+    if (!installationId) {
+      throw new Error('GitHub installation ID required for GitBook adapter');
+    }
+    return createGitBookAdapter({ installationId, owner: owner || '', repo: repo || '', accessToken, appId, privateKey, docsPath, summaryFile });
+  });
+
+  // TODO: Register Confluence adapter when OAuth is implemented
   // adapterFactories.set('confluence', createConfluenceAdapter);
 }
 
@@ -78,6 +98,8 @@ function docSystemToIntegrationType(docSystem: DocSystem): string {
     github_readme: 'github',
     github_swagger: 'github',
     backstage: 'github', // Backstage uses GitHub for catalog-info.yaml
+    github_code_comments: 'github', // Phase 5: Code Comments
+    gitbook: 'github', // Phase 5: GitBook syncs from GitHub
   };
   return mapping[docSystem];
 }
@@ -92,6 +114,8 @@ export function getDefaultCategory(docSystem: DocSystem): DocCategory {
     github_readme: 'developer',
     github_swagger: 'developer',
     backstage: 'operational',
+    github_code_comments: 'developer', // Phase 5: Code Comments
+    gitbook: 'functional', // Phase 5: GitBook
   };
   return mapping[docSystem];
 }
@@ -112,14 +136,25 @@ export async function getAdapter(
     console.log(`[AdapterRegistry] README adapter disabled for workspace ${workspaceId}`);
     return null;
   }
-  
+
   if (docSystem === 'github_swagger' && !isFeatureEnabled('ENABLE_SWAGGER_ADAPTER', workspaceId)) {
     console.log(`[AdapterRegistry] Swagger adapter disabled for workspace ${workspaceId}`);
     return null;
   }
-  
+
   if (docSystem === 'backstage' && !isFeatureEnabled('ENABLE_BACKSTAGE_ADAPTER', workspaceId)) {
     console.log(`[AdapterRegistry] Backstage adapter disabled for workspace ${workspaceId}`);
+    return null;
+  }
+
+  // Phase 5 feature flags
+  if (docSystem === 'github_code_comments' && !isFeatureEnabled('ENABLE_CODE_COMMENTS_ADAPTER', workspaceId)) {
+    console.log(`[AdapterRegistry] Code Comments adapter disabled for workspace ${workspaceId}`);
+    return null;
+  }
+
+  if (docSystem === 'gitbook' && !isFeatureEnabled('ENABLE_GITBOOK_ADAPTER', workspaceId)) {
+    console.log(`[AdapterRegistry] GitBook adapter disabled for workspace ${workspaceId}`);
     return null;
   }
 
@@ -159,16 +194,20 @@ export async function getAdapter(
  */
 export async function getAvailableAdapters(workspaceId: string): Promise<Map<DocSystem, DocAdapter>> {
   const adapters = new Map<DocSystem, DocAdapter>();
-  
-  const docSystems: DocSystem[] = ['confluence', 'notion', 'github_readme', 'github_swagger', 'backstage'];
-  
+
+  // All doc systems including Phase 5 additions
+  const docSystems: DocSystem[] = [
+    'confluence', 'notion', 'github_readme', 'github_swagger', 'backstage',
+    'github_code_comments', 'gitbook',  // Phase 5
+  ];
+
   for (const docSystem of docSystems) {
     const adapter = await getAdapter(workspaceId, docSystem);
     if (adapter) {
       adapters.set(docSystem, adapter);
     }
   }
-  
+
   return adapters;
 }
 

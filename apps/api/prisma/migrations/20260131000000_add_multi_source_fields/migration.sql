@@ -51,7 +51,13 @@ ON "signal_events"("workspace_id", "incident_id")
 WHERE "incident_id" IS NOT NULL;
 
 -- Index for Slack cluster signals lookup
-CREATE INDEX IF NOT EXISTS "signal_events_workspace_id_slack_cluster_id_idx" 
-ON "signal_events"("workspace_id", "slack_cluster_id") 
+CREATE INDEX IF NOT EXISTS "signal_events_workspace_id_slack_cluster_id_idx"
+ON "signal_events"("workspace_id", "slack_cluster_id")
 WHERE "slack_cluster_id" IS NOT NULL;
 
+-- ============================================================================
+-- Workspace: Add workflow preferences (Phase 5)
+-- ============================================================================
+
+-- JSON structure: { enabledDriftTypes: string[], enabledInputSources: string[], enabledOutputTargets: string[], outputTargetPriority: string[] }
+ALTER TABLE "workspaces" ADD COLUMN IF NOT EXISTS "workflow_preferences" JSONB DEFAULT '{}';

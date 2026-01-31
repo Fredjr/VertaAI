@@ -23,9 +23,23 @@ export const DOC_SYSTEMS = [
   'github_readme',
   'github_swagger',
   'backstage',
+  'github_code_comments',  // Phase 5: JSDoc/TSDoc
+  'gitbook',               // Phase 5: GitBook
 ] as const;
 
 export type DocSystem = typeof DOC_SYSTEMS[number];
+
+// Input source types (signals)
+export const INPUT_SOURCE_TYPES = [
+  'github_pr',           // Existing
+  'github_codeowners',   // Phase 1: CODEOWNERS file changes
+  'github_iac',          // Phase 5: Terraform/Pulumi changes
+  'pagerduty_incident',  // Phase 3: PagerDuty incidents
+  'slack_cluster',       // Phase 4: Slack question clusters
+  'datadog_alert',       // Phase 5: Datadog/Grafana alert changes
+] as const;
+
+export type InputSourceType = typeof INPUT_SOURCE_TYPES[number];
 
 // Drift types supported by the system
 export const DRIFT_TYPES = [

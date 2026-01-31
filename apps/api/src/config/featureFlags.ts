@@ -32,6 +32,13 @@ export const FEATURE_FLAGS = {
   ENABLE_COVERAGE_DRIFT: true,          // Coverage drift from repeated questions
   ENABLE_SCHEDULED_ANALYSIS: true,      // Scheduled jobs for Slack analysis
 
+  // Phase 5: Complete Multi-Source Architecture
+  ENABLE_DATADOG_WEBHOOK: true,         // Datadog/Grafana alert ingestion
+  ENABLE_IAC_PARSER: true,              // Terraform/Pulumi IaC change detection
+  ENABLE_CODE_COMMENTS_ADAPTER: true,   // JSDoc/TSDoc code comments
+  ENABLE_GITBOOK_ADAPTER: true,         // GitBook documentation
+  ENABLE_WORKFLOW_SETTINGS: true,       // User workflow preferences
+
   // Cross-cutting features
   ENABLE_MULTI_DOC_WRITEBACK: false,    // Write patches to multiple docs
 } as const;
