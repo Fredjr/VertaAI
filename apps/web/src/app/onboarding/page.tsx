@@ -237,6 +237,24 @@ function OnboardingContent() {
           <ActiveWorkflowsSummary status={status} />
         )}
 
+        {/* Settings Link - always visible for power users */}
+        <div className="mb-8 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-gray-800 dark:text-gray-200 flex items-center gap-2">
+              <span>⚙️</span> Advanced Settings
+            </h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+              Customize drift types, input sources, and output targets
+            </p>
+          </div>
+          <a
+            href={`/settings?workspace=${status.workspace.id}`}
+            className="px-4 py-2 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded-lg hover:bg-primary-200 dark:hover:bg-primary-800/50 transition-colors text-sm font-medium"
+          >
+            Open Settings →
+          </a>
+        </div>
+
         {/* PagerDuty Webhook Configuration - show when PagerDuty is connected */}
         {status.integrations.pagerduty.connected && (
           <WebhookConfigSection
@@ -520,15 +538,6 @@ function ActiveWorkflowsSummary({ status }: { status: SetupStatus }) {
             )}
           </div>
         ))}
-      </div>
-      {/* Link to Settings page */}
-      <div className="mt-4 pt-4 border-t border-primary-200 dark:border-primary-800">
-        <a
-          href={`/settings?workspace=${status.workspace.id}`}
-          className="text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 flex items-center gap-1"
-        >
-          ⚙️ Customize workflow settings →
-        </a>
       </div>
     </div>
   );

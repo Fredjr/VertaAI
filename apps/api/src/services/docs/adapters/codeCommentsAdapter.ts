@@ -1,13 +1,15 @@
 /**
  * Code Comments Adapter (JSDoc/TSDoc)
- * 
+ *
  * Adapter for updating inline code documentation (JSDoc, TSDoc, Python docstrings).
  * Creates PRs to update code comments when API signatures or behavior changes.
- * 
+ *
  * Phase 5 - Multi-Source Architecture
  * @see MULTI_SOURCE_IMPLEMENTATION_PLAN.md Section 3.2
  */
 
+import { Octokit } from 'octokit';
+import crypto from 'crypto';
 import type {
   DocAdapter,
   GitHubDocAdapter,
@@ -57,11 +59,61 @@ const COMMENT_PATTERNS = {
 class CodeCommentsAdapter implements GitHubDocAdapter {
   readonly system: DocSystem = 'github_code_comments';
   readonly category: DocCategory = 'developer';
-  
+
   private config: CodeCommentsAdapterConfig;
-  
+  private octokitInstance: Octokit | null = null;
+
   constructor(config: CodeCommentsAdapterConfig) {
     this.config = config;
+  }
+
+  /**
+   * Get authenticated Octokit instance
+   */
+  private async getOctokit(): Promise<Octokit> {
+    if (this.octokitInstance) return this.octokitInstance;
+
+    // Try Personal Access Token first
+    if (this.config.accessToken) {
+      this.octokitInstance = new Octokit({ auth: this.config.accessToken });
+      return this.octokitInstance;
+    }
+
+    // Try GitHub App installation
+    if (this.config.installationId && this.config.appId && this.config.privateKey) {
+      const jwt = await this.createAppJWT(this.config.appId, this.config.privateKey.replace(/\\n/g, '\n'));
+      const appOctokit = new Octokit({ auth: jwt });
+      const { data: { token } } = await appOctokit.rest.apps.createInstallationAccessToken({
+        installation_id: this.config.installationId,
+      });
+      this.octokitInstance = new Octokit({ auth: token });
+      return this.octokitInstance;
+    }
+
+    throw new Error('No GitHub credentials provided for Code Comments adapter');
+  }
+
+  /**
+   * Create JWT for GitHub App authentication
+   */
+  private async createAppJWT(appId: string, privateKey: string): Promise<string> {
+    const header = { alg: 'RS256', typ: 'JWT' };
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      iat: now - 60,
+      exp: now + 600,
+      iss: appId,
+    };
+
+    const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
+    const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signatureInput = `${base64Header}.${base64Payload}`;
+
+    const sign = crypto.createSign('RSA-SHA256');
+    sign.update(signatureInput);
+    const signature = sign.sign(privateKey, 'base64url');
+
+    return `${signatureInput}.${signature}`;
   }
   
   /**
@@ -148,30 +200,82 @@ class CodeCommentsAdapter implements GitHubDocAdapter {
    * Create a PR with updated code comments
    */
   async createPatchPR(params: CreatePRParams): Promise<PRResult> {
-    const { doc, newContent, title, body, branchName, baseBranch, driftType, driftId } = params;
+    const { doc, newContent, baseSha } = params;
+    const prTitle = params.title || '[VertaAI] Update code documentation';
+    const prBody = params.body || 'Automated code comment update by VertaAI';
     const { owner, repo, filePath } = doc;
 
     if (!owner || !repo || !filePath) {
       return { success: false, error: 'Missing owner, repo, or filePath' };
     }
 
-    try {
-      const branch = branchName || `vertaai/code-comments-${driftId || Date.now()}`;
-      const targetBranch = baseBranch || 'main';
+    const octokit = await this.getOctokit();
 
-      // This would use GitHub API to create branch and PR
-      // For now, return a placeholder
-      console.log(`[CodeCommentsAdapter] Would create PR: ${branch} -> ${targetBranch}`);
-      console.log(`[CodeCommentsAdapter] File: ${filePath}, Drift: ${driftType}`);
+    try {
+      // 1. Get the default branch
+      const { data: repoData } = await octokit.rest.repos.get({
+        owner,
+        repo,
+      });
+      const defaultBranch = repoData.default_branch;
+
+      // 2. Get the latest commit SHA on the default branch
+      const { data: refData } = await octokit.rest.git.getRef({
+        owner,
+        repo,
+        ref: `heads/${defaultBranch}`,
+      });
+      const latestSha = refData.object.sha;
+
+      // 3. Create a unique branch name
+      const branchName = params.branchName || `vertaai/code-comments-${params.driftId || Date.now()}`;
+
+      // 4. Create a new branch from default branch
+      await octokit.rest.git.createRef({
+        owner,
+        repo,
+        ref: `refs/heads/${branchName}`,
+        sha: latestSha,
+      });
+
+      // 5. Get the current file SHA for update
+      const fileSha = baseSha || await this.getFileSha(doc);
+      if (!fileSha) {
+        return { success: false, error: 'Could not get file SHA' };
+      }
+
+      // 6. Update the file on the new branch
+      await octokit.rest.repos.createOrUpdateFileContents({
+        owner,
+        repo,
+        path: filePath,
+        message: prTitle,
+        content: Buffer.from(newContent).toString('base64'),
+        sha: fileSha,
+        branch: branchName,
+      });
+
+      // 7. Create the pull request
+      const { data: prData } = await octokit.rest.pulls.create({
+        owner,
+        repo,
+        title: prTitle,
+        body: prBody,
+        head: branchName,
+        base: defaultBranch,
+      });
+
+      console.log(`[CodeCommentsAdapter] Created PR #${prData.number}: ${prData.html_url}`);
 
       return {
         success: true,
-        prNumber: 0, // Placeholder
-        prUrl: `https://github.com/${owner}/${repo}/pull/new/${branch}`,
-        branchName: branch,
+        prNumber: prData.number,
+        prUrl: prData.html_url,
+        branchName,
       };
     } catch (error: any) {
-      return { success: false, error: error.message };
+      console.error(`[CodeCommentsAdapter] Error creating PR:`, error);
+      return { success: false, error: error.message || 'Failed to create PR' };
     }
   }
 
