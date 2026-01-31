@@ -58,12 +58,13 @@ export interface DocRef {
  */
 export interface DocFetchResult {
   doc: DocRef;
-  baseRevision: string;    // Version/SHA for optimistic locking
+  baseRevision: string | null;    // Version/SHA for optimistic locking (null if file not found)
   format: 'markdown' | 'adf' | 'html' | 'yaml' | 'json';
-  content: string;         // Raw content in native format
-  markdown?: string;       // Markdown conversion (if applicable)
-  title: string;           // Document title
+  content: string | null;         // Raw content in native format (null if file not found)
+  markdown?: string;              // Markdown conversion (if applicable)
+  title: string;                  // Document title
   metadata?: Record<string, unknown>;
+  error?: string;                 // Error message if fetch failed
 }
 
 /**
@@ -92,11 +93,12 @@ export interface WriteResult {
  */
 export interface CreatePRParams {
   doc: DocRef;
-  baseSha: string;         // Base commit SHA
+  baseSha?: string;        // Base commit SHA (optional - will be fetched if not provided)
   newContent: string;      // Updated content
-  title: string;           // PR title
-  body: string;            // PR body/description
-  branchName: string;      // Branch to create
+  title?: string;          // PR title
+  body?: string;           // PR body/description
+  branchName?: string;     // Branch to create (auto-generated if not provided)
+  baseBranch?: string;     // Target branch for PR (default: 'main')
   driftType?: DriftType;
   driftId?: string;        // Reference to DriftCandidate
 }

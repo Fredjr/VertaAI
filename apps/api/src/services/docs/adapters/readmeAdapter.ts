@@ -143,7 +143,10 @@ export function createReadmeAdapter(config: ReadmeAdapterConfig): ReadmeAdapter 
     },
 
     async createPatchPR(params: CreatePRParams): Promise<PRResult> {
-      const { doc, baseSha, newContent, title, body, branchName } = params;
+      const { doc, baseSha, newContent } = params;
+      const title = params.title || '[VertaAI] Update documentation';
+      const body = params.body || 'Automated documentation update by VertaAI';
+      const branchName = params.branchName || `vertaai/doc-update-${Date.now()}`;
 
       if (!doc.owner || !doc.repo) {
         return { success: false, error: 'DocRef must include owner and repo' };

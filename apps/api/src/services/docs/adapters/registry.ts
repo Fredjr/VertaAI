@@ -11,6 +11,7 @@ import { prisma } from '../../../lib/db.js';
 import { isFeatureEnabled } from '../../../config/featureFlags.js';
 import { createNotionAdapter, NotionAdapter } from './notionAdapter.js';
 import { createReadmeAdapter, ReadmeAdapter } from './readmeAdapter.js';
+import { createSwaggerAdapter, type SwaggerAdapterConfig } from './swaggerAdapter.js';
 import type { DocAdapter, DocCategory, DocSystem } from './types.js';
 
 // Type for adapter factory functions
@@ -41,9 +42,17 @@ function registerBuiltInAdapters(): void {
     return createReadmeAdapter({ installationId, accessToken, appId, privateKey });
   });
 
+  // Swagger/OpenAPI adapter (Phase 2)
+  adapterFactories.set('github_swagger', (config: unknown) => {
+    const { installationId, owner, repo, filePath } = config as SwaggerAdapterConfig;
+    if (!installationId) {
+      throw new Error('GitHub installation ID required for Swagger adapter');
+    }
+    return createSwaggerAdapter({ installationId, owner: owner || '', repo: repo || '', filePath });
+  });
+
   // TODO: Register more adapters as they are implemented
   // adapterFactories.set('confluence', createConfluenceAdapter);
-  // adapterFactories.set('github_swagger', createSwaggerAdapter);
   // adapterFactories.set('backstage', createBackstageAdapter);
 }
 

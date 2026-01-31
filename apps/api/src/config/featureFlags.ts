@@ -17,10 +17,10 @@ export const FEATURE_FLAGS = {
   ENABLE_NOTION_WRITEBACK: true,        // Notion writeback (already partial)
   ENABLE_ADAPTER_REGISTRY: true,        // Use unified adapter registry
 
-  // Phase 2: API Documentation (to be enabled after implementation)
-  ENABLE_SWAGGER_ADAPTER: false,        // Swagger/OpenAPI as output source
-  ENABLE_BACKSTAGE_ADAPTER: false,      // Backstage catalog integration
-  ENABLE_API_DRIFT_DETECTION: false,    // API schema drift detection
+  // Phase 2: API Documentation (ENABLED)
+  ENABLE_SWAGGER_ADAPTER: true,         // Swagger/OpenAPI as output source
+  ENABLE_BACKSTAGE_ADAPTER: false,      // Backstage catalog integration (TODO)
+  ENABLE_API_DRIFT_DETECTION: true,     // API schema drift detection
 
   // Phase 3: Incident-Based Signals
   ENABLE_PAGERDUTY_WEBHOOK: false,      // PagerDuty incident ingestion

@@ -347,6 +347,67 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
       }
     }
 
+    // =========================================================================
+    // OpenAPI/Swagger Detection (Phase 2 - Multi-Source)
+    // Detect API drift when OpenAPI/Swagger files are modified
+    // =========================================================================
+    let apiDriftHint: {
+      driftType: 'instruction';
+      driftDomains: string[];
+      evidenceSummary: string;
+      confidence: number;
+    } | null = null;
+
+    if (isFeatureEnabled('ENABLE_SWAGGER_ADAPTER', workspaceId)) {
+      const { isOpenApiFile, diffOpenApiSpecs, createApiDriftSignal } = await import(
+        '../services/signals/openApiParser.js'
+      );
+
+      const openApiFile = files.find(f => isOpenApiFile(f.filename));
+
+      if (openApiFile) {
+        console.log(`[Webhook] [V2] OpenAPI file detected: ${openApiFile.filename}`);
+
+        try {
+          const octokit = await getGitHubClient(workspaceId, prInfo.installationId);
+
+          if (octokit) {
+            // Fetch old spec content (from base branch)
+            const oldContent = await getFileContent(
+              octokit,
+              prInfo.repoOwner,
+              prInfo.repoName,
+              openApiFile.filename,
+              prInfo.baseBranch
+            );
+
+            // Fetch new spec content (from head branch / merged state)
+            const newContent = await getFileContent(
+              octokit,
+              prInfo.repoOwner,
+              prInfo.repoName,
+              openApiFile.filename,
+              prInfo.headBranch
+            );
+
+            // Diff and create API drift signal
+            const openApiDiff = diffOpenApiSpecs(oldContent, newContent);
+
+            if (openApiDiff.changes.length > 0) {
+              console.log(`[Webhook] [V2] API drift detected: ${openApiDiff.summary}`);
+              apiDriftHint = createApiDriftSignal(
+                openApiDiff,
+                prInfo.repoFullName,
+                prInfo.prNumber
+              );
+            }
+          }
+        } catch (error: any) {
+          console.error('[Webhook] [V2] Error processing OpenAPI spec:', error.message);
+        }
+      }
+    }
+
     // Create SignalEvent record (workspace-scoped)
     const signalEvent = await prisma.signalEvent.create({
       data: {
@@ -364,8 +425,9 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
           baseBranch: prInfo.baseBranch,
           headBranch: prInfo.headBranch,
           changedFiles: files,
-          // Include ownership drift hint if detected
+          // Include drift hints if detected (Phase 1 & 2)
           ...(ownershipDriftHint && { ownershipDriftHint }),
+          ...(apiDriftHint && { apiDriftHint }),
         },
         rawPayload: {
           ...payload,
