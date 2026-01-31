@@ -218,7 +218,34 @@ function OnboardingContent() {
             connectLabel="Connect Notion"
             optional
           />
+
+          {/* PagerDuty (optional) */}
+          <IntegrationCard
+            name="PagerDuty"
+            icon="📟"
+            description="Detect process drift from incident patterns"
+            connected={status.integrations.pagerduty.connected}
+            details={status.integrations.pagerduty.connected ? 'Webhook configured' : undefined}
+            connectUrl={`${API_URL}/auth/pagerduty/install?workspaceId=${workspaceId}`}
+            connectLabel="Connect PagerDuty"
+            optional
+          />
         </div>
+
+        {/* Active Workflows Summary - show when at least one integration is connected */}
+        {(status.integrations.github.connected || status.integrations.pagerduty.connected) && (
+          <ActiveWorkflowsSummary status={status} />
+        )}
+
+        {/* PagerDuty Webhook Configuration - show when PagerDuty is connected */}
+        {status.integrations.pagerduty.connected && (
+          <WebhookConfigSection
+            title="PagerDuty Webhook"
+            icon="📟"
+            webhookUrl={status.webhookUrls.pagerduty}
+            instructions="Configure this URL in PagerDuty: Service → Integrations → Add Integration → Generic Webhooks (v3). Select 'incident.resolved' events for best results."
+          />
+        )}
 
         {/* Slack Channel Selector - show when Slack is connected */}
         {status.integrations.slack.connected && (
@@ -373,3 +400,161 @@ function StatCard({ label, value }: { label: string; value: number }) {
   );
 }
 
+/**
+ * Active Workflows Summary
+ * Shows which drift detection workflows are active based on connected integrations
+ */
+function ActiveWorkflowsSummary({ status }: { status: SetupStatus }) {
+  const workflows: Array<{ icon: string; source: string; targets: string; driftTypes: string; enabled: boolean }> = [];
+
+  // GitHub PR workflows
+  if (status.integrations.github.connected) {
+    if (status.integrations.confluence.connected || status.integrations.notion.connected) {
+      const docTarget = status.integrations.confluence.connected && status.integrations.notion.connected
+        ? 'Confluence & Notion'
+        : status.integrations.confluence.connected ? 'Confluence' : 'Notion';
+      workflows.push({
+        icon: '🔗',
+        source: 'GitHub PR',
+        targets: docTarget,
+        driftTypes: 'instruction, process drift',
+        enabled: true,
+      });
+    }
+    // README/Swagger always available with GitHub
+    workflows.push({
+      icon: '📄',
+      source: 'GitHub PR',
+      targets: 'README.md & Swagger',
+      driftTypes: 'developer docs',
+      enabled: true,
+    });
+  }
+
+  // PagerDuty workflows
+  if (status.integrations.pagerduty.connected) {
+    const docTarget = status.integrations.confluence.connected ? 'Confluence' :
+                      status.integrations.notion.connected ? 'Notion' : 'docs';
+    workflows.push({
+      icon: '📟',
+      source: 'PagerDuty Incident',
+      targets: docTarget,
+      driftTypes: 'process, ownership drift',
+      enabled: status.integrations.confluence.connected || status.integrations.notion.connected,
+    });
+  }
+
+  // Slack Question workflows (always available if Slack connected)
+  if (status.integrations.slack.connected && (status.integrations.confluence.connected || status.integrations.notion.connected)) {
+    const docTarget = status.integrations.confluence.connected ? 'Confluence' : 'Notion';
+    workflows.push({
+      icon: '💬',
+      source: 'Slack Questions',
+      targets: docTarget,
+      driftTypes: 'coverage gaps',
+      enabled: true,
+    });
+  }
+
+  if (workflows.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mb-8 p-6 bg-gradient-to-br from-primary-50 to-blue-50 dark:from-primary-900/20 dark:to-blue-900/20 rounded-xl border border-primary-200 dark:border-primary-800">
+      <h3 className="font-semibold text-lg mb-3 flex items-center gap-2 text-primary-800 dark:text-primary-200">
+        <span>⚡</span> Active Workflows
+      </h3>
+      <p className="text-sm text-primary-700 dark:text-primary-300 mb-4">
+        Based on your connected integrations, VertaAI will automatically detect these drift types:
+      </p>
+      <div className="space-y-2">
+        {workflows.map((workflow, index) => (
+          <div
+            key={index}
+            className={`flex items-center gap-3 p-3 rounded-lg ${
+              workflow.enabled
+                ? 'bg-white/70 dark:bg-gray-900/50'
+                : 'bg-gray-100/50 dark:bg-gray-800/30 opacity-60'
+            }`}
+          >
+            <span className="text-xl">{workflow.icon}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-sm text-gray-900 dark:text-gray-100">
+                  {workflow.source}
+                </span>
+                <span className="text-gray-400">→</span>
+                <span className="text-sm text-gray-700 dark:text-gray-300">
+                  {workflow.targets}
+                </span>
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {workflow.driftTypes}
+              </div>
+            </div>
+            {workflow.enabled ? (
+              <span className="text-green-600 text-sm">✓ Active</span>
+            ) : (
+              <span className="text-gray-400 text-xs">Connect docs</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Webhook Configuration Section
+ * Displays webhook URL with copy functionality
+ */
+function WebhookConfigSection({
+  title,
+  icon,
+  webhookUrl,
+  instructions,
+}: {
+  title: string;
+  icon: string;
+  webhookUrl: string;
+  instructions: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  return (
+    <div className="mb-8 p-6 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800">
+      <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+        <span>{icon}</span> {title}
+      </h3>
+      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+        {instructions}
+      </p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 p-3 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm font-mono text-gray-800 dark:text-gray-200 overflow-x-auto">
+          {webhookUrl}
+        </code>
+        <button
+          onClick={handleCopy}
+          className={`px-4 py-3 rounded-lg text-sm font-medium transition ${
+            copied
+              ? 'bg-green-600 text-white'
+              : 'bg-primary-600 hover:bg-primary-700 text-white'
+          }`}
+        >
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
+      </div>
+    </div>
+  );
+}
