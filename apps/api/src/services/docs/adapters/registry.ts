@@ -12,6 +12,7 @@ import { isFeatureEnabled } from '../../../config/featureFlags.js';
 import { createNotionAdapter, NotionAdapter } from './notionAdapter.js';
 import { createReadmeAdapter, ReadmeAdapter } from './readmeAdapter.js';
 import { createSwaggerAdapter, type SwaggerAdapterConfig } from './swaggerAdapter.js';
+import { createBackstageAdapter, type BackstageAdapterConfig } from './backstageAdapter.js';
 import type { DocAdapter, DocCategory, DocSystem } from './types.js';
 
 // Type for adapter factory functions
@@ -51,9 +52,17 @@ function registerBuiltInAdapters(): void {
     return createSwaggerAdapter({ installationId, owner: owner || '', repo: repo || '', filePath });
   });
 
+  // Backstage catalog adapter (Phase 2)
+  adapterFactories.set('backstage', (config: unknown) => {
+    const { installationId, owner, repo, filePath } = config as BackstageAdapterConfig;
+    if (!installationId) {
+      throw new Error('GitHub installation ID required for Backstage adapter');
+    }
+    return createBackstageAdapter({ installationId, owner: owner || '', repo: repo || '', filePath });
+  });
+
   // TODO: Register more adapters as they are implemented
   // adapterFactories.set('confluence', createConfluenceAdapter);
-  // adapterFactories.set('backstage', createBackstageAdapter);
 }
 
 // Initialize registry

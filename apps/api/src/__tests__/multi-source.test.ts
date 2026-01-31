@@ -11,7 +11,7 @@ import {
   parseCodeOwners,
   diffCodeOwners,
   isCodeOwnersFile,
-  createOwnershipDriftSignal,
+  createOwnershipDriftSignal as createCodeownersOwnershipDriftSignal,
 } from '../services/signals/codeownersParser.js';
 
 describe('CODEOWNERS Parser', () => {
@@ -136,7 +136,7 @@ describe('CODEOWNERS Parser', () => {
   describe('createOwnershipDriftSignal', () => {
     it('should create signal from diff with changes', () => {
       const diff = diffCodeOwners(`* @old-team`, `* @new-team`);
-      const signal = createOwnershipDriftSignal(diff, 'owner/repo', 123);
+      const signal = createCodeownersOwnershipDriftSignal(diff, 'owner/repo', 123);
 
       expect(signal).not.toBeNull();
       expect(signal?.driftType).toBe('ownership');
@@ -145,7 +145,7 @@ describe('CODEOWNERS Parser', () => {
 
     it('should return null for no drift', () => {
       const diff = diffCodeOwners(`* @team`, `* @team`);
-      const signal = createOwnershipDriftSignal(diff, 'owner/repo', 123);
+      const signal = createCodeownersOwnershipDriftSignal(diff, 'owner/repo', 123);
 
       expect(signal).toBeNull();
     });
@@ -180,9 +180,16 @@ describe('Feature Flags', () => {
       expect(isFeatureEnabled('ENABLE_README_ADAPTER')).toBe(true);
       expect(isFeatureEnabled('ENABLE_CODEOWNERS_DETECTION')).toBe(true);
 
-      // Phase 2+ flags are disabled by default
-      expect(isFeatureEnabled('ENABLE_SWAGGER_ADAPTER')).toBe(false);
-      expect(isFeatureEnabled('ENABLE_PAGERDUTY_WEBHOOK')).toBe(false);
+      // Phase 2 & 3 flags are now enabled by default
+      expect(isFeatureEnabled('ENABLE_SWAGGER_ADAPTER')).toBe(true);
+      expect(isFeatureEnabled('ENABLE_BACKSTAGE_ADAPTER')).toBe(true);
+      expect(isFeatureEnabled('ENABLE_PAGERDUTY_WEBHOOK')).toBe(true);
+      expect(isFeatureEnabled('ENABLE_PROCESS_DRIFT')).toBe(true);
+      expect(isFeatureEnabled('ENABLE_ONCALL_OWNERSHIP')).toBe(true);
+
+      // Phase 4 flags are still disabled by default
+      expect(isFeatureEnabled('ENABLE_SLACK_CLUSTERING')).toBe(false);
+      expect(isFeatureEnabled('ENABLE_COVERAGE_DRIFT')).toBe(false);
     });
 
     it('should respect environment variable override', () => {
@@ -207,10 +214,12 @@ describe('Feature Flags', () => {
       const flags = getFeatureFlags([
         'ENABLE_README_ADAPTER',
         'ENABLE_SWAGGER_ADAPTER',
+        'ENABLE_SLACK_CLUSTERING',
       ]);
 
       expect(flags.ENABLE_README_ADAPTER).toBe(true);
-      expect(flags.ENABLE_SWAGGER_ADAPTER).toBe(false);
+      expect(flags.ENABLE_SWAGGER_ADAPTER).toBe(true); // Now enabled
+      expect(flags.ENABLE_SLACK_CLUSTERING).toBe(false); // Phase 4 still disabled
     });
   });
 
@@ -388,6 +397,21 @@ describe('README Adapter', () => {
 // NOTION ADAPTER TESTS (Unit tests)
 // ============================================================================
 import { createNotionAdapter } from '../services/docs/adapters/notionAdapter.js';
+
+// ============================================================================
+// BACKSTAGE ADAPTER TESTS (Phase 2)
+// ============================================================================
+import { createBackstageAdapter } from '../services/docs/adapters/backstageAdapter.js';
+
+// ============================================================================
+// PAGERDUTY NORMALIZER TESTS (Phase 3)
+// ============================================================================
+import {
+  normalizeIncident,
+  isSignificantIncident,
+  createProcessDriftSignal,
+  createOwnershipDriftSignal,
+} from '../services/signals/pagerdutyNormalizer.js';
 
 // ============================================================================
 // OPENAPI PARSER TESTS (Phase 2)
@@ -579,6 +603,279 @@ describe('Notion Adapter', () => {
       });
 
       expect(url).toBe('https://custom.notion.site/page');
+    });
+  });
+
+  // =========================================================================
+  // Backstage Adapter (Phase 2)
+  // =========================================================================
+  describe('Backstage Adapter', () => {
+    it('should create adapter with correct system and category', () => {
+      const adapter = createBackstageAdapter({
+        installationId: 12345,
+        owner: 'test-org',
+        repo: 'test-repo',
+      });
+
+      expect(adapter.system).toBe('backstage');
+      expect(adapter.category).toBe('operational');
+    });
+
+    it('should not support direct writeback', () => {
+      const adapter = createBackstageAdapter({
+        installationId: 12345,
+        owner: 'test-org',
+        repo: 'test-repo',
+      });
+      expect(adapter.supportsDirectWriteback()).toBe(false);
+    });
+
+    it('should generate correct doc URL', () => {
+      const adapter = createBackstageAdapter({
+        installationId: 12345,
+        owner: 'test-org',
+        repo: 'test-repo',
+      });
+
+      const url = adapter.getDocUrl({
+        docId: 'catalog-info.yaml',
+        docSystem: 'backstage',
+      });
+
+      expect(url).toContain('github.com');
+      expect(url).toContain('test-org');
+      expect(url).toContain('test-repo');
+      expect(url).toContain('catalog-info.yaml');
+    });
+
+    it('should use custom file path', () => {
+      const adapter = createBackstageAdapter({
+        installationId: 12345,
+        owner: 'test-org',
+        repo: 'test-repo',
+        filePath: 'services/api/catalog-info.yml',
+      });
+
+      const url = adapter.getDocUrl({
+        docId: 'catalog-info.yml',
+        docSystem: 'backstage',
+      });
+
+      expect(url).toContain('services/api/catalog-info.yml');
+    });
+  });
+});
+
+// =============================================================================
+// PagerDuty Normalizer (Phase 3)
+// =============================================================================
+describe('PagerDuty Normalizer', () => {
+  // Imports are at the top of the file
+
+  describe('normalizeIncident', () => {
+    const mockIncident = {
+      id: 'PABC123',
+      incident_number: 42,
+      title: 'High CPU on payment-service',
+      description: 'Payment service experiencing high CPU usage',
+      status: 'resolved',
+      urgency: 'high',
+      service: { id: 'svc1', summary: 'Payment Service' },
+      created_at: '2024-01-15T10:00:00Z',
+      resolved_at: '2024-01-15T11:30:00Z',
+      updated_at: '2024-01-15T11:30:00Z',
+      assignments: [
+        { at: '2024-01-15T10:05:00Z', assignee: { id: 'user1', summary: 'Jane Doe', email: 'jane@example.com' } },
+        { at: '2024-01-15T10:30:00Z', assignee: { id: 'user2', summary: 'John Smith' } },
+      ],
+      acknowledgements: [
+        { at: '2024-01-15T10:05:00Z', acknowledger: { id: 'user1', summary: 'Jane Doe' } },
+      ],
+      last_status_change_at: '2024-01-15T11:30:00Z',
+      escalation_policy: { id: 'ep1', summary: 'Payment On-Call' },
+      teams: [{ id: 'team1', summary: 'Payment Team' }],
+      priority: { id: 'p1', summary: 'P1' },
+      html_url: 'https://pagerduty.com/incidents/PABC123',
+      resolved_by: { id: 'user1', summary: 'Jane Doe' },
+      notes: [{ content: 'Restarted the service', created_at: '2024-01-15T10:45:00Z', user: { summary: 'Jane Doe' } }],
+    };
+
+    it('should normalize incident correctly', () => {
+      const normalized = normalizeIncident(mockIncident, 'workspace-1');
+
+      expect(normalized.id).toBe('pagerduty_incident_PABC123');
+      expect(normalized.sourceType).toBe('pagerduty_incident');
+      expect(normalized.service).toBe('payment-service');
+      expect(normalized.severity).toBe('sev1'); // High urgency with P1
+      expect(normalized.extracted.title).toBe('High CPU on payment-service');
+    });
+
+    it('should extract responders', () => {
+      const normalized = normalizeIncident(mockIncident, 'workspace-1');
+
+      expect(normalized.responders).toContain('jane@example.com');
+      expect(normalized.responders).toContain('John Smith');
+    });
+
+    it('should build timeline', () => {
+      const normalized = normalizeIncident(mockIncident, 'workspace-1');
+
+      expect(normalized.extracted.timeline.length).toBeGreaterThan(0);
+      expect(normalized.extracted.timeline[0].event).toBe('created');
+    });
+
+    it('should detect drift type hints', () => {
+      const normalized = normalizeIncident(mockIncident, 'workspace-1');
+
+      // Multiple responders + notes should suggest process drift
+      expect(normalized.extracted.driftTypeHints).toContain('process');
+    });
+
+    it('should extract keywords', () => {
+      const normalized = normalizeIncident(mockIncident, 'workspace-1');
+
+      expect(normalized.extracted.keywords.length).toBeGreaterThan(0);
+      // Should extract meaningful keywords from title/description
+      expect(normalized.extracted.keywords.some(k => k.includes('payment') || k.includes('service'))).toBe(true);
+    });
+  });
+
+  describe('isSignificantIncident', () => {
+    it('should return true for high urgency resolved incidents', () => {
+      const incident = {
+        id: 'test1',
+        status: 'resolved',
+        urgency: 'high',
+        created_at: '2024-01-15T10:00:00Z',
+        resolved_at: '2024-01-15T10:30:00Z',
+        assignments: [],
+      };
+      expect(isSignificantIncident(incident)).toBe(true);
+    });
+
+    it('should return false for unresolved incidents', () => {
+      const incident = {
+        id: 'test1',
+        status: 'triggered',
+        urgency: 'high',
+        created_at: '2024-01-15T10:00:00Z',
+        assignments: [],
+      };
+      expect(isSignificantIncident(incident)).toBe(false);
+    });
+
+    it('should return true for incidents with notes', () => {
+      const incident = {
+        id: 'test1',
+        status: 'resolved',
+        urgency: 'low',
+        created_at: '2024-01-15T10:00:00Z',
+        resolved_at: '2024-01-15T10:30:00Z',
+        assignments: [],
+        notes: [{ content: 'Fixed by restarting', created_at: '2024-01-15T10:15:00Z', user: { summary: 'User' } }],
+      };
+      expect(isSignificantIncident(incident)).toBe(true);
+    });
+
+    it('should return true for long-running incidents', () => {
+      const incident = {
+        id: 'test1',
+        status: 'resolved',
+        urgency: 'low',
+        created_at: '2024-01-15T10:00:00Z',
+        resolved_at: '2024-01-15T11:00:00Z', // 60 minutes
+        assignments: [],
+      };
+      expect(isSignificantIncident(incident)).toBe(true);
+    });
+  });
+
+  describe('createProcessDriftSignal', () => {
+    it('should create signal for incident with notes', () => {
+      const normalized = {
+        id: 'pagerduty_incident_test',
+        incidentId: 'test',
+        service: 'payment-service',
+        extracted: {
+          timeline: [
+            { event: 'created', at: '2024-01-15T10:00:00Z' },
+            { event: 'acknowledged', at: '2024-01-15T10:05:00Z', by: 'User 1' },
+            { event: 'note', at: '2024-01-15T10:15:00Z', by: 'User 1', details: 'Restarted service' },
+            { event: 'resolved', at: '2024-01-15T10:30:00Z', by: 'User 1' },
+          ],
+          notes: ['Restarted service'],
+          processDriftEvidence: 'Steps taken to resolve',
+        },
+      };
+
+      const signal = createProcessDriftSignal(normalized, 'test-org/test-repo');
+
+      expect(signal).not.toBeNull();
+      expect(signal?.driftType).toBe('process');
+      expect(signal?.driftDomains).toContain('runbook');
+      expect(signal?.confidence).toBeGreaterThan(0.5);
+    });
+
+    it('should return null for simple incidents', () => {
+      const normalized = {
+        id: 'pagerduty_incident_test',
+        incidentId: 'test',
+        service: 'payment-service',
+        extracted: {
+          timeline: [
+            { event: 'created', at: '2024-01-15T10:00:00Z' },
+            { event: 'resolved', at: '2024-01-15T10:05:00Z' },
+          ],
+        },
+      };
+
+      const signal = createProcessDriftSignal(normalized, 'test-org/test-repo');
+      expect(signal).toBeNull();
+    });
+  });
+
+  describe('createOwnershipDriftSignal', () => {
+    it('should create signal for multiple responders', () => {
+      const normalized = {
+        id: 'pagerduty_incident_test',
+        service: 'payment-service',
+        responders: ['user1@example.com', 'user2@example.com', 'user3@example.com'],
+        extracted: {
+          ownershipDriftEvidence: 'Multiple responders involved',
+        },
+      };
+
+      const signal = createOwnershipDriftSignal(normalized);
+
+      expect(signal).not.toBeNull();
+      expect(signal?.driftType).toBe('ownership');
+      expect(signal?.driftDomains).toContain('service-ownership');
+    });
+
+    it('should return null for single responder', () => {
+      const normalized = {
+        id: 'pagerduty_incident_test',
+        service: 'payment-service',
+        responders: ['user1@example.com'],
+        extracted: {},
+      };
+
+      const signal = createOwnershipDriftSignal(normalized);
+      expect(signal).toBeNull();
+    });
+
+    it('should flag when documented owner not in responders', () => {
+      const normalized = {
+        id: 'pagerduty_incident_test',
+        service: 'payment-service',
+        responders: ['random1@example.com', 'random2@example.com'],
+        extracted: {},
+      };
+
+      const signal = createOwnershipDriftSignal(normalized, 'documented-owner@example.com');
+
+      expect(signal).not.toBeNull();
+      expect(signal?.confidence).toBeGreaterThan(0.8); // High confidence when documented owner missing
     });
   });
 });

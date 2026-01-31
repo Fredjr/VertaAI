@@ -3,6 +3,14 @@ import type { Router as RouterType } from 'express';
 import crypto from 'crypto';
 import { prisma } from '../lib/db.js';
 import { enqueueJob } from '../services/queue/qstash.js';
+import { isFeatureEnabled } from '../config/featureFlags.js';
+import {
+  normalizeIncident,
+  isSignificantIncident,
+  createProcessDriftSignal,
+  createOwnershipDriftSignal,
+  type PagerDutyIncident,
+} from '../services/signals/pagerdutyNormalizer.js';
 
 const router: RouterType = Router();
 
@@ -142,8 +150,24 @@ router.post('/:workspaceId', async (req: Request, res: Response) => {
       continue;
     }
 
-    const service = inferServiceFromIncident(incident);
-    const signalEventId = `pagerduty_incident_${incident.id}`;
+    // Check if feature is enabled
+    if (!isFeatureEnabled('ENABLE_PAGERDUTY_WEBHOOK', workspaceId)) {
+      console.log(`[PagerDuty] Feature disabled for workspace ${workspaceId}`);
+      results.push({ eventType, status: 'feature_disabled' });
+      continue;
+    }
+
+    // Check if incident is significant enough for drift detection
+    if (!isSignificantIncident(incident as PagerDutyIncident)) {
+      console.log(`[PagerDuty] Incident ${incident.id} not significant enough`);
+      results.push({ eventType, status: 'not_significant' });
+      continue;
+    }
+
+    // Use normalizer to get structured incident data
+    const normalized = normalizeIncident(incident as PagerDutyIncident, workspaceId);
+    const service = normalized.service;
+    const signalEventId = normalized.id;
 
     // Check idempotency - skip if already processed
     const existingSignal = await prisma.signalEvent.findUnique({
@@ -156,26 +180,58 @@ router.post('/:workspaceId', async (req: Request, res: Response) => {
       continue;
     }
 
-    // 4. Create SignalEvent
+    // Generate drift hints based on incident analysis
+    const processDriftHint = isFeatureEnabled('ENABLE_PROCESS_DRIFT', workspaceId)
+      ? createProcessDriftSignal(normalized, service || 'unknown')
+      : null;
+
+    const ownershipDriftHint = isFeatureEnabled('ENABLE_ONCALL_OWNERSHIP', workspaceId)
+      ? createOwnershipDriftSignal(normalized)
+      : null;
+
+    // 4. Create SignalEvent with enriched data from normalizer
+    // Serialize timeline to plain objects for Prisma JSON compatibility
+    const timelineData = normalized.extracted.timeline.map(t => ({
+      event: t.event,
+      at: t.at,
+      by: t.by || null,
+      details: t.details || null,
+    }));
+
     const signalEvent = await prisma.signalEvent.create({
       data: {
         workspaceId,
         id: signalEventId,
         sourceType: 'pagerduty_incident',
-        occurredAt: new Date(incident.resolved_at || incident.updated_at || new Date()),
+        occurredAt: normalized.occurredAt,
         service,
-        severity: mapPagerDutySeverity(incident.urgency),
+        severity: normalized.severity,
         extracted: {
-          title: incident.title || incident.summary,
-          description: incident.description || '',
+          // Core incident data
+          title: normalized.extracted.title,
+          summary: normalized.extracted.summary,
           incidentNumber: incident.incident_number,
-          urgency: incident.urgency,
-          priority: incident.priority?.summary,
-          escalationPolicy: incident.escalation_policy?.summary,
-          assignees: incident.assignments?.map((a: any) => a.assignee?.summary) || [],
-          resolvedBy: incident.resolved_by?.summary,
-          duration: calculateDuration(incident.created_at, incident.resolved_at),
-          serviceId: incident.service?.id,
+          incidentId: normalized.incidentId,
+          incidentUrl: normalized.incidentUrl,
+          // Keywords for doc matching
+          keywords: normalized.extracted.keywords,
+          // Responders and timeline for process drift
+          responders: normalized.responders,
+          timeline: timelineData,
+          // Ownership data
+          escalationPolicy: normalized.extracted.escalationPolicy,
+          teams: normalized.extracted.teams,
+          resolvedBy: normalized.extracted.resolvedBy || null,
+          // Duration and priority
+          duration: normalized.extracted.duration || null,
+          priority: normalized.extracted.priority || null,
+          // Troubleshooting notes
+          notes: normalized.extracted.notes || null,
+          serviceId: incident.service?.id || null,
+          // Drift hints for downstream processing (Phase 3)
+          driftTypeHints: normalized.extracted.driftTypeHints,
+          processDriftHint: processDriftHint || null,
+          ownershipDriftHint: ownershipDriftHint || null,
         },
         rawPayload: eventWrapper,
       },

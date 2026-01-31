@@ -408,6 +408,38 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
       }
     }
 
+    // =========================================================================
+    // Backstage catalog-info.yaml Detection (Phase 2 - Multi-Source)
+    // Detect operational drift when catalog-info.yaml is modified
+    // =========================================================================
+    let catalogDriftHint: {
+      driftType: 'ownership' | 'environment_tooling';
+      driftDomains: string[];
+      evidenceSummary: string;
+      confidence: number;
+    } | null = null;
+
+    if (isFeatureEnabled('ENABLE_BACKSTAGE_ADAPTER', workspaceId)) {
+      const catalogFile = files.find(f =>
+        f.filename === 'catalog-info.yaml' ||
+        f.filename === 'catalog-info.yml' ||
+        f.filename.endsWith('/catalog-info.yaml') ||
+        f.filename.endsWith('/catalog-info.yml')
+      );
+
+      if (catalogFile) {
+        console.log(`[Webhook] [V2] Backstage catalog file detected: ${catalogFile.filename}`);
+
+        // Catalog changes typically indicate ownership or operational drift
+        catalogDriftHint = {
+          driftType: 'ownership', // catalog-info.yaml primarily documents ownership
+          driftDomains: ['service-catalog', 'operational', prInfo.repoName],
+          evidenceSummary: `Backstage catalog file ${catalogFile.status}: ${catalogFile.filename} in PR #${prInfo.prNumber}`,
+          confidence: 0.70, // Medium confidence - needs human review
+        };
+      }
+    }
+
     // Create SignalEvent record (workspace-scoped)
     const signalEvent = await prisma.signalEvent.create({
       data: {
@@ -428,6 +460,7 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
           // Include drift hints if detected (Phase 1 & 2)
           ...(ownershipDriftHint && { ownershipDriftHint }),
           ...(apiDriftHint && { apiDriftHint }),
+          ...(catalogDriftHint && { catalogDriftHint }),
         },
         rawPayload: {
           ...payload,

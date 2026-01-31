@@ -15,9 +15,11 @@ export { getAdapter, getDefaultCategory, getAvailableAdapters, registerAdapter }
 export { createNotionAdapter } from './notionAdapter.js';
 export { createReadmeAdapter } from './readmeAdapter.js';
 export { createSwaggerAdapter } from './swaggerAdapter.js';
+export { createBackstageAdapter } from './backstageAdapter.js';
 
 // Re-export adapter types for convenience
 export type { NotionAdapter } from './notionAdapter.js';
 export type { ReadmeAdapter } from './readmeAdapter.js';
 export type { SwaggerAdapterConfig } from './swaggerAdapter.js';
+export type { BackstageAdapterConfig } from './backstageAdapter.js';
 
