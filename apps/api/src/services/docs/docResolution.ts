@@ -72,6 +72,57 @@ export interface DocResolutionInput {
   ignoreReason?: string;
   // Per spec Section 1.1 + Section 7: workspace policy for doc resolution
   policy?: WorkspacePolicy;
+  // NEW: Multi-source support (Phase 1)
+  // Drift type hints from triage agent for category-aware resolution
+  driftTypeHints?: Array<'instruction' | 'process' | 'ownership' | 'coverage' | 'environment_tooling'>;
+  // Preferred doc category based on drift type
+  preferredDocCategory?: 'functional' | 'developer' | 'operational';
+}
+
+// ============================================================================
+// Drift Type to Doc Category Mapping (Phase 1 - Multi-Source)
+// ============================================================================
+
+/**
+ * Maps drift types to preferred documentation categories
+ * Per MULTI_SOURCE_IMPLEMENTATION_PLAN.md Section 5.2
+ */
+export const DRIFT_TYPE_TO_DOC_CATEGORY: Record<string, Array<'functional' | 'developer' | 'operational'>> = {
+  instruction: ['developer', 'functional'],      // API docs, README, then Confluence
+  process: ['functional', 'operational'],         // Runbooks, procedures
+  ownership: ['functional', 'operational'],       // Team docs, service catalog
+  coverage: ['functional'],                       // FAQ, knowledge base
+  environment_tooling: ['developer', 'functional'], // README, code docs
+};
+
+/**
+ * Get preferred doc categories for given drift types
+ */
+export function getDocCategoriesForDriftTypes(
+  driftTypes: string[] | undefined
+): Array<'functional' | 'developer' | 'operational'> {
+  if (!driftTypes || driftTypes.length === 0) {
+    // Default: functional first (backward compatible)
+    return ['functional', 'developer', 'operational'];
+  }
+
+  const categoriesSet = new Set<'functional' | 'developer' | 'operational'>();
+
+  for (const driftType of driftTypes) {
+    const categories = DRIFT_TYPE_TO_DOC_CATEGORY[driftType];
+    if (categories) {
+      for (const cat of categories) {
+        categoriesSet.add(cat);
+      }
+    }
+  }
+
+  // If no categories found, return all in default order
+  if (categoriesSet.size === 0) {
+    return ['functional', 'developer', 'operational'];
+  }
+
+  return Array.from(categoriesSet);
 }
 
 /**
@@ -175,9 +226,9 @@ export function extractDocLinksFromPR(prBody: string | null | undefined): Array<
  * Per spec Section 7: If policy.primaryDocRequired=true and no primary mapping, returns 'needs_mapping'
  */
 export async function resolveDocsForDrift(input: DocResolutionInput): Promise<DocResolutionResult> {
-  const { workspaceId, repo, service, prBody, shouldIgnore, ignoreReason, policy } = input;
+  const { workspaceId, repo, service, prBody, shouldIgnore, ignoreReason, policy, driftTypeHints } = input;
 
-  console.log(`[DocResolution] Resolving docs for workspace=${workspaceId}, repo=${repo}, service=${service}, policy.primaryDocRequired=${policy?.primaryDocRequired}`);
+  console.log(`[DocResolution] Resolving docs for workspace=${workspaceId}, repo=${repo}, service=${service}, driftTypeHints=${driftTypeHints?.join(', ')}, policy.primaryDocRequired=${policy?.primaryDocRequired}`);
 
   // Track resolution attempts for debugging (flight recorder)
   const attempts: DocResolutionAttempt[] = [];
@@ -297,8 +348,10 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
 
   // -------------------------------------------------------------------------
   // P1: Look up DocMappingV2 by repo or service
+  // With category-aware resolution (Phase 1 - Multi-Source)
   // -------------------------------------------------------------------------
-  console.log(`[DocResolution] P1: Looking up DocMappingV2 for repo=${repo}, service=${service}`);
+  const preferredCategories = getDocCategoriesForDriftTypes(driftTypeHints);
+  console.log(`[DocResolution] P1: Looking up DocMappingV2 for repo=${repo}, service=${service}, preferredCategories=[${preferredCategories.join(', ')}]`);
 
   const mappings = await prisma.docMappingV2.findMany({
     where: {
@@ -312,33 +365,69 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
       { isPrimary: 'desc' },
       { updatedAt: 'desc' },
     ],
-    take: 5,
+    take: 10, // Increased to allow category filtering
   });
 
   attempts.push({
     step: 'mapping_lookup',
     ok: mappings.length > 0,
-    info: { mappingsFound: mappings.length, repo, service },
+    info: { mappingsFound: mappings.length, repo, service, preferredCategories },
   });
 
   if (mappings.length > 0) {
     console.log(`[DocResolution] P1: Found ${mappings.length} mappings`);
 
-    const p1Candidates: DocCandidate[] = mappings.map(m => ({
-      docId: m.docId,
-      docSystem: m.docSystem as 'confluence' | 'notion',
-      docTitle: m.docTitle,
-      docUrl: m.docUrl,
-      isPrimary: m.isPrimary,
-      hasManagedRegion: m.hasManagedRegion,
-      allowWriteback: m.allowWriteback,
-      spaceKey: m.spaceKey ?? undefined,
-      reasons: [
+    // Map and score candidates with category awareness
+    const p1Candidates: DocCandidate[] = mappings.map(m => {
+      // Calculate base confidence
+      let confidence = m.isPrimary ? 0.85 : 0.70;
+      const reasons: string[] = [
         m.repo === repo ? 'Matched by repository' : 'Matched by service',
         m.isPrimary ? 'Primary doc mapping' : 'Secondary doc mapping',
-      ],
-      confidence: m.isPrimary ? 0.85 : 0.70,
-    }));
+      ];
+
+      // Boost confidence if doc category matches preferred categories
+      const docCategory = (m as any).docCategory as string | null;
+      if (docCategory && preferredCategories.includes(docCategory as any)) {
+        const categoryIndex = preferredCategories.indexOf(docCategory as any);
+        // Higher boost for first preferred category
+        const categoryBoost = categoryIndex === 0 ? 0.10 : 0.05;
+        confidence = Math.min(confidence + categoryBoost, 0.95);
+        reasons.push(`Category match: ${docCategory} (preferred for drift type)`);
+      }
+
+      // Boost if doc has matching drift type affinity
+      const driftTypeAffinity = (m as any).driftTypeAffinity as string[] | null;
+      if (driftTypeHints && driftTypeAffinity && driftTypeAffinity.length > 0) {
+        const matchingAffinities = driftTypeHints.filter(dt => driftTypeAffinity.includes(dt));
+        if (matchingAffinities.length > 0) {
+          confidence = Math.min(confidence + 0.08, 0.95);
+          reasons.push(`Drift type affinity match: ${matchingAffinities.join(', ')}`);
+        }
+      }
+
+      return {
+        docId: m.docId,
+        docSystem: m.docSystem as 'confluence' | 'notion',
+        docTitle: m.docTitle,
+        docUrl: m.docUrl,
+        isPrimary: m.isPrimary,
+        hasManagedRegion: m.hasManagedRegion,
+        allowWriteback: m.allowWriteback,
+        spaceKey: m.spaceKey ?? undefined,
+        reasons,
+        confidence,
+      };
+    });
+
+    // Sort by confidence (category/affinity boosts included), then isPrimary
+    p1Candidates.sort((a, b) => {
+      // Primary docs always first within similar confidence
+      if (a.isPrimary !== b.isPrimary && Math.abs(a.confidence - b.confidence) < 0.15) {
+        return a.isPrimary ? -1 : 1;
+      }
+      return b.confidence - a.confidence;
+    });
 
     // Primary docs get higher confidence
     const primaryDoc = p1Candidates.find(c => c.isPrimary);

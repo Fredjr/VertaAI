@@ -17,7 +17,11 @@ const router: RouterType = Router();
  * List available Slack channels the bot has access to
  */
 router.get('/:workspaceId/slack/channels', async (req: Request, res: Response) => {
-  const { workspaceId } = req.params;
+  const workspaceId = req.params.workspaceId;
+
+  if (!workspaceId) {
+    return res.status(400).json({ error: 'Workspace ID is required' });
+  }
 
   try {
     // Get Slack integration for this workspace

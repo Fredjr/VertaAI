@@ -9,10 +9,17 @@ import {
   getWorkspaceWebhookSecret,
   verifyWebhookSignature,
   getPRDiff,
-  getPRFiles
+  getPRFiles,
+  getFileContent
 } from '../services/github-client.js';
 import { runDriftDetectionPipeline } from '../pipelines/drift-detection.js';
 import { enqueueJob } from '../services/queue/qstash.js';
+import { isFeatureEnabled } from '../config/featureFlags.js';
+import {
+  isCodeOwnersFile,
+  diffCodeOwners,
+  createOwnershipDriftSignal
+} from '../services/signals/codeownersParser.js';
 
 // LEGACY: Create Octokit with personal access token for repo webhooks (no installation)
 // Used only by legacy endpoint - will be deprecated
@@ -283,6 +290,63 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
       console.error('[Webhook] [V2] Error fetching PR details:', error.message);
     }
 
+    // =========================================================================
+    // CODEOWNERS Detection (Phase 1 - Multi-Source)
+    // Detect ownership drift when CODEOWNERS file is modified
+    // =========================================================================
+    let ownershipDriftHint: {
+      driftType: 'ownership';
+      driftDomains: string[];
+      evidenceSummary: string;
+      confidence: number;
+    } | null = null;
+
+    if (isFeatureEnabled('ENABLE_CODEOWNERS_DETECTION', workspaceId)) {
+      const codeownersFile = files.find(f => isCodeOwnersFile(f.filename));
+
+      if (codeownersFile) {
+        console.log(`[Webhook] [V2] CODEOWNERS file detected: ${codeownersFile.filename}`);
+
+        try {
+          const octokit = await getGitHubClient(workspaceId, prInfo.installationId);
+
+          if (octokit) {
+            // Fetch old CODEOWNERS content (from base branch)
+            const oldContent = await getFileContent(
+              octokit,
+              prInfo.repoOwner,
+              prInfo.repoName,
+              codeownersFile.filename,
+              prInfo.baseBranch
+            );
+
+            // Fetch new CODEOWNERS content (from head branch / merged state)
+            const newContent = await getFileContent(
+              octokit,
+              prInfo.repoOwner,
+              prInfo.repoName,
+              codeownersFile.filename,
+              prInfo.headBranch
+            );
+
+            // Diff and create ownership drift signal
+            const codeownersDiff = diffCodeOwners(oldContent, newContent);
+
+            if (codeownersDiff.hasOwnershipDrift) {
+              console.log(`[Webhook] [V2] Ownership drift detected: ${codeownersDiff.summary}`);
+              ownershipDriftHint = createOwnershipDriftSignal(
+                codeownersDiff,
+                prInfo.repoFullName,
+                prInfo.prNumber
+              );
+            }
+          }
+        } catch (error: any) {
+          console.error('[Webhook] [V2] Error processing CODEOWNERS:', error.message);
+        }
+      }
+    }
+
     // Create SignalEvent record (workspace-scoped)
     const signalEvent = await prisma.signalEvent.create({
       data: {
@@ -300,6 +364,8 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
           baseBranch: prInfo.baseBranch,
           headBranch: prInfo.headBranch,
           changedFiles: files,
+          // Include ownership drift hint if detected
+          ...(ownershipDriftHint && { ownershipDriftHint }),
         },
         rawPayload: {
           ...payload,

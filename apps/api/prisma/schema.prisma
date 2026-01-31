@@ -75,7 +75,7 @@ model Integration {
 model SignalEvent {
   workspaceId String   @map("workspace_id")
   id          String // eventId from source (e.g., github_pr_owner/repo_123)
-  sourceType  String   @map("source_type") // 'github_pr', 'pagerduty_incident'
+  sourceType  String   @map("source_type") // 'github_pr', 'pagerduty_incident', 'slack_cluster'
   occurredAt  DateTime @map("occurred_at")
   service     String?
   repo        String?
@@ -83,6 +83,15 @@ model SignalEvent {
   extracted   Json     @default("{}")
   rawPayload  Json     @map("raw_payload")
   createdAt   DateTime @default(now()) @map("created_at")
+
+  // NEW: For incident-based signals (Phase 3)
+  incidentId  String?  @map("incident_id")
+  incidentUrl String?  @map("incident_url")
+  responders  String[] @default([])
+
+  // NEW: For Slack-based signals (Phase 4)
+  slackClusterId String? @map("slack_cluster_id")
+  messageCount   Int?    @map("message_count")
 
   workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   driftCandidates DriftCandidate[]
@@ -256,7 +265,7 @@ model DocMappingV2 {
   id                       BigInt    @id @default(autoincrement())
   service                  String?
   repo                     String?
-  docSystem                String    @map("doc_system") // 'confluence', 'notion'
+  docSystem                String    @map("doc_system") // 'confluence', 'notion', 'github_readme', 'github_swagger', 'backstage'
   docId                    String    @map("doc_id")
   docTitle                 String    @map("doc_title")
   docUrl                   String?   @map("doc_url")
@@ -269,11 +278,17 @@ model DocMappingV2 {
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
+  // NEW: Multi-source fields (Phase 1)
+  docCategory       String?  @map("doc_category")       // 'functional' | 'developer' | 'operational'
+  filePath          String?  @map("file_path")          // For GitHub-based docs: "README.md", "docs/api.yaml"
+  driftTypeAffinity String[] @default([]) @map("drift_type_affinity") // Drift types this doc is relevant for
+
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, docSystem, docId])
   @@index([workspaceId, service])
   @@index([workspaceId, repo])
+  @@index([workspaceId, docCategory])
   @@map("doc_mappings_v2")
 }
 

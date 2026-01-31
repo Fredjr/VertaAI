@@ -1,37 +1,28 @@
 /**
- * Notion Adapter - Phase 4
- * 
+ * Notion Adapter
+ *
  * Fetches and writes back documentation from Notion.
  * Converts between Notion blocks and Markdown for the patch pipeline.
+ *
+ * Updated to conform to the unified DocAdapter interface.
+ * @see MULTI_SOURCE_IMPLEMENTATION_PLAN.md Section 5.3
  */
 
 import { Client } from '@notionhq/client';
+import type {
+  DocAdapter,
+  DocRef,
+  DocFetchResult,
+  WritePatchParams,
+  WriteResult,
+} from './types.js';
 
-export interface DocRef {
-  docId: string;
-  docUrl?: string;
-}
+// Re-export types for backward compatibility
+export type { DocRef, DocFetchResult, WriteResult };
 
-export interface DocFetchResult {
-  doc: DocRef;
-  baseRevision: string;
-  format: 'markdown';
-  markdown: string;
-  title: string;
-}
-
-export interface WriteResult {
-  newRevision: string;
-}
-
-export interface NotionAdapter {
+export interface NotionAdapter extends DocAdapter {
   system: 'notion';
-  fetch(doc: DocRef): Promise<DocFetchResult>;
-  writePatch(params: {
-    doc: DocRef;
-    baseRevision: string;
-    newMarkdown: string;
-  }): Promise<WriteResult>;
+  category: 'functional';
 }
 
 /**
@@ -42,6 +33,7 @@ export function createNotionAdapter(accessToken: string): NotionAdapter {
 
   return {
     system: 'notion',
+    category: 'functional',
 
     async fetch(doc: DocRef): Promise<DocFetchResult> {
       // Fetch page metadata
@@ -63,50 +55,78 @@ export function createNotionAdapter(accessToken: string): NotionAdapter {
         doc,
         baseRevision: page.last_edited_time,
         format: 'markdown',
+        content: markdown, // Notion content is returned as markdown
         markdown,
         title,
       };
     },
 
-    async writePatch({ doc, baseRevision, newMarkdown }): Promise<WriteResult> {
+    async writePatch(params: WritePatchParams): Promise<WriteResult> {
+      const { doc, baseRevision, newContent } = params;
+
       // Fetch current page to check revision
       const currentPage = await notion.pages.retrieve({ page_id: doc.docId }) as any;
 
       // Optimistic locking - check if page was modified since we fetched it
       if (currentPage.last_edited_time !== baseRevision) {
-        throw new Error(
-          `Revision conflict: page was modified since fetch. ` +
-          `Expected ${baseRevision}, got ${currentPage.last_edited_time}`
-        );
+        return {
+          success: false,
+          error: `Revision conflict: page was modified since fetch. ` +
+            `Expected ${baseRevision}, got ${currentPage.last_edited_time}`,
+        };
       }
 
-      // Convert markdown back to blocks
-      const newBlocks = markdownToBlocks(newMarkdown);
+      try {
+        // Convert markdown back to blocks
+        const newBlocks = markdownToBlocks(newContent);
 
-      // Delete existing blocks
-      const existingBlocks = await notion.blocks.children.list({
-        block_id: doc.docId,
-        page_size: 100,
-      });
-
-      for (const block of existingBlocks.results) {
-        await notion.blocks.delete({ block_id: (block as any).id });
-      }
-
-      // Append new blocks
-      if (newBlocks.length > 0) {
-        await notion.blocks.children.append({
+        // Delete existing blocks
+        const existingBlocks = await notion.blocks.children.list({
           block_id: doc.docId,
-          children: newBlocks as any,
+          page_size: 100,
         });
+
+        for (const block of existingBlocks.results) {
+          await notion.blocks.delete({ block_id: (block as any).id });
+        }
+
+        // Append new blocks
+        if (newBlocks.length > 0) {
+          await notion.blocks.children.append({
+            block_id: doc.docId,
+            children: newBlocks as any,
+          });
+        }
+
+        // Get the updated page revision
+        const updatedPage = await notion.pages.retrieve({ page_id: doc.docId }) as any;
+
+        console.log(`[NotionAdapter] Updated page ${doc.docId}, new revision: ${updatedPage.last_edited_time}`);
+
+        return {
+          success: true,
+          newRevision: updatedPage.last_edited_time,
+          docUrl: this.getDocUrl(doc),
+        };
+      } catch (error: any) {
+        console.error(`[NotionAdapter] Error writing patch:`, error);
+        return {
+          success: false,
+          error: error.message || 'Failed to write patch',
+        };
       }
+    },
 
-      // Get the updated page revision
-      const updatedPage = await notion.pages.retrieve({ page_id: doc.docId }) as any;
+    supportsDirectWriteback(): boolean {
+      return true; // Notion supports direct writeback
+    },
 
-      console.log(`[NotionAdapter] Updated page ${doc.docId}, new revision: ${updatedPage.last_edited_time}`);
-
-      return { newRevision: updatedPage.last_edited_time };
+    getDocUrl(doc: DocRef): string {
+      if (doc.docUrl) return doc.docUrl;
+      // Notion URLs follow format: https://notion.so/{workspace}/{page-id}
+      // Page ID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+      const cleanId = doc.docId.replace(/-/g, '');
+      return `https://notion.so/${cleanId}`;
     },
   };
 }

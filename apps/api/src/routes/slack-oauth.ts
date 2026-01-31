@@ -329,8 +329,9 @@ async function findDefaultSlackChannel(botToken: string): Promise<{ id: string; 
 
     // If bot isn't a member of any channel, return first public channel
     // (bot can still post to public channels even if not a member)
-    if (channels.length > 0) {
-      return { id: channels[0].id, name: channels[0].name };
+    const firstChannel = channels[0];
+    if (firstChannel) {
+      return { id: firstChannel.id, name: firstChannel.name };
     }
 
     return null;
