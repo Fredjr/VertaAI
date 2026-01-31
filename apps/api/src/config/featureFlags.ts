@@ -19,13 +19,13 @@ export const FEATURE_FLAGS = {
 
   // Phase 2: API Documentation (ENABLED)
   ENABLE_SWAGGER_ADAPTER: true,         // Swagger/OpenAPI as output source
-  ENABLE_BACKSTAGE_ADAPTER: false,      // Backstage catalog integration (TODO)
+  ENABLE_BACKSTAGE_ADAPTER: true,       // Backstage catalog integration
   ENABLE_API_DRIFT_DETECTION: true,     // API schema drift detection
 
-  // Phase 3: Incident-Based Signals
-  ENABLE_PAGERDUTY_WEBHOOK: false,      // PagerDuty incident ingestion
-  ENABLE_PROCESS_DRIFT: false,          // Process drift from incidents
-  ENABLE_ONCALL_OWNERSHIP: false,       // On-call based ownership drift
+  // Phase 3: Incident-Based Signals (ENABLED)
+  ENABLE_PAGERDUTY_WEBHOOK: true,       // PagerDuty incident ingestion
+  ENABLE_PROCESS_DRIFT: true,           // Process drift from incidents
+  ENABLE_ONCALL_OWNERSHIP: true,        // On-call based ownership drift
 
   // Phase 4: Knowledge Gap Detection
   ENABLE_SLACK_CLUSTERING: false,       // Slack message question clustering
