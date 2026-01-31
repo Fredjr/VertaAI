@@ -42,14 +42,15 @@ model Workspace {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  integrations    Integration[]
-  signalEvents    SignalEvent[]
-  driftCandidates DriftCandidate[]
-  patchProposals  PatchProposal[]
-  docMappingsV2   DocMappingV2[]
-  ownerMappings   OwnerMapping[]
-  auditEvents     AuditEvent[]
-  approvals       Approval[]
+  integrations          Integration[]
+  signalEvents          SignalEvent[]
+  driftCandidates       DriftCandidate[]
+  patchProposals        PatchProposal[]
+  docMappingsV2         DocMappingV2[]
+  ownerMappings         OwnerMapping[]
+  auditEvents           AuditEvent[]
+  approvals             Approval[]
+  slackQuestionClusters SlackQuestionCluster[]
 
   @@map("workspaces")
 }
@@ -530,4 +531,40 @@ model MetricsSnapshot {
 
   @@unique([orgId, date])
   @@map("metrics_snapshots")
+}
+
+// Slack Question Clusters (Phase 4: Knowledge Gap Detection)
+model SlackQuestionCluster {
+  workspaceId String   @map("workspace_id")
+  id          String   @default(uuid())
+  channelId   String   @map("channel_id")
+  channelName String   @map("channel_name")
+
+  // Cluster metadata
+  representativeQuestion String @map("representative_question")
+  topic                  String @default("general")
+  messageCount           Int    @map("message_count")
+  uniqueAskers           Int    @map("unique_askers")
+  firstSeen              DateTime @map("first_seen")
+  lastSeen               DateTime @map("last_seen")
+
+  // Processing state
+  processedAt   DateTime? @map("processed_at")
+  signalEventId String?   @map("signal_event_id")
+
+  // Raw data
+  sampleMessages Json @map("sample_messages")
+
+  // Similarity scoring
+  avgSimilarity Float @default(0) @map("avg_similarity")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, lastSeen(sort: Desc)])
+  @@index([workspaceId, processedAt])
+  @@map("slack_question_clusters")
 }

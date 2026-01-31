@@ -27,10 +27,10 @@ export const FEATURE_FLAGS = {
   ENABLE_PROCESS_DRIFT: true,           // Process drift from incidents
   ENABLE_ONCALL_OWNERSHIP: true,        // On-call based ownership drift
 
-  // Phase 4: Knowledge Gap Detection
-  ENABLE_SLACK_CLUSTERING: false,       // Slack message question clustering
-  ENABLE_COVERAGE_DRIFT: false,         // Coverage drift from repeated questions
-  ENABLE_SCHEDULED_ANALYSIS: false,     // Scheduled jobs for Slack analysis
+  // Phase 4: Knowledge Gap Detection (ENABLED)
+  ENABLE_SLACK_CLUSTERING: true,        // Slack message question clustering
+  ENABLE_COVERAGE_DRIFT: true,          // Coverage drift from repeated questions
+  ENABLE_SCHEDULED_ANALYSIS: true,      // Scheduled jobs for Slack analysis
 
   // Cross-cutting features
   ENABLE_MULTI_DOC_WRITEBACK: false,    // Write patches to multiple docs

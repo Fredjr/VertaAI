@@ -187,9 +187,9 @@ describe('Feature Flags', () => {
       expect(isFeatureEnabled('ENABLE_PROCESS_DRIFT')).toBe(true);
       expect(isFeatureEnabled('ENABLE_ONCALL_OWNERSHIP')).toBe(true);
 
-      // Phase 4 flags are still disabled by default
-      expect(isFeatureEnabled('ENABLE_SLACK_CLUSTERING')).toBe(false);
-      expect(isFeatureEnabled('ENABLE_COVERAGE_DRIFT')).toBe(false);
+      // Phase 4 flags are now enabled
+      expect(isFeatureEnabled('ENABLE_SLACK_CLUSTERING')).toBe(true);
+      expect(isFeatureEnabled('ENABLE_COVERAGE_DRIFT')).toBe(true);
     });
 
     it('should respect environment variable override', () => {
@@ -218,8 +218,8 @@ describe('Feature Flags', () => {
       ]);
 
       expect(flags.ENABLE_README_ADAPTER).toBe(true);
-      expect(flags.ENABLE_SWAGGER_ADAPTER).toBe(true); // Now enabled
-      expect(flags.ENABLE_SLACK_CLUSTERING).toBe(false); // Phase 4 still disabled
+      expect(flags.ENABLE_SWAGGER_ADAPTER).toBe(true);
+      expect(flags.ENABLE_SLACK_CLUSTERING).toBe(true); // Phase 4 now enabled
     });
   });
 
@@ -411,6 +411,8 @@ import {
   isSignificantIncident,
   createProcessDriftSignal,
   createOwnershipDriftSignal,
+  type PagerDutyIncident,
+  type NormalizedIncident,
 } from '../services/signals/pagerdutyNormalizer.js';
 
 // ============================================================================
@@ -721,7 +723,8 @@ describe('PagerDuty Normalizer', () => {
       const normalized = normalizeIncident(mockIncident, 'workspace-1');
 
       expect(normalized.extracted.timeline.length).toBeGreaterThan(0);
-      expect(normalized.extracted.timeline[0].event).toBe('created');
+      const firstEvent = normalized.extracted.timeline[0];
+      expect(firstEvent?.event).toBe('created');
     });
 
     it('should detect drift type hints', () => {
@@ -741,62 +744,97 @@ describe('PagerDuty Normalizer', () => {
   });
 
   describe('isSignificantIncident', () => {
+    // Helper to create a minimal incident for testing significance checks
+    const createMinimalIncident = (overrides: Partial<PagerDutyIncident>): PagerDutyIncident => ({
+      id: 'test1',
+      incident_number: 1,
+      title: 'Test Incident',
+      status: 'resolved',
+      urgency: 'low',
+      service: { id: 'svc1', summary: 'Test Service' },
+      created_at: '2024-01-15T10:00:00Z',
+      assignments: [],
+      acknowledgements: [],
+      last_status_change_at: '2024-01-15T10:00:00Z',
+      escalation_policy: { id: 'ep1', summary: 'Test Policy' },
+      teams: [],
+      html_url: 'https://pagerduty.com/incidents/test1',
+      ...overrides,
+    });
+
     it('should return true for high urgency resolved incidents', () => {
-      const incident = {
-        id: 'test1',
+      const incident = createMinimalIncident({
         status: 'resolved',
         urgency: 'high',
-        created_at: '2024-01-15T10:00:00Z',
         resolved_at: '2024-01-15T10:30:00Z',
-        assignments: [],
-      };
+      });
       expect(isSignificantIncident(incident)).toBe(true);
     });
 
     it('should return false for unresolved incidents', () => {
-      const incident = {
-        id: 'test1',
+      const incident = createMinimalIncident({
         status: 'triggered',
         urgency: 'high',
-        created_at: '2024-01-15T10:00:00Z',
-        assignments: [],
-      };
+      });
       expect(isSignificantIncident(incident)).toBe(false);
     });
 
     it('should return true for incidents with notes', () => {
-      const incident = {
-        id: 'test1',
+      const incident = createMinimalIncident({
         status: 'resolved',
         urgency: 'low',
-        created_at: '2024-01-15T10:00:00Z',
         resolved_at: '2024-01-15T10:30:00Z',
-        assignments: [],
         notes: [{ content: 'Fixed by restarting', created_at: '2024-01-15T10:15:00Z', user: { summary: 'User' } }],
-      };
+      });
       expect(isSignificantIncident(incident)).toBe(true);
     });
 
     it('should return true for long-running incidents', () => {
-      const incident = {
-        id: 'test1',
+      const incident = createMinimalIncident({
         status: 'resolved',
         urgency: 'low',
-        created_at: '2024-01-15T10:00:00Z',
         resolved_at: '2024-01-15T11:00:00Z', // 60 minutes
-        assignments: [],
-      };
+      });
       expect(isSignificantIncident(incident)).toBe(true);
     });
   });
 
   describe('createProcessDriftSignal', () => {
+    // Helper to create minimal NormalizedIncident for testing
+    const createMinimalNormalizedIncident = (overrides: Partial<NormalizedIncident>): NormalizedIncident => ({
+      id: 'pagerduty_incident_test',
+      sourceType: 'pagerduty_incident',
+      occurredAt: new Date('2024-01-15T10:00:00Z'),
+      service: 'payment-service',
+      severity: 'sev2',
+      extracted: {
+        title: 'Test Incident',
+        summary: 'Test incident summary',
+        keywords: ['test'],
+        responders: [],
+        timeline: [],
+        escalationPolicy: 'Test Policy',
+        teams: [],
+        driftTypeHints: [],
+        ...overrides.extracted,
+      },
+      rawPayload: {},
+      incidentId: 'test',
+      incidentUrl: 'https://pagerduty.com/incidents/test',
+      responders: [],
+      ...overrides,
+    } as NormalizedIncident);
+
     it('should create signal for incident with notes', () => {
-      const normalized = {
-        id: 'pagerduty_incident_test',
-        incidentId: 'test',
-        service: 'payment-service',
+      const normalized = createMinimalNormalizedIncident({
         extracted: {
+          title: 'Test Incident',
+          summary: 'Test incident summary',
+          keywords: ['test'],
+          responders: [],
+          escalationPolicy: 'Test Policy',
+          teams: [],
+          driftTypeHints: [],
           timeline: [
             { event: 'created', at: '2024-01-15T10:00:00Z' },
             { event: 'acknowledged', at: '2024-01-15T10:05:00Z', by: 'User 1' },
@@ -806,7 +844,7 @@ describe('PagerDuty Normalizer', () => {
           notes: ['Restarted service'],
           processDriftEvidence: 'Steps taken to resolve',
         },
-      };
+      });
 
       const signal = createProcessDriftSignal(normalized, 'test-org/test-repo');
 
@@ -817,17 +855,21 @@ describe('PagerDuty Normalizer', () => {
     });
 
     it('should return null for simple incidents', () => {
-      const normalized = {
-        id: 'pagerduty_incident_test',
-        incidentId: 'test',
-        service: 'payment-service',
+      const normalized = createMinimalNormalizedIncident({
         extracted: {
+          title: 'Test Incident',
+          summary: 'Test incident summary',
+          keywords: ['test'],
+          responders: [],
+          escalationPolicy: 'Test Policy',
+          teams: [],
+          driftTypeHints: [],
           timeline: [
             { event: 'created', at: '2024-01-15T10:00:00Z' },
             { event: 'resolved', at: '2024-01-15T10:05:00Z' },
           ],
         },
-      };
+      });
 
       const signal = createProcessDriftSignal(normalized, 'test-org/test-repo');
       expect(signal).toBeNull();
@@ -835,15 +877,46 @@ describe('PagerDuty Normalizer', () => {
   });
 
   describe('createOwnershipDriftSignal', () => {
+    // Helper to create minimal NormalizedIncident for testing
+    const createMinimalNormalizedIncident = (overrides: Partial<NormalizedIncident>): NormalizedIncident => ({
+      id: 'pagerduty_incident_test',
+      sourceType: 'pagerduty_incident',
+      occurredAt: new Date('2024-01-15T10:00:00Z'),
+      service: 'payment-service',
+      severity: 'sev2',
+      extracted: {
+        title: 'Test Incident',
+        summary: 'Test incident summary',
+        keywords: ['test'],
+        responders: [],
+        timeline: [],
+        escalationPolicy: 'Test Policy',
+        teams: [],
+        driftTypeHints: [],
+        ...overrides.extracted,
+      },
+      rawPayload: {},
+      incidentId: 'test',
+      incidentUrl: 'https://pagerduty.com/incidents/test',
+      responders: [],
+      ...overrides,
+    } as NormalizedIncident);
+
     it('should create signal for multiple responders', () => {
-      const normalized = {
-        id: 'pagerduty_incident_test',
-        service: 'payment-service',
+      const normalized = createMinimalNormalizedIncident({
         responders: ['user1@example.com', 'user2@example.com', 'user3@example.com'],
         extracted: {
+          title: 'Test Incident',
+          summary: 'Test incident summary',
+          keywords: ['test'],
+          responders: ['user1@example.com', 'user2@example.com', 'user3@example.com'],
+          timeline: [],
+          escalationPolicy: 'Test Policy',
+          teams: [],
+          driftTypeHints: [],
           ownershipDriftEvidence: 'Multiple responders involved',
         },
-      };
+      });
 
       const signal = createOwnershipDriftSignal(normalized);
 
@@ -853,24 +926,18 @@ describe('PagerDuty Normalizer', () => {
     });
 
     it('should return null for single responder', () => {
-      const normalized = {
-        id: 'pagerduty_incident_test',
-        service: 'payment-service',
+      const normalized = createMinimalNormalizedIncident({
         responders: ['user1@example.com'],
-        extracted: {},
-      };
+      });
 
       const signal = createOwnershipDriftSignal(normalized);
       expect(signal).toBeNull();
     });
 
     it('should flag when documented owner not in responders', () => {
-      const normalized = {
-        id: 'pagerduty_incident_test',
-        service: 'payment-service',
+      const normalized = createMinimalNormalizedIncident({
         responders: ['random1@example.com', 'random2@example.com'],
-        extracted: {},
-      };
+      });
 
       const signal = createOwnershipDriftSignal(normalized, 'documented-owner@example.com');
 
