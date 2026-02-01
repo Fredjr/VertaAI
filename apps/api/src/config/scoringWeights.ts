@@ -175,10 +175,33 @@ export function getRoutingAction(
   sourceType: InputSourceType
 ): 'auto_approve' | 'slack_notify' | 'digest_only' | 'ignore' {
   const thresholds = getThresholds(sourceType);
-  
+
   if (confidence >= thresholds.autoApprove) return 'auto_approve';
   if (confidence >= thresholds.slackNotify) return 'slack_notify';
   if (confidence >= thresholds.digestOnly) return 'digest_only';
   return 'ignore';
+}
+
+/**
+ * Get source-specific confidence weight for evidence quality
+ * Point 5: Scoring Model by Source
+ */
+export function getSourceConfidenceWeight(
+  sourceType: InputSourceType,
+  evidenceQuality: 'pr_explicit_change' | 'incident_postmortem' | 'pr_inferred_change'
+): number {
+  const weights = getConfidenceWeights(sourceType);
+
+  // Map evidence quality to weight field
+  const weightValue = weights[evidenceQuality as keyof SourceConfidenceWeights];
+  return weightValue || 1.0; // Default to 1.0 (no adjustment) if not found
+}
+
+/**
+ * Get source-specific thresholds for routing
+ * Point 8: Thresholds by Source
+ */
+export function getSourceThreshold(sourceType: InputSourceType): SourceThresholds {
+  return getThresholds(sourceType);
 }
 

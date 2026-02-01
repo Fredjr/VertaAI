@@ -1,13 +1,14 @@
 /**
- * Doc Targeting by Drift Type
- * 
+ * Doc Targeting by Drift Type and Source Type
+ *
  * Maps drift types to preferred output targets (doc systems) with priority order.
+ * Also enforces source-output compatibility constraints.
  * This is the #2 critical component - ensures patches go to the right documentation.
- * 
+ *
  * @see Point 2 in Multi-Source Enrichment Plan
  */
 
-import type { DocSystem, DriftType } from '../services/docs/adapters/types.js';
+import type { DocSystem, DriftType, InputSourceType } from '../services/docs/adapters/types.js';
 
 // ============================================================================
 // Types
@@ -140,11 +141,104 @@ export const DOC_SYSTEM_SECTION_PATTERNS: Record<DocSystem, SectionPattern[]> = 
 };
 
 // ============================================================================
+// Source → Output Compatibility Matrix (CRITICAL)
+// ============================================================================
+
+/**
+ * Defines which input sources can target which output systems.
+ * This is a hard constraint - violations are rejected.
+ *
+ * Design principles:
+ * - IaC changes → README only (infrastructure docs live in code)
+ * - PagerDuty incidents → Runbooks only (operational docs)
+ * - Slack questions → FAQ sections (knowledge base)
+ * - GitHub PR → Any developer/functional docs
+ * - CODEOWNERS → Backstage + team docs only
+ */
+export const SOURCE_OUTPUT_COMPATIBILITY: Record<InputSourceType, DocSystem[]> = {
+  github_pr: [
+    'github_readme',
+    'github_swagger',
+    'github_code_comments',
+    'confluence',
+    'notion',
+    'gitbook',
+    'backstage',  // Can update service descriptions
+  ],
+
+  pagerduty_incident: [
+    'confluence',   // Runbooks
+    'notion',       // Runbooks
+    'gitbook',      // Runbooks
+    'backstage',    // Service catalog (on-call info)
+  ],
+
+  slack_cluster: [
+    'confluence',   // FAQ sections
+    'notion',       // FAQ sections
+    'gitbook',      // FAQ sections
+    'github_readme', // FAQ in README
+  ],
+
+  datadog_alert: [
+    'confluence',   // Observability runbooks
+    'notion',       // Observability runbooks
+    'gitbook',      // Observability runbooks
+  ],
+
+  github_iac: [
+    'github_readme',  // Infrastructure docs in README
+    'confluence',     // Deployment guides
+    'notion',         // Deployment guides
+  ],
+
+  github_codeowners: [
+    'backstage',      // Service catalog ownership
+    'github_readme',  // Team section in README
+    'confluence',     // Team pages
+    'notion',         // Team pages
+  ],
+};
+
+/**
+ * Combined routing decision: source + drift type → output targets
+ *
+ * This is the CRITICAL routing function that determines where patches go.
+ * It combines:
+ * 1. Source-output compatibility (hard constraint)
+ * 2. Drift type preferences (soft preference)
+ */
+export function getTargetDocSystemsForSourceAndDrift(
+  sourceType: InputSourceType,
+  driftType: DriftType
+): DocSystem[] {
+  // Step 1: Get allowed outputs for this source (hard constraint)
+  const allowedOutputs = SOURCE_OUTPUT_COMPATIBILITY[sourceType] || [];
+
+  // Step 2: Get preferred outputs for this drift type
+  const driftConfig = DRIFT_TYPE_TO_DOC_TARGETS[driftType];
+  const preferredOutputs = [...driftConfig.primary, ...driftConfig.secondary];
+
+  // Step 3: Intersect - only outputs that satisfy BOTH constraints
+  const validOutputs = preferredOutputs.filter(output =>
+    allowedOutputs.includes(output) && !driftConfig.exclude.includes(output)
+  );
+
+  // Step 4: If no valid outputs, fall back to allowed outputs
+  if (validOutputs.length === 0) {
+    return allowedOutputs.filter(output => !driftConfig.exclude.includes(output));
+  }
+
+  return validOutputs;
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
 /**
  * Get target doc systems for a drift type (in priority order)
+ * @deprecated Use getTargetDocSystemsForSourceAndDrift instead
  */
 export function getTargetDocSystems(driftType: DriftType): DocSystem[] {
   const config = DRIFT_TYPE_TO_DOC_TARGETS[driftType];
@@ -157,6 +251,14 @@ export function getTargetDocSystems(driftType: DriftType): DocSystem[] {
 export function isDocSystemExcluded(driftType: DriftType, docSystem: DocSystem): boolean {
   const config = DRIFT_TYPE_TO_DOC_TARGETS[driftType];
   return config.exclude.includes(docSystem);
+}
+
+/**
+ * Check if a source can target a specific output (hard constraint)
+ */
+export function isSourceOutputCompatible(sourceType: InputSourceType, docSystem: DocSystem): boolean {
+  const allowedOutputs = SOURCE_OUTPUT_COMPATIBILITY[sourceType] || [];
+  return allowedOutputs.includes(docSystem);
 }
 
 /**

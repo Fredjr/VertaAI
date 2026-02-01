@@ -33,10 +33,10 @@ model Workspace {
   digestChannel             String? @map("digest_channel")
 
   // Workspace policy for doc resolution (per spec Section 1.1 + Section 7)
-  primaryDocRequired        Boolean @default(false) @map("primary_doc_required") // If true, fail if no primary doc mapping exists
-  allowPrLinkOverride       Boolean @default(true) @map("allow_pr_link_override") // Allow PR links to override mappings
-  allowSearchSuggestMapping Boolean @default(false) @map("allow_search_suggest_mapping") // Allow search-based suggestions (P2)
-  minConfidenceForSuggest   Float   @default(0.6) @map("min_confidence_for_suggest") // Min confidence for search suggest
+  primaryDocRequired        Boolean  @default(false) @map("primary_doc_required") // If true, fail if no primary doc mapping exists
+  allowPrLinkOverride       Boolean  @default(true) @map("allow_pr_link_override") // Allow PR links to override mappings
+  allowSearchSuggestMapping Boolean  @default(false) @map("allow_search_suggest_mapping") // Allow search-based suggestions (P2)
+  minConfidenceForSuggest   Float    @default(0.6) @map("min_confidence_for_suggest") // Min confidence for search suggest
   allowedConfluenceSpaces   String[] @default([]) @map("allowed_confluence_spaces") // Space key allowlist (empty = allow all)
 
   // Workflow preferences (Phase 5 - Settings page)
@@ -134,8 +134,9 @@ model DriftCandidate {
   recommendedAction String? @map("recommended_action") // 'generate_patch', 'annotate_only', 'review_queue', 'ignore'
 
   // Document targeting
-  docCandidates    Json @default("[]") @map("doc_candidates")
-  baselineFindings Json @default("[]") @map("baseline_findings")
+  docCandidates    Json     @default("[]") @map("doc_candidates")
+  baselineFindings Json     @default("[]") @map("baseline_findings")
+  targetDocSystems String[] @default([]) @map("target_doc_systems") // Multi-source enrichment: allowed doc systems for this source+drift combo
 
   // Doc resolution tracking (per spec Section C)
   docsResolutionStatus     String? @map("docs_resolution_status") // 'mapped' | 'explicit_link' | 'search_candidate' | 'needs_mapping' | 'ignored'
@@ -170,9 +171,17 @@ model DriftCandidate {
   needsMappingNotifiedAt DateTime? @map("needs_mapping_notified_at")
 
   // Correlated signals (from SignalJoiner - Phase 4)
-  correlatedSignals  Json    @default("[]") @map("correlated_signals")
-  correlationBoost   Float   @default(0) @map("correlation_boost")
-  correlationReason  String? @map("correlation_reason")
+  correlatedSignals Json    @default("[]") @map("correlated_signals")
+  correlationBoost  Float   @default(0) @map("correlation_boost")
+  correlationReason String? @map("correlation_reason")
+
+  // Multi-source enrichment metadata (Points 2-10)
+  patchStyle             String? @map("patch_style") // Point 6: Output-specific patch style
+  sectionPattern         String? @map("section_pattern") // Point 4: Target section pattern
+  sourceConfidenceWeight Float?  @map("source_confidence_weight") // Point 5: Source-specific confidence weight
+  preValidationPassed    Boolean @default(true) @map("pre_validation_passed") // Point 7: Pre-validation result
+  sourceThreshold        Float?  @map("source_threshold") // Point 8: Source-specific threshold
+  correlationScore       Float?  @map("correlation_score") // Point 9: Cross-source correlation score
 
   // Error tracking
   lastErrorCode    String? @map("last_error_code")
@@ -284,8 +293,8 @@ model DocMappingV2 {
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
   // NEW: Multi-source fields (Phase 1)
-  docCategory       String?  @map("doc_category")       // 'functional' | 'developer' | 'operational'
-  filePath          String?  @map("file_path")          // For GitHub-based docs: "README.md", "docs/api.yaml"
+  docCategory       String?  @map("doc_category") // 'functional' | 'developer' | 'operational'
+  filePath          String?  @map("file_path") // For GitHub-based docs: "README.md", "docs/api.yaml"
   driftTypeAffinity String[] @default([]) @map("drift_type_affinity") // Drift types this doc is relevant for
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -539,16 +548,16 @@ model MetricsSnapshot {
 
 // Slack Question Clusters (Phase 4: Knowledge Gap Detection)
 model SlackQuestionCluster {
-  workspaceId String   @map("workspace_id")
-  id          String   @default(uuid())
-  channelId   String   @map("channel_id")
-  channelName String   @map("channel_name")
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+  channelId   String @map("channel_id")
+  channelName String @map("channel_name")
 
   // Cluster metadata
-  representativeQuestion String @map("representative_question")
-  topic                  String @default("general")
-  messageCount           Int    @map("message_count")
-  uniqueAskers           Int    @map("unique_askers")
+  representativeQuestion String   @map("representative_question")
+  topic                  String   @default("general")
+  messageCount           Int      @map("message_count")
+  uniqueAskers           Int      @map("unique_askers")
   firstSeen              DateTime @map("first_seen")
   lastSeen               DateTime @map("last_seen")
 

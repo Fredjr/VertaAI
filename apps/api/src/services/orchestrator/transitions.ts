@@ -199,6 +199,7 @@ async function handleIngested(drift: any): Promise<TransitionResult> {
 /**
  * ELIGIBILITY_CHECKED -> SIGNALS_CORRELATED
  * Phase 4: Correlate signals from multiple sources (GitHub + PagerDuty)
+ * Point 9: Correlation Strategies - Source-aware correlation scoring
  */
 async function handleEligibilityChecked(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
@@ -211,6 +212,21 @@ async function handleEligibilityChecked(drift: any): Promise<TransitionResult> {
     service
   );
 
+  // Point 9: Calculate cross-source correlation score using advanced strategies
+  const { calculateCorrelationScore } = await import('../../config/correlationStrategies.js');
+
+  let maxCorrelationScore = 0;
+  if (joinResult.correlatedSignals.length > 0) {
+    // Calculate correlation score with each correlated signal
+    for (const correlatedSignal of joinResult.correlatedSignals) {
+      const result = calculateCorrelationScore(
+        signal as any,
+        correlatedSignal as any
+      );
+      maxCorrelationScore = Math.max(maxCorrelationScore, result.score);
+    }
+  }
+
   // Store correlation results in drift metadata
   if (joinResult.correlatedSignals.length > 0 || joinResult.confidenceBoost > 0) {
     const correlationSummary = summarizeCorrelatedSignals(joinResult.correlatedSignals);
@@ -222,12 +238,13 @@ async function handleEligibilityChecked(drift: any): Promise<TransitionResult> {
         correlatedSignals: joinResult.correlatedSignals.map(s => s.id),
         correlationBoost: joinResult.confidenceBoost,
         correlationReason: joinResult.joinReason,
+        correlationScore: maxCorrelationScore, // Point 9: Store correlation score
       },
     });
 
     console.log(
-      `[Transitions] Signal correlation: ${correlationSummary}, ` +
-      `boost=${joinResult.confidenceBoost}, reason=${joinResult.joinReason}`
+      `[Transitions] Point 9 - Signal correlation: ${correlationSummary}, ` +
+      `boost=${joinResult.confidenceBoost}, score=${maxCorrelationScore.toFixed(2)}, reason=${joinResult.joinReason}`
     );
   }
 
@@ -237,6 +254,7 @@ async function handleEligibilityChecked(drift: any): Promise<TransitionResult> {
 /**
  * SIGNALS_CORRELATED -> DRIFT_CLASSIFIED
  * Run drift triage agent
+ * Point 10: Domain Patterns - Source-specific domain detection
  */
 async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
@@ -268,6 +286,18 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
   // Phase 3: Extract drift type and metadata
   const primaryDriftType = triageData.drift_types?.[0] || 'instruction';
 
+  // Point 10: Enhance domain detection with source-specific patterns
+  const { detectDomainsFromSource } = await import('../baseline/patterns.js');
+  const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
+  const evidenceText = `${triageInput.prTitle} ${triageInput.prBody}`;
+  const detectedDomains = detectDomainsFromSource(evidenceText, sourceType);
+
+  // Merge LLM-detected domains with pattern-detected domains
+  const llmDomains = triageData.impacted_domains || [];
+  const allDomains = [...new Set([...llmDomains, ...detectedDomains])];
+
+  console.log(`[Transitions] Point 10 - Domain detection: LLM=[${llmDomains.join(', ')}], patterns=[${detectedDomains.join(', ')}], merged=[${allDomains.join(', ')}]`);
+
   // Phase 4: Apply correlation boost to confidence
   const baseConfidence = triageData.confidence || 0;
   const correlationBoost = drift.correlationBoost || 0;
@@ -278,7 +308,7 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
     data: {
       driftType: primaryDriftType,
-      driftDomains: triageData.impacted_domains || [],
+      driftDomains: allDomains, // Point 10: Use merged domains
       evidenceSummary: triageData.evidence_summary || '',
       confidence: boostedConfidence,
       driftScore: triageData.drift_score || (boostedConfidence * (triageData.impact_score || 1)),
@@ -296,6 +326,7 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
 /**
  * DRIFT_CLASSIFIED -> DOCS_RESOLVED
  * Resolve which docs to update (with Phase 3 deduplication)
+ * Point 2: Doc Targeting - Use source-output compatibility matrix
  */
 async function handleDriftClassified(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
@@ -340,6 +371,21 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
     });
     console.log(`[Transitions] Fingerprint stored: ${fingerprint}`);
   }
+
+  // Point 2: Determine target doc systems using source-output compatibility matrix
+  const { getTargetDocSystemsForSourceAndDrift } = await import('../../config/docTargeting.js');
+  const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
+  const driftType = drift.driftType || 'instruction';
+
+  const targetDocSystems = getTargetDocSystemsForSourceAndDrift(sourceType, driftType);
+  console.log(`[Transitions] Point 2 - Doc Targeting: source=${sourceType}, drift=${driftType}, targets=[${targetDocSystems.join(', ')}]`);
+
+  // Store target doc systems for downstream use
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: { targetDocSystems },
+  });
+
 
   // Phase 7: Use new doc resolution with priority order (P0 → P1 → P2 → NEEDS_MAPPING)
   const extracted = signal?.extracted || {};
@@ -1060,6 +1106,7 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
 /**
  * BASELINE_CHECKED -> PATCH_PLANNED
  * Plan the patch using Agent C (Patch Planner)
+ * Point 4: Section Targeting - Target specific sections based on doc system and drift type
  */
 async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
   // Get doc content and DocContext from baselineFindings
@@ -1075,6 +1122,22 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
   const prData = rawPayload.pull_request || {};
   const extracted = signal?.extracted || {};
 
+  // Point 4: Get target section patterns for this doc system and drift type
+  const { getSectionPatterns } = await import('../../config/docTargeting.js');
+  const docSystem = finding.docSystem || 'confluence';
+  const driftType = drift.driftType || 'instruction';
+  const sectionPatterns = getSectionPatterns(docSystem, driftType);
+
+  // Store the primary section pattern for downstream use
+  const primarySectionPattern = sectionPatterns[0]?.heading || null;
+  if (primarySectionPattern) {
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: { sectionPattern: primarySectionPattern },
+    });
+    console.log(`[Transitions] Point 4 - Section targeting: docSystem=${docSystem}, driftType=${driftType}, targetSection=${primarySectionPattern}`);
+  }
+
   // Build doc content for planner - use DocContext if available
   let docContentForPlanner: string;
   if (llmPayload) {
@@ -1084,6 +1147,7 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
       managedRegion: llmPayload.managedRegionText,
       sections: llmPayload.extractedSections,
       flags: llmPayload.flags,
+      targetSectionPatterns: sectionPatterns.map(p => p.heading), // Point 4: Include section patterns
     }, null, 2);
     console.log(`[Transitions] Using DocContext for patch planning (${llmPayload.extractedSections?.length || 0} sections)`);
   } else {
@@ -1146,6 +1210,7 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
 /**
  * PATCH_PLANNED -> PATCH_GENERATED
  * Generate the actual patch using Agent D (Patch Generator)
+ * Point 6: Patch Styles - Use output-specific patch styles
  */
 async function handlePatchPlanned(drift: any): Promise<TransitionResult> {
   const docCandidates = drift.docCandidates || [];
@@ -1167,12 +1232,20 @@ async function handlePatchPlanned(drift: any): Promise<TransitionResult> {
   const docContext = finding.docContext;
   const primaryDoc = docCandidates[0];
 
-  // Select patch style from drift matrix
-  const patchStyle = selectPatchStyle(
-    drift.driftType || 'instruction',
-    signal?.sourceType === 'pagerduty' ? 'pagerduty' : 'github',
-    drift.confidence || 0.5
-  );
+  // Point 6: Select patch style based on output doc system and drift type
+  const { getPatchStyle } = await import('../../config/patchStyles.js');
+  const targetDocSystems = drift.targetDocSystems || [];
+  const primaryDocSystem = targetDocSystems[0] || finding.docSystem || 'confluence';
+  const driftType = drift.driftType || 'instruction';
+  const confidence = drift.confidence || 0.5;
+
+  const patchStyle = getPatchStyle(primaryDocSystem, driftType, confidence);
+
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: { patchStyle },
+  });
+  console.log(`[Transitions] Point 6 - Patch style selected: docSystem=${primaryDocSystem}, driftType=${driftType}, style=${patchStyle}`);
 
   // Build doc content for generator - use DocContext if available
   let docContentForGenerator: string;
@@ -1248,6 +1321,7 @@ async function handlePatchPlanned(drift: any): Promise<TransitionResult> {
 /**
  * PATCH_GENERATED -> PATCH_VALIDATED
  * Validate the generated patch using all 14 validators
+ * Point 5: Scoring Weights - Apply source-specific confidence weights
  */
 async function handlePatchGenerated(drift: any): Promise<TransitionResult> {
   // Get the patch proposal
@@ -1263,6 +1337,32 @@ async function handlePatchGenerated(drift: any): Promise<TransitionResult> {
       error: { code: FailureCode.PATCH_VALIDATION_FAILED, message: 'No patch proposal found' },
     };
   }
+
+  // Point 5: Apply source-specific confidence weight
+  const { getSourceConfidenceWeight } = await import('../../config/scoringWeights.js');
+  const signal = drift.signalEvent;
+  const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
+  const extracted = signal?.extracted || {};
+
+  // Determine evidence quality for weight calculation
+  const evidenceQuality = extracted.merged ? 'pr_explicit_change' :
+                         extracted.hasNotes ? 'incident_postmortem' :
+                         'pr_inferred_change';
+
+  const confidenceWeight = getSourceConfidenceWeight(sourceType, evidenceQuality);
+  const baseConfidence = drift.confidence || 0.5;
+  const weightedConfidence = Math.min(1.0, baseConfidence * confidenceWeight);
+
+  // Store weighted confidence
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: {
+      sourceConfidenceWeight: confidenceWeight,
+      confidence: weightedConfidence, // Update with weighted confidence
+    },
+  });
+
+  console.log(`[Transitions] Point 5 - Confidence weighting: source=${sourceType}, quality=${evidenceQuality}, weight=${confidenceWeight}, base=${baseConfidence.toFixed(2)}, weighted=${weightedConfidence.toFixed(2)}`);
 
   // Get doc content from baselineFindings
   const findings = drift.baselineFindings || [];
@@ -1281,9 +1381,34 @@ async function handlePatchGenerated(drift: any): Promise<TransitionResult> {
     patchedMarkdown: applyPatchToDoc(docContent, patchProposal.unifiedDiff),
     diff: patchProposal.unifiedDiff,
     evidence: [drift.evidenceSummary || ''],
-    confidence: drift.confidence || 0.5,
+    confidence: weightedConfidence, // Point 5: Use weighted confidence
     expectedRevision: docRevision,
   };
+
+  // Point 3: Run output-specific validators first
+  const { validatePatchForOutput } = await import('../../config/outputValidators.js');
+  const targetDocSystems = drift.targetDocSystems || [];
+  const primaryDocSystem = targetDocSystems[0] || findings[0]?.docSystem || 'confluence';
+
+  const outputValidationResult = validatePatchForOutput(
+    primaryDocSystem,
+    validatorCtx.patchedMarkdown,
+    drift.driftType || 'instruction'
+  );
+
+  if (!outputValidationResult.valid) {
+    console.log(`[Transitions] Point 3 - Output validation failed for ${primaryDocSystem}: ${outputValidationResult.errors.join(', ')}`);
+    return {
+      state: DriftState.FAILED,
+      enqueueNext: false,
+      error: {
+        code: FailureCode.PATCH_VALIDATION_FAILED,
+        message: `Output validation failed: ${outputValidationResult.errors.join('; ')}`,
+      },
+    };
+  }
+
+  console.log(`[Transitions] Point 3 - Output validation passed for ${primaryDocSystem}`);
 
   // Run all 14 validators
   const validationResult = await runAllValidators(validatorCtx);
@@ -1327,9 +1452,45 @@ function applyPatchToDoc(original: string, diff: string): string {
 /**
  * PATCH_VALIDATED -> OWNER_RESOLVED
  * Phase 4: Resolve doc owner using configurable ownership ranking
+ * Point 7: Pre-Validators - Run source-specific pre-validation checks
  */
 async function handlePatchValidated(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
+
+  // Point 7: Run pre-validation checks for this source type
+  const { runPreValidation } = await import('../../config/outputValidators.js');
+  const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
+  const extracted = signal?.extracted || {};
+
+  const preValidationResult = runPreValidation(sourceType, {
+    merged: extracted.merged,
+    hasNotes: (extracted.notes?.length || 0) > 0,
+    hasEvidence: !!drift.evidenceSummary,
+    confidence: drift.confidence || 0.5,
+  });
+
+  if (!preValidationResult.valid) {
+    const errorMessages = preValidationResult.errors?.join('; ') || 'Unknown error';
+    console.log(`[Transitions] Point 7 - Pre-validation failed for ${sourceType}: ${errorMessages}`);
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: { preValidationPassed: false },
+    });
+    return {
+      state: DriftState.FAILED,
+      enqueueNext: false,
+      error: {
+        code: FailureCode.PATCH_VALIDATION_FAILED,
+        message: `Pre-validation failed: ${errorMessages}`,
+      },
+    };
+  }
+
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: { preValidationPassed: true },
+  });
+  console.log(`[Transitions] Point 7 - Pre-validation passed for ${sourceType}`);
 
   // Phase 4: Use ownership resolver with configurable ranking
   const resolution = await resolveOwner(
@@ -1357,6 +1518,7 @@ async function handlePatchValidated(drift: any): Promise<TransitionResult> {
 /**
  * OWNER_RESOLVED -> SLACK_SENT
  * Send Slack notification (with Phase 3 notification routing)
+ * Point 8: Thresholds - Apply source-specific routing thresholds
  */
 async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
   // Get the patch proposal
@@ -1374,6 +1536,34 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
       enqueueNext: false,
       error: { code: FailureCode.PATCH_VALIDATION_FAILED, message: 'No patch proposal found' },
     };
+  }
+
+  // Point 8: Apply source-specific thresholds
+  const { getSourceThreshold } = await import('../../config/scoringWeights.js');
+  const signal = drift.signalEvent;
+  const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
+  const threshold = getSourceThreshold(sourceType);
+  const confidence = drift.confidence || 0.5;
+
+  // Store threshold for reference
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: { sourceThreshold: threshold.slackNotify },
+  });
+
+  console.log(`[Transitions] Point 8 - Threshold check: source=${sourceType}, confidence=${confidence.toFixed(2)}, slackThreshold=${threshold.slackNotify}, autoApproveThreshold=${threshold.autoApprove}`);
+
+  // Check if confidence meets threshold for Slack notification
+  if (confidence < threshold.slackNotify) {
+    console.log(`[Transitions] Point 8 - Confidence ${confidence.toFixed(2)} below Slack threshold ${threshold.slackNotify}, completing without notification`);
+    return { state: DriftState.COMPLETED, enqueueNext: false };
+  }
+
+  // Check if confidence meets auto-approve threshold
+  if (confidence >= threshold.autoApprove) {
+    console.log(`[Transitions] Point 8 - Confidence ${confidence.toFixed(2)} meets auto-approve threshold ${threshold.autoApprove}, auto-approving`);
+    // Auto-approve and proceed to writeback
+    return { state: DriftState.APPROVED, enqueueNext: true };
   }
 
   // Get Slack integration
@@ -1405,7 +1595,7 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
   const notificationRoute = await determineNotificationRoute({
     workspaceId: drift.workspaceId,
     driftId: drift.id,
-    confidence: drift.confidence || 0.5,
+    confidence: confidence,
     riskLevel: drift.riskLevel as 'low' | 'medium' | 'high' | undefined,
     ownerSlackId,
     ownerChannel,

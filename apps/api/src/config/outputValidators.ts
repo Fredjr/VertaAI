@@ -287,3 +287,56 @@ export function getPreValidators(sourceType: InputSourceType): Array<(signal: an
   return validators[sourceType] || [];
 }
 
+/**
+ * Validate patch for a specific output doc system
+ * Point 3: Output-Specific Validators
+ */
+export function validatePatchForOutput(
+  docSystem: DocSystem,
+  patchedContent: string,
+  driftType: string
+): ValidationResult {
+  const validators = getOutputValidators(docSystem);
+  const errors: string[] = [];
+
+  // Run all validators for this doc system
+  for (const validator of validators) {
+    const result = validator(patchedContent);
+    if (!result.valid) {
+      errors.push(...result.errors);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Run pre-validation for a source type
+ * Point 7: Source-Specific Pre-Validators
+ */
+export function runPreValidation(
+  sourceType: InputSourceType,
+  signal: {
+    merged?: boolean;
+    hasNotes?: boolean;
+    hasEvidence?: boolean;
+    confidence?: number;
+  }
+): PreValidationResult & { errors?: string[] } {
+  const validators = getPreValidators(sourceType);
+  const errors: string[] = [];
+
+  // Run all pre-validators for this source type
+  for (const validator of validators) {
+    const result = validator(signal);
+    if (!result.valid) {
+      errors.push(result.reason || 'Pre-validation failed');
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors: errors.length > 0 ? errors : undefined,
+  };
+}
+
