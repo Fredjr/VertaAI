@@ -1,11 +1,16 @@
 /**
  * Baseline Check Patterns
- * 
+ *
  * Defines regex patterns for detecting drift-relevant content in documentation.
  * These patterns are used in the baseline check step of the Universal Detection Pattern.
- * 
+ *
+ * Point 10: Source-specific domain detection patterns added
+ *
  * @see VERTAAI_MVP_SPEC.md Section 5.4
+ * @see Point 10 in Multi-Source Enrichment Plan
  */
+
+import type { InputSourceType } from '../docs/adapters/types.js';
 
 // ============================================================================
 // INSTRUCTION PATTERNS
@@ -963,4 +968,171 @@ export function checkProcessBaselineDetailed(
       ? rationale
       : 'No process mismatch detected with current heuristics.',
   };
+}
+
+// ============================================================================
+// Point 10: Source-Specific Domain Detection Patterns
+// ============================================================================
+
+/**
+ * Domain detection patterns per source type
+ * Different sources have different indicators for drift domains
+ */
+export const SOURCE_DOMAIN_PATTERNS: Record<InputSourceType, Record<string, RegExp[]>> = {
+  github_pr: {
+    rollback: [
+      /revert/gi,
+      /rollback/gi,
+      /roll\s+back/gi,
+      /undo/gi,
+      /previous\s+version/gi,
+    ],
+    auth: [
+      /auth/gi,
+      /authentication/gi,
+      /authorization/gi,
+      /oauth/gi,
+      /jwt/gi,
+      /token/gi,
+      /session/gi,
+      /login/gi,
+      /logout/gi,
+    ],
+    deployment: [
+      /deploy/gi,
+      /release/gi,
+      /ci\/cd/gi,
+      /pipeline/gi,
+      /build/gi,
+    ],
+    api: [
+      /\/api\//gi,
+      /endpoint/gi,
+      /route/gi,
+      /controller/gi,
+      /handler/gi,
+    ],
+  },
+
+  pagerduty_incident: {
+    rollback: [
+      /rolled\s+back/gi,
+      /reverted/gi,
+      /previous\s+version/gi,
+    ],
+    deployment: [
+      /deployment\s+failed/gi,
+      /deploy\s+issue/gi,
+      /release\s+problem/gi,
+    ],
+    infra: [
+      /infrastructure/gi,
+      /server/gi,
+      /database/gi,
+      /redis/gi,
+      /postgres/gi,
+      /kubernetes/gi,
+    ],
+    observability: [
+      /monitoring/gi,
+      /alert/gi,
+      /metric/gi,
+      /dashboard/gi,
+      /log/gi,
+    ],
+  },
+
+  slack_cluster: {
+    onboarding: [
+      /how\s+do\s+i/gi,
+      /getting\s+started/gi,
+      /new\s+to/gi,
+      /first\s+time/gi,
+    ],
+    api: [
+      /api/gi,
+      /endpoint/gi,
+      /request/gi,
+      /response/gi,
+    ],
+    config: [
+      /configuration/gi,
+      /config/gi,
+      /setting/gi,
+      /environment\s+variable/gi,
+    ],
+  },
+
+  datadog_alert: {
+    observability: [
+      /cpu/gi,
+      /memory/gi,
+      /disk/gi,
+      /latency/gi,
+      /error\s+rate/gi,
+    ],
+    infra: [
+      /host/gi,
+      /container/gi,
+      /pod/gi,
+      /node/gi,
+    ],
+  },
+
+  github_iac: {
+    infra: [
+      /resource/gi,
+      /module/gi,
+      /provider/gi,
+      /terraform/gi,
+      /pulumi/gi,
+    ],
+    config: [
+      /variable/gi,
+      /output/gi,
+      /parameter/gi,
+    ],
+    deployment: [
+      /stack/gi,
+      /environment/gi,
+      /region/gi,
+    ],
+  },
+
+  github_codeowners: {
+    ownership_routing: [
+      /CODEOWNERS/gi,
+      /@[a-zA-Z0-9_-]+/g,
+      /team/gi,
+    ],
+  },
+};
+
+/**
+ * Get domain patterns for a source type
+ */
+export function getDomainPatternsForSource(sourceType: InputSourceType): Record<string, RegExp[]> {
+  return SOURCE_DOMAIN_PATTERNS[sourceType] || {};
+}
+
+/**
+ * Detect domains from text using source-specific patterns
+ */
+export function detectDomainsFromSource(
+  text: string,
+  sourceType: InputSourceType
+): string[] {
+  const patterns = getDomainPatternsForSource(sourceType);
+  const detectedDomains: string[] = [];
+
+  for (const [domain, regexes] of Object.entries(patterns)) {
+    for (const regex of regexes) {
+      if (regex.test(text)) {
+        detectedDomains.push(domain);
+        break;  // Domain detected, move to next domain
+      }
+    }
+  }
+
+  return detectedDomains;
 }

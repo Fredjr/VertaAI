@@ -112,24 +112,87 @@ export async function executeTransition(
 
 /**
  * INGESTED -> ELIGIBILITY_CHECKED
- * Check if this PR should be processed
+ * Check if this signal passes source-specific eligibility rules
+ * Point 1: Eligibility Rules by Source - noise control knob
  */
 async function handleIngested(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
+  const sourceType = signal?.sourceType || drift.sourceType;
 
-  // Skip if not a merged PR
-  if (signal?.sourceType === 'github_pr') {
-    const extracted = signal.extracted || {};
-    // Check if PR was merged (should have mergedAt in rawPayload)
+  // Import eligibility rules dynamically
+  const {
+    checkGitHubPREligibility,
+    checkPagerDutyEligibility,
+    checkSlackClusterEligibility,
+    getEligibilityRules,
+    DEFAULT_ELIGIBILITY_RULES
+  } = await import('../../config/eligibilityRules.js');
+
+  // Get workspace-specific rules (TODO: load from workspace.workflowPreferences)
+  const workspaceRules = undefined; // For now, use defaults
+
+  let eligibilityResult: { eligible: boolean; reason?: string } = { eligible: true };
+
+  // Check eligibility based on source type
+  if (sourceType === 'github_pr') {
     const rawPayload = signal.rawPayload || {};
     const prData = rawPayload.pull_request || {};
-    
-    if (!prData.merged) {
-      console.log(`[Transitions] Skipping non-merged PR`);
-      return { state: DriftState.COMPLETED, enqueueNext: false };
-    }
+    const extracted = signal.extracted || {};
+
+    const rules = getEligibilityRules('github_pr', workspaceRules) as any;
+
+    eligibilityResult = checkGitHubPREligibility({
+      changedFiles: extracted.changedFiles,
+      totalChanges: extracted.totalChanges || prData.additions + prData.deletions,
+      labels: prData.labels?.map((l: any) => l.name) || [],
+      author: prData.user?.login,
+      merged: prData.merged,
+    }, rules);
+  }
+  else if (sourceType === 'pagerduty_incident') {
+    const extracted = signal.extracted || {};
+    const rules = getEligibilityRules('pagerduty_incident', workspaceRules) as any;
+
+    eligibilityResult = checkPagerDutyEligibility({
+      status: extracted.status,
+      severity: signal.severity,
+      priority: extracted.priority,
+      service: signal.service,
+      durationMinutes: extracted.duration ? extracted.duration / (1000 * 60) : undefined,
+      hasNotes: (extracted.notes?.length || 0) > 0,
+      tags: extracted.tags,
+    }, rules);
+  }
+  else if (sourceType === 'slack_cluster') {
+    const extracted = signal.extracted || {};
+    const rules = getEligibilityRules('slack_cluster', workspaceRules) as any;
+
+    eligibilityResult = checkSlackClusterEligibility({
+      clusterSize: extracted.clusterSize,
+      uniqueAskers: extracted.uniqueAskers,
+      oldestQuestionHoursAgo: extracted.oldestQuestionHoursAgo,
+      channel: extracted.channel,
+    }, rules);
+  }
+  // github_codeowners and datadog_alert/github_iac are always eligible for now
+
+  // If not eligible, mark as COMPLETED with reason
+  if (!eligibilityResult.eligible) {
+    console.log(`[Transitions] Signal not eligible: ${eligibilityResult.reason}`);
+
+    // Store eligibility failure reason in drift candidate
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: {
+        lastErrorCode: 'ELIGIBILITY_FAILED',
+        lastErrorMessage: eligibilityResult.reason,
+      },
+    });
+
+    return { state: DriftState.COMPLETED, enqueueNext: false };
   }
 
+  console.log(`[Transitions] Signal passed eligibility check`);
   return { state: DriftState.ELIGIBILITY_CHECKED, enqueueNext: true };
 }
 
