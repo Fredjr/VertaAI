@@ -892,7 +892,9 @@ app.post('/api/test/run-state-machine', async (req: Request, res: Response) => {
   }
 
   const { executeTransition } = await import('./services/orchestrator/transitions.js');
-  const { DriftState, TERMINAL_STATES, HUMAN_GATED_STATES } = await import('./types/state-machine.js');
+  const stateMachine = await import('./types/state-machine.js');
+  const terminalStates = stateMachine.TERMINAL_STATES.map((s: any) => String(s));
+  const humanGatedStates = stateMachine.HUMAN_GATED_STATES.map((s: any) => String(s));
 
   const stateLog: string[] = [];
   let iteration = 0;
@@ -909,18 +911,18 @@ app.post('/api/test/run-state-machine', async (req: Request, res: Response) => {
         return res.status(404).json({ error: 'Drift not found', stateLog });
       }
 
-      const currentState = drift.state as DriftState;
+      const currentState = drift.state as string;
       stateLog.push(currentState);
 
-      if (TERMINAL_STATES.includes(currentState)) {
+      if (terminalStates.includes(currentState)) {
         return res.json({ status: 'terminal', state: currentState, iterations: iteration, stateLog });
       }
-      if (HUMAN_GATED_STATES.includes(currentState)) {
+      if (humanGatedStates.includes(currentState)) {
         return res.json({ status: 'human_gated', state: currentState, iterations: iteration, stateLog });
       }
 
       console.log(`[TestStateMachine] Iteration ${iteration + 1}: state=${currentState}`);
-      const result = await executeTransition(drift, currentState);
+      const result = await executeTransition(drift, currentState as any);
 
       // Update state in DB
       await prisma.driftCandidate.update({

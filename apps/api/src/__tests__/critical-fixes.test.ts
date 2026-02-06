@@ -30,9 +30,9 @@ describe('Critical Fix C2: applyPatchToDoc', () => {
           hunks.push(currentHunk);
         }
         currentHunk = {
-          oldStart: parseInt(hunkMatch[1], 10),
+          oldStart: parseInt(hunkMatch[1]!, 10),
           oldCount: hunkMatch[2] ? parseInt(hunkMatch[2], 10) : 1,
-          newStart: parseInt(hunkMatch[3], 10),
+          newStart: parseInt(hunkMatch[3]!, 10),
           newCount: hunkMatch[4] ? parseInt(hunkMatch[4], 10) : 1,
           lines: [],
         };

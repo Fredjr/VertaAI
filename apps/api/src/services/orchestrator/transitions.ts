@@ -1661,9 +1661,9 @@ function applyPatchToDoc(original: string, diff: string): string {
         hunks.push(currentHunk);
       }
       currentHunk = {
-        oldStart: parseInt(hunkMatch[1], 10),
+        oldStart: parseInt(hunkMatch[1]!, 10),
         oldCount: hunkMatch[2] ? parseInt(hunkMatch[2], 10) : 1,
-        newStart: parseInt(hunkMatch[3], 10),
+        newStart: parseInt(hunkMatch[3]!, 10),
         newCount: hunkMatch[4] ? parseInt(hunkMatch[4], 10) : 1,
         lines: [],
       };
@@ -1887,7 +1887,7 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
   }
 
   // FIX C1: Actually send to Slack using slack-client + runSlackComposer
-  const signal = drift.signalEvent;
+  // Reuse 'signal' variable from above (already declared at line 1820)
   const rawPayload = signal?.rawPayload || {};
   const prData = rawPayload.pull_request || {};
   const extracted = signal?.extracted || {};
@@ -1899,14 +1899,21 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
   const ownerName = primaryOwner?.ref || 'Team';
 
   // Build input for Slack composer
+  const sourcesUsed = Array.isArray(patchProposal.sourcesUsed)
+    ? (patchProposal.sourcesUsed as Array<{ type: string; ref: string }>)
+    : [];
   const slackInput = {
     patch: {
       doc_id: patchProposal.docId,
       unified_diff: patchProposal.unifiedDiff,
       summary: patchProposal.summary || 'Documentation update needed',
       confidence: drift.confidence || 0.5,
-      sources_used: patchProposal.sourcesUsed || [],
+      sources_used: sourcesUsed,
       needs_human: true,
+      safety: {
+        secrets_redacted: true,
+        risky_change_avoided: false,
+      },
     },
     patchId: patchProposal.id,
     doc: {
@@ -1969,8 +1976,8 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
       },
     },
     data: {
-      slackChannelId: sendResult.channel || targetChannel,
-      slackMessageTs: sendResult.ts,
+      slackChannel: sendResult.channel || targetChannel,
+      slackTs: sendResult.ts,
     },
   });
 
