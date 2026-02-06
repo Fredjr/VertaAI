@@ -883,6 +883,94 @@ app.post('/api/test/send-proposal', async (req: Request, res: Response) => {
   }
 });
 
+// Test endpoint: Run state machine without QStash signature verification
+app.post('/api/test/run-state-machine', async (req: Request, res: Response) => {
+  const { workspaceId, driftId, maxIterations = 30 } = req.body;
+
+  if (!workspaceId || !driftId) {
+    return res.status(400).json({ error: 'Missing workspaceId or driftId' });
+  }
+
+  const { executeTransition } = await import('./services/orchestrator/transitions.js');
+  const { DriftState, TERMINAL_STATES, HUMAN_GATED_STATES } = await import('./types/state-machine.js');
+
+  const stateLog: string[] = [];
+  let iteration = 0;
+
+  try {
+    while (iteration < maxIterations) {
+      // Re-fetch drift on each iteration to get latest state
+      const drift = await prisma.driftCandidate.findUnique({
+        where: { workspaceId_id: { workspaceId, id: driftId } },
+        include: { signalEvent: true, workspace: true },
+      });
+
+      if (!drift) {
+        return res.status(404).json({ error: 'Drift not found', stateLog });
+      }
+
+      const currentState = drift.state as DriftState;
+      stateLog.push(currentState);
+
+      if (TERMINAL_STATES.includes(currentState)) {
+        return res.json({ status: 'terminal', state: currentState, iterations: iteration, stateLog });
+      }
+      if (HUMAN_GATED_STATES.includes(currentState)) {
+        return res.json({ status: 'human_gated', state: currentState, iterations: iteration, stateLog });
+      }
+
+      console.log(`[TestStateMachine] Iteration ${iteration + 1}: state=${currentState}`);
+      const result = await executeTransition(drift, currentState);
+
+      // Update state in DB
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId, id: driftId } },
+        data: {
+          state: result.state,
+          stateUpdatedAt: new Date(),
+          ...(result.error && {
+            lastErrorCode: result.error.code,
+            lastErrorMessage: result.error.message,
+            retryCount: { increment: 1 },
+          }),
+        },
+      });
+
+      if (result.error) {
+        stateLog.push(`ERROR:${result.error.code}:${result.error.message}`);
+        return res.json({
+          status: 'error',
+          state: result.state,
+          error: result.error,
+          iterations: iteration + 1,
+          stateLog,
+        });
+      }
+
+      iteration++;
+    }
+
+    // Fetch final state
+    const finalDrift = await prisma.driftCandidate.findUnique({
+      where: { workspaceId_id: { workspaceId, id: driftId } },
+    });
+
+    return res.json({
+      status: 'max_iterations',
+      state: finalDrift?.state,
+      iterations: iteration,
+      stateLog,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'exception',
+      error: error.message,
+      iterations: iteration,
+      stateLog,
+    });
+  }
+});
+
 app.post('/api/test/trigger-drift', async (req: Request, res: Response) => {
   const { workspaceId, prNumber, prTitle, prBody, changedFiles, diff } = req.body;
 
