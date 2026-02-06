@@ -94,6 +94,9 @@ export enum FailureCode {
   DOC_CONFLICT = 'DOC_CONFLICT',
   WRITEBACK_FAILED = 'WRITEBACK_FAILED',
 
+  // Retry limit (FIX C3)
+  MAX_RETRIES_EXCEEDED = 'MAX_RETRIES_EXCEEDED',
+
   // Generic
   UNKNOWN_ERROR = 'UNKNOWN_ERROR',
 }

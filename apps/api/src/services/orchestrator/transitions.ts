@@ -1629,19 +1629,101 @@ async function handlePatchGenerated(drift: any): Promise<TransitionResult> {
 }
 
 /**
- * Simple patch application helper (for validation purposes)
+ * FIX C2: Proper unified diff application
+ * Applies a unified diff to the original text, handling additions, deletions, and context lines.
+ *
+ * Unified diff format:
+ * @@ -oldStart,oldCount +newStart,newCount @@
+ * Lines starting with ' ' are context (unchanged)
+ * Lines starting with '-' are deletions
+ * Lines starting with '+' are additions
  */
 function applyPatchToDoc(original: string, diff: string): string {
-  // For validation, we just need to estimate the patched content
-  // A full diff application would be more complex
-  const addedLines = diff.split('\n')
-    .filter(l => l.startsWith('+') && !l.startsWith('+++'))
-    .map(l => l.substring(1));
+  const originalLines = original.split('\n');
+  const diffLines = diff.split('\n');
 
-  if (addedLines.length > 0) {
-    return original + '\n' + addedLines.join('\n');
+  // Parse hunks from the diff
+  const hunks: Array<{
+    oldStart: number;
+    oldCount: number;
+    newStart: number;
+    newCount: number;
+    lines: string[];
+  }> = [];
+
+  let currentHunk: typeof hunks[0] | null = null;
+
+  for (const line of diffLines) {
+    // Parse hunk header: @@ -oldStart,oldCount +newStart,newCount @@
+    const hunkMatch = line.match(/^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/);
+    if (hunkMatch) {
+      if (currentHunk) {
+        hunks.push(currentHunk);
+      }
+      currentHunk = {
+        oldStart: parseInt(hunkMatch[1], 10),
+        oldCount: hunkMatch[2] ? parseInt(hunkMatch[2], 10) : 1,
+        newStart: parseInt(hunkMatch[3], 10),
+        newCount: hunkMatch[4] ? parseInt(hunkMatch[4], 10) : 1,
+        lines: [],
+      };
+      continue;
+    }
+
+    // Skip file headers (---, +++)
+    if (line.startsWith('---') || line.startsWith('+++')) {
+      continue;
+    }
+
+    // Add line to current hunk
+    if (currentHunk) {
+      currentHunk.lines.push(line);
+    }
   }
-  return original;
+
+  if (currentHunk) {
+    hunks.push(currentHunk);
+  }
+
+  // If no hunks found, return original (invalid diff or empty diff)
+  if (hunks.length === 0) {
+    console.warn('[applyPatchToDoc] No hunks found in diff, returning original');
+    return original;
+  }
+
+  // Apply hunks in order
+  let result = [...originalLines];
+  let offset = 0; // Track line number offset as we add/remove lines
+
+  for (const hunk of hunks) {
+    const targetLine = hunk.oldStart - 1 + offset; // Convert to 0-based index
+    let oldLineIdx = 0;
+    let newLines: string[] = [];
+
+    for (const line of hunk.lines) {
+      if (line.startsWith(' ')) {
+        // Context line - keep it
+        newLines.push(line.substring(1));
+        oldLineIdx++;
+      } else if (line.startsWith('-')) {
+        // Deletion - skip this line from original
+        oldLineIdx++;
+      } else if (line.startsWith('+')) {
+        // Addition - add this line to result
+        newLines.push(line.substring(1));
+      }
+      // Ignore other lines (shouldn't happen in valid diff)
+    }
+
+    // Replace the old lines with new lines
+    const deleteCount = hunk.oldCount;
+    result.splice(targetLine, deleteCount, ...newLines);
+
+    // Update offset for next hunk
+    offset += newLines.length - deleteCount;
+  }
+
+  return result.join('\n');
 }
 
 /**
@@ -1804,14 +1886,95 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
     return { state: DriftState.COMPLETED, enqueueNext: false };
   }
 
-  // TODO: Actually send to Slack using slack-client
-  // For now, just log and transition
-  console.log(`[Transitions] Would send Slack message for drift ${drift.id}`);
-  console.log(`[Transitions] Target: ${notificationRoute.target || primaryOwner?.ref || 'default'}`);
-  console.log(`[Transitions] Channel: ${notificationRoute.channel}`);
-  console.log(`[Transitions] Doc: ${patchProposal.docTitle}`);
-  console.log(`[Transitions] Patch summary: ${patchProposal.summary || 'N/A'}`);
+  // FIX C1: Actually send to Slack using slack-client + runSlackComposer
+  const signal = drift.signalEvent;
+  const rawPayload = signal?.rawPayload || {};
+  const prData = rawPayload.pull_request || {};
+  const extracted = signal?.extracted || {};
 
+  // Determine target channel (DM or channel)
+  const targetChannel = notificationRoute.target || primaryOwner?.ref || ownerChannel || 'general';
+
+  // Get owner name for display
+  const ownerName = primaryOwner?.ref || 'Team';
+
+  // Build input for Slack composer
+  const slackInput = {
+    patch: {
+      doc_id: patchProposal.docId,
+      unified_diff: patchProposal.unifiedDiff,
+      summary: patchProposal.summary || 'Documentation update needed',
+      confidence: drift.confidence || 0.5,
+      sources_used: patchProposal.sourcesUsed || [],
+      needs_human: true,
+    },
+    patchId: patchProposal.id,
+    doc: {
+      title: patchProposal.docTitle,
+      docId: patchProposal.docId,
+    },
+    owner: {
+      slackId: targetChannel,
+      name: ownerName,
+    },
+    pr: {
+      id: extracted.prNumber || prData.number || 'unknown',
+      title: extracted.prTitle || prData.title || 'Code change',
+      repo: drift.repo || signal?.repo || 'unknown',
+    },
+    maxDiffPreviewLines: 12,
+  };
+
+  // Try to compose message with Agent E (Slack Composer)
+  const composerResult = await runSlackComposer(slackInput);
+
+  let slackMessage;
+  if (composerResult.success && composerResult.data) {
+    slackMessage = composerResult.data;
+    console.log(`[Transitions] Slack message composed by Agent E`);
+  } else {
+    // Fallback to simple message if Agent E fails
+    const { buildFallbackSlackMessage } = await import('../../agents/slack-composer.js');
+    slackMessage = buildFallbackSlackMessage(slackInput);
+    console.log(`[Transitions] Using fallback Slack message: ${composerResult.error}`);
+  }
+
+  // Send the message via Slack client
+  const { sendSlackMessage } = await import('../slack-client.js');
+  const sendResult = await sendSlackMessage(
+    drift.workspaceId,
+    targetChannel,
+    slackMessage.text,
+    slackMessage.blocks
+  );
+
+  if (!sendResult.ok) {
+    console.error(`[Transitions] Failed to send Slack message: ${sendResult.error}`);
+    return {
+      state: DriftState.FAILED,
+      enqueueNext: false,
+      error: {
+        code: FailureCode.SLACK_POST_DENIED,
+        message: `Failed to send Slack message: ${sendResult.error}`,
+      },
+    };
+  }
+
+  // Store Slack message metadata in PatchProposal for button interactions
+  await prisma.patchProposal.update({
+    where: {
+      workspaceId_id: {
+        workspaceId: patchProposal.workspaceId,
+        id: patchProposal.id,
+      },
+    },
+    data: {
+      slackChannelId: sendResult.channel || targetChannel,
+      slackMessageTs: sendResult.ts,
+    },
+  });
+
+  console.log(`[Transitions] Slack message sent: channel=${sendResult.channel}, ts=${sendResult.ts}`);
   return { state: DriftState.SLACK_SENT, enqueueNext: true };
 }
 

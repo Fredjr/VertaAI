@@ -30,6 +30,9 @@ import { resolveDocsForDrift } from '../services/docs/docResolution.js';
 
 const router: RouterType = Router();
 
+// FIX C3: Max retry limit to prevent infinite loops
+const MAX_RETRIES = 10;
+
 // QStash signature verification
 const getReceiver = (): Receiver | null => {
   if (!process.env.QSTASH_CURRENT_SIGNING_KEY || !process.env.QSTASH_NEXT_SIGNING_KEY) {
@@ -108,6 +111,26 @@ router.post('/run', async (req: Request, res: Response) => {
     if (HUMAN_GATED_STATES.includes(drift.state as DriftState)) {
       console.log(`[Jobs] Drift ${driftId} is awaiting human action: ${drift.state}`);
       return res.status(200).json({ status: 'waiting', state: drift.state, reason: 'awaiting_human_action' });
+    }
+
+    // FIX C3: Check if max retries exceeded
+    if (drift.retryCount >= MAX_RETRIES) {
+      console.error(`[Jobs] Drift ${driftId} exceeded max retries (${MAX_RETRIES}), transitioning to FAILED`);
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId, id: driftId } },
+        data: {
+          state: DriftState.FAILED,
+          stateUpdatedAt: new Date(),
+          lastErrorCode: 'MAX_RETRIES_EXCEEDED',
+          lastErrorMessage: `Exceeded maximum retry limit of ${MAX_RETRIES}`,
+        },
+      });
+      return res.status(200).json({
+        status: 'failed',
+        state: DriftState.FAILED,
+        reason: 'max_retries_exceeded',
+        retryCount: drift.retryCount,
+      });
     }
 
     // 6. Execute bounded transition loop
