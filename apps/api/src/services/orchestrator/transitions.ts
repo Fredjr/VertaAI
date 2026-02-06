@@ -1741,11 +1741,34 @@ async function handlePatchValidated(drift: any): Promise<TransitionResult> {
   const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
   const extracted = signal?.extracted || {};
 
+  // Build changedFiles array from extracted data (may be array of objects or strings)
+  const rawChangedFiles = extracted.changedFiles || [];
+  const changedFiles = Array.isArray(rawChangedFiles)
+    ? rawChangedFiles.map((f: any) => typeof f === 'string' ? { filename: f } : { filename: f.filename || '' })
+    : [];
+  // Compute totalChanges from changedFiles if not directly available
+  const totalChanges = extracted.totalChanges ?? (Array.isArray(rawChangedFiles)
+    ? rawChangedFiles.reduce((sum: number, f: any) => sum + (f.additions || 0) + (f.deletions || 0), 0)
+    : 0);
+
   const preValidationResult = runPreValidation(sourceType, {
     merged: extracted.merged,
     hasNotes: (extracted.notes?.length || 0) > 0,
     hasEvidence: !!drift.evidenceSummary,
     confidence: drift.confidence || 0.5,
+    changedFiles,
+    totalChanges,
+    // PagerDuty fields
+    status: extracted.status,
+    service: extracted.service || drift.service,
+    durationMinutes: extracted.durationMinutes,
+    // Slack cluster fields
+    clusterSize: extracted.clusterSize,
+    uniqueAskers: extracted.uniqueAskers,
+    questions: extracted.questions,
+    // Datadog fields
+    monitorName: extracted.monitorName,
+    severity: extracted.severity,
   });
 
   if (!preValidationResult.valid) {

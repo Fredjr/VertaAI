@@ -321,6 +321,19 @@ export function runPreValidation(
     hasNotes?: boolean;
     hasEvidence?: boolean;
     confidence?: number;
+    changedFiles?: Array<{ filename: string }>;
+    totalChanges?: number;
+    // PagerDuty fields
+    status?: string;
+    service?: string;
+    durationMinutes?: number;
+    // Slack cluster fields
+    clusterSize?: number;
+    uniqueAskers?: number;
+    questions?: Array<{ text: string }>;
+    // Datadog fields
+    monitorName?: string;
+    severity?: string;
   }
 ): PreValidationResult & { errors?: string[] } {
   const validators = getPreValidators(sourceType);
