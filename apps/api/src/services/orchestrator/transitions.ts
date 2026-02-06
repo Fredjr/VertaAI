@@ -147,8 +147,8 @@ async function handleIngested(drift: any): Promise<TransitionResult> {
       changedFiles: extracted.changedFiles,
       totalChanges: extracted.totalChanges || prData.additions + prData.deletions,
       labels: prData.labels?.map((l: any) => l.name) || [],
-      author: prData.user?.login,
-      merged: prData.merged,
+      author: prData.user?.login || extracted.authorLogin,
+      merged: prData.merged ?? extracted.merged,
     }, rules);
   }
   else if (sourceType === 'pagerduty_incident') {
