@@ -1918,7 +1918,9 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
   const extracted = signal?.extracted || {};
 
   // Determine target channel (DM or channel)
-  const targetChannel = notificationRoute.target || primaryOwner?.ref || ownerChannel || 'general';
+  // Fall back to channelId from Slack integration config, then workspace default
+  const slackConfig = (slackIntegration.config || {}) as { channelId?: string };
+  const targetChannel = notificationRoute.target || primaryOwner?.ref || ownerChannel || slackConfig.channelId || 'general';
 
   // Get owner name for display
   const ownerName = primaryOwner?.ref || 'Team';
