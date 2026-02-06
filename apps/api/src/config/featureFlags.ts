@@ -8,39 +8,40 @@
  */
 
 // Feature flag definitions with defaults
-// NOTE: Phase 1 features are enabled by default for production rollout
+// FIX F8: Starter mode - only GitHub PR → Confluence enabled by default
+// This focuses new users on one tight loop to prove value before expanding
 export const FEATURE_FLAGS = {
-  // Phase 1: Enhance Current Sources (ENABLED)
-  ENABLE_README_ADAPTER: true,          // GitHub README.md as output source
-  ENABLE_CODEOWNERS_DETECTION: true,    // Parse CODEOWNERS changes for ownership drift
-  ENABLE_DOC_CATEGORIES: true,          // Category-aware doc resolution
-  ENABLE_NOTION_WRITEBACK: true,        // Notion writeback (already partial)
-  ENABLE_ADAPTER_REGISTRY: true,        // Use unified adapter registry
+  // Phase 1: Enhance Current Sources (STARTER MODE - SELECTIVE)
+  ENABLE_README_ADAPTER: false,         // FIX F8: Disabled in starter mode
+  ENABLE_CODEOWNERS_DETECTION: true,    // Keep - useful for ownership drift
+  ENABLE_DOC_CATEGORIES: true,          // Keep - core feature
+  ENABLE_NOTION_WRITEBACK: false,       // FIX F8: Disabled in starter mode (Confluence only)
+  ENABLE_ADAPTER_REGISTRY: true,        // Keep - core infrastructure
 
-  // Phase 2: API Documentation (ENABLED)
-  ENABLE_SWAGGER_ADAPTER: true,         // Swagger/OpenAPI as output source
-  ENABLE_BACKSTAGE_ADAPTER: true,       // Backstage catalog integration
-  ENABLE_API_DRIFT_DETECTION: true,     // API schema drift detection
+  // Phase 2: API Documentation (DISABLED IN STARTER MODE)
+  ENABLE_SWAGGER_ADAPTER: false,        // FIX F8: Disabled in starter mode
+  ENABLE_BACKSTAGE_ADAPTER: false,      // FIX F8: Disabled in starter mode
+  ENABLE_API_DRIFT_DETECTION: false,    // FIX F8: Disabled in starter mode
 
-  // Phase 3: Incident-Based Signals (ENABLED)
-  ENABLE_PAGERDUTY_WEBHOOK: true,       // PagerDuty incident ingestion
-  ENABLE_PROCESS_DRIFT: true,           // Process drift from incidents
-  ENABLE_ONCALL_OWNERSHIP: true,        // On-call based ownership drift
+  // Phase 3: Incident-Based Signals (DISABLED IN STARTER MODE)
+  ENABLE_PAGERDUTY_WEBHOOK: false,      // FIX F8: Disabled in starter mode
+  ENABLE_PROCESS_DRIFT: true,           // Keep - core drift type
+  ENABLE_ONCALL_OWNERSHIP: false,       // FIX F8: Disabled in starter mode
 
-  // Phase 4: Knowledge Gap Detection (ENABLED)
-  ENABLE_SLACK_CLUSTERING: true,        // Slack message question clustering
-  ENABLE_COVERAGE_DRIFT: true,          // Coverage drift from repeated questions
-  ENABLE_SCHEDULED_ANALYSIS: true,      // Scheduled jobs for Slack analysis
+  // Phase 4: Knowledge Gap Detection (DISABLED IN STARTER MODE)
+  ENABLE_SLACK_CLUSTERING: false,       // FIX F8: Disabled in starter mode
+  ENABLE_COVERAGE_DRIFT: false,         // FIX F8: Disabled in starter mode
+  ENABLE_SCHEDULED_ANALYSIS: false,     // FIX F8: Disabled in starter mode
 
-  // Phase 5: Complete Multi-Source Architecture
-  ENABLE_DATADOG_WEBHOOK: true,         // Datadog/Grafana alert ingestion
-  ENABLE_IAC_PARSER: true,              // Terraform/Pulumi IaC change detection
-  ENABLE_CODE_COMMENTS_ADAPTER: true,   // JSDoc/TSDoc code comments
-  ENABLE_GITBOOK_ADAPTER: true,         // GitBook documentation
-  ENABLE_WORKFLOW_SETTINGS: true,       // User workflow preferences
+  // Phase 5: Complete Multi-Source Architecture (DISABLED IN STARTER MODE)
+  ENABLE_DATADOG_WEBHOOK: false,        // FIX F8: Disabled in starter mode
+  ENABLE_IAC_PARSER: false,             // FIX F8: Disabled in starter mode
+  ENABLE_CODE_COMMENTS_ADAPTER: false,  // FIX F8: Disabled in starter mode
+  ENABLE_GITBOOK_ADAPTER: false,        // FIX F8: Disabled in starter mode
+  ENABLE_WORKFLOW_SETTINGS: true,       // Keep - allows users to customize
 
   // Cross-cutting features
-  ENABLE_MULTI_DOC_WRITEBACK: false,    // Write patches to multiple docs
+  ENABLE_MULTI_DOC_WRITEBACK: false,    // Disabled - single doc focus
 } as const;
 
 export type FeatureFlag = keyof typeof FEATURE_FLAGS;

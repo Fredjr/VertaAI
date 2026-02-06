@@ -155,25 +155,123 @@ app.get('/api/metrics', async (_req: Request, res: Response) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const [total, approved, edited, rejected, pending] = await Promise.all([
+    // FIX F7: Enhanced pipeline observability metrics
+    const [
+      total, approved, edited, rejected, pending,
+      needsMappingCount,
+      driftCandidates,
+      rejectedProposals,
+    ] = await Promise.all([
       prisma.diffProposal.count(),
       prisma.diffProposal.count({ where: { status: 'approved' } }),
       prisma.diffProposal.count({ where: { status: 'edited' } }),
       prisma.diffProposal.count({ where: { status: 'rejected' } }),
       prisma.diffProposal.count({ where: { status: 'pending' } }),
+      // FIX F7: Track needs_mapping percentage
+      prisma.driftCandidate.count({ where: { state: 'FAILED_NEEDS_MAPPING' } }),
+      // FIX F7: Get drift candidates with doc resolution data
+      prisma.driftCandidate.findMany({
+        select: {
+          docsResolution: true,
+          state: true,
+          sourceType: true,
+          createdAt: true,
+          stateUpdatedAt: true,
+        },
+        take: 1000, // Sample recent 1000
+        orderBy: { createdAt: 'desc' },
+      }),
+      // FIX F7: Get rejected proposals with rejection data
+      prisma.diffProposal.findMany({
+        where: { status: 'rejected' },
+        select: {
+          rejectionReason: true,
+          rejectionTags: true,
+          createdAt: true,
+          resolvedAt: true,
+        },
+        take: 500, // Sample recent 500
+        orderBy: { createdAt: 'desc' },
+      }),
     ]);
 
     const approvalRate = total > 0 ? ((approved + edited) / total) * 100 : 0;
 
+    // FIX F7: Calculate doc resolution method breakdown
+    let mappingCount = 0;
+    let searchCount = 0;
+    let prLinkCount = 0;
+    let unknownCount = 0;
+
+    for (const drift of driftCandidates) {
+      const resolution = drift.docsResolution as any;
+      if (resolution?.method === 'mapping') mappingCount++;
+      else if (resolution?.method === 'search') searchCount++;
+      else if (resolution?.method === 'pr_link') prLinkCount++;
+      else unknownCount++;
+    }
+
+    const totalResolutions = mappingCount + searchCount + prLinkCount + unknownCount;
+    const needsMappingPercentage = totalResolutions > 0
+      ? (needsMappingCount / totalResolutions) * 100
+      : 0;
+
+    // FIX F7: Calculate time to human action (median)
+    const timeToActionMinutes: number[] = [];
+    for (const proposal of rejectedProposals) {
+      if (proposal.resolvedAt) {
+        const minutes = (proposal.resolvedAt.getTime() - proposal.createdAt.getTime()) / (1000 * 60);
+        timeToActionMinutes.push(minutes);
+      }
+    }
+    timeToActionMinutes.sort((a, b) => a - b);
+    const medianTimeToAction = timeToActionMinutes.length > 0
+      ? timeToActionMinutes[Math.floor(timeToActionMinutes.length / 2)]
+      : null;
+
+    // FIX F7: Rejection reason breakdown
+    const rejectionReasons: Record<string, number> = {};
+    for (const proposal of rejectedProposals) {
+      const tags = proposal.rejectionTags as string[] || [];
+      for (const tag of tags) {
+        rejectionReasons[tag] = (rejectionReasons[tag] || 0) + 1;
+      }
+    }
+
+    // FIX F7: Source type breakdown
+    const sourceBreakdown: Record<string, number> = {};
+    for (const drift of driftCandidates) {
+      const source = drift.sourceType || 'unknown';
+      sourceBreakdown[source] = (sourceBreakdown[source] || 0) + 1;
+    }
+
     res.json({
+      // Original metrics
       total_proposals: total,
       approved_count: approved,
       edited_count: edited,
       rejected_count: rejected,
       pending_count: pending,
       approval_rate: Math.round(approvalRate * 10) / 10,
+
+      // FIX F7: New observability metrics
+      doc_resolution: {
+        mapping_count: mappingCount,
+        search_count: searchCount,
+        pr_link_count: prLinkCount,
+        unknown_count: unknownCount,
+        needs_mapping_count: needsMappingCount,
+        needs_mapping_percentage: Math.round(needsMappingPercentage * 10) / 10,
+      },
+      time_to_action: {
+        median_minutes: medianTimeToAction ? Math.round(medianTimeToAction) : null,
+        sample_size: timeToActionMinutes.length,
+      },
+      rejection_reasons: rejectionReasons,
+      source_breakdown: sourceBreakdown,
     });
   } catch (error) {
+    console.error('[Metrics] Error:', error);
     res.status(500).json({ error: 'Failed to fetch metrics' });
   }
 });

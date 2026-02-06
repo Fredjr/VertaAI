@@ -28,6 +28,13 @@ export interface ValidatorContext {
   evidence: string[];
   confidence: number;
   expectedRevision?: string | null;  // For revision check validator
+  autoApproveThreshold?: number;  // For evidence binding validator (FIX F3)
+  prData?: {  // For evidence binding validator (FIX F3)
+    changedFiles?: string[];
+    diff?: string;
+    title?: string;
+    body?: string;
+  };
 }
 
 // Validator 1: Diff applies cleanly (placeholder - actual diff application is done elsewhere)
@@ -388,7 +395,101 @@ export async function validateDocRevisionUnchanged(
   return { valid: true, errors: [], warnings: [] };
 }
 
-// Run all validators (14 total per spec Section 5.11)
+// Validator 15: Hard evidence binding for auto-approve (FIX F3)
+// This validator enforces that auto-approve patches MUST have deterministic evidence
+// binding to specific PR changes. Prevents LLM hallucination from auto-approving.
+export function validateHardEvidenceForAutoApprove(
+  diff: string,
+  evidence: string[],
+  confidence: number,
+  autoApproveThreshold: number,
+  prData: {
+    changedFiles?: string[];
+    diff?: string;
+    title?: string;
+    body?: string;
+  }
+): ValidationResult {
+  // Only enforce for patches that would be auto-approved
+  if (confidence < autoApproveThreshold) {
+    return { valid: true, errors: [], warnings: [] };
+  }
+
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Requirement 1: Must have evidence
+  if (!evidence || evidence.length === 0) {
+    errors.push('Auto-approve requires evidence pack - no evidence provided');
+    return { valid: false, errors, warnings };
+  }
+
+  // Requirement 2: Must have PR diff data
+  if (!prData.diff && (!prData.changedFiles || prData.changedFiles.length === 0)) {
+    errors.push('Auto-approve requires PR diff data - no changed files or diff provided');
+    return { valid: false, errors, warnings };
+  }
+
+  // Requirement 3: Evidence must reference specific files or code changes
+  const hasFileReference = evidence.some(e => {
+    // Check if evidence mentions specific files
+    if (prData.changedFiles) {
+      for (const file of prData.changedFiles) {
+        const fileName = file.split('/').pop() || file;
+        if (e.toLowerCase().includes(fileName.toLowerCase())) {
+          return true;
+        }
+      }
+    }
+    // Check if evidence mentions code-like patterns (function names, variables, etc.)
+    const codePatterns = [
+      /\b[a-z_][a-z0-9_]*\(/i, // Function calls
+      /\b(function|class|const|let|var|def|async|await)\b/i, // Keywords
+      /\b[A-Z][a-zA-Z0-9]*\b/, // Class names
+      /`[^`]+`/, // Code snippets in backticks
+    ];
+    return codePatterns.some(pattern => pattern.test(e));
+  });
+
+  if (!hasFileReference) {
+    errors.push('Auto-approve requires evidence to reference specific files or code changes from PR');
+    return { valid: false, errors, warnings };
+  }
+
+  // Requirement 4: Patch content must align with evidence
+  // Extract added lines from patch diff
+  const addedLines = diff.split('\n').filter(l => l.startsWith('+')).map(l => l.substring(1).trim());
+
+  // Check that at least some added content is mentioned in evidence
+  let hasContentAlignment = false;
+  for (const line of addedLines) {
+    if (line.length < 10) continue; // Skip very short lines
+
+    // Check if any evidence mentions key terms from this line
+    const keyTerms = line.split(/\s+/).filter(term => term.length > 4);
+    for (const term of keyTerms) {
+      if (evidence.some(e => e.toLowerCase().includes(term.toLowerCase()))) {
+        hasContentAlignment = true;
+        break;
+      }
+    }
+    if (hasContentAlignment) break;
+  }
+
+  if (!hasContentAlignment && addedLines.length > 0) {
+    warnings.push('Auto-approve warning: patch content does not clearly align with evidence - consider manual review');
+  }
+
+  // Requirement 5: Confidence must be based on deterministic signals, not just LLM
+  // This is a heuristic - if confidence is exactly at threshold, it might be artificially boosted
+  if (Math.abs(confidence - autoApproveThreshold) < 0.01) {
+    warnings.push('Auto-approve warning: confidence is exactly at threshold - verify deterministic evidence');
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+// Run all validators (15 total - 14 from spec + 1 new evidence binding validator)
 export async function runAllValidators(ctx: ValidatorContext): Promise<ValidationResult> {
   const results: ValidationResult[] = [
     // Core validators (1-6)
@@ -403,6 +504,17 @@ export async function runAllValidators(ctx: ValidatorContext): Promise<Validatio
     validateNoNewCommandsUnlessEvidenced(ctx.diff, ctx.evidence),
     validateOwnerBlockScope(ctx.diff, ctx.driftType, ctx.originalMarkdown),
   ];
+
+  // FIX F3: Hard evidence binding for auto-approve (15)
+  if (ctx.autoApproveThreshold !== undefined && ctx.prData) {
+    results.push(validateHardEvidenceForAutoApprove(
+      ctx.diff,
+      ctx.evidence,
+      ctx.confidence,
+      ctx.autoApproveThreshold,
+      ctx.prData
+    ));
+  }
 
   // Check managed region only if doc has one (7)
   if (extractManagedRegion(ctx.originalMarkdown).hasManagedRegion) {

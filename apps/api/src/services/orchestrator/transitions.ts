@@ -531,7 +531,9 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
 
 /**
  * DOCS_RESOLVED -> DOCS_FETCHED
- * Fetch doc content from Confluence/Notion
+ * Fetch doc content from Confluence/Notion using adapter.fetch()
+ *
+ * FIX F1: Now actually fetches real doc content with baseRevision tracking
  */
 async function handleDocsResolved(drift: any): Promise<TransitionResult> {
   const docCandidates = drift.docCandidates || [];
@@ -548,30 +550,56 @@ async function handleDocsResolved(drift: any): Promise<TransitionResult> {
     where: { workspaceId: drift.workspaceId, docId },
   });
 
+  if (!docMapping) {
+    console.error(`[Transitions] No doc mapping found for docId=${docId}`);
+    return { state: DriftState.FAILED_NEEDS_MAPPING, enqueueNext: false };
+  }
+
   let docContent = '';
   let docRevision: string | null = null;
+  let docTitle = docMapping.docTitle || primaryDoc.doc_title || 'Unknown';
 
-  if (docMapping) {
-    // TODO: Fetch actual doc content from Confluence/Notion API
-    // For now, use cached content from baselineFindings if available
-    const currentFindings = drift.baselineFindings || [];
-    if (currentFindings.length > 0 && currentFindings[0].docContent) {
-      docContent = currentFindings[0].docContent;
+  try {
+    // FIX F1: Use adapter registry to fetch actual doc content
+    const { getAdapter } = await import('../docs/adapters/registry.js');
+    const adapter = await getAdapter(drift.workspaceId, docMapping.docSystem as any);
+
+    if (!adapter) {
+      console.error(`[Transitions] No adapter available for docSystem=${docMapping.docSystem}`);
+      // Fallback to empty content rather than failing
+      docContent = '';
+      docRevision = new Date().toISOString();
+    } else {
+      // Fetch real doc content using adapter
+      const fetchResult = await adapter.fetch({
+        docId,
+        docSystem: docMapping.docSystem as any,
+        docUrl: docMapping.docUrl || primaryDoc.doc_url || '',
+      });
+
+      // Use markdown content for baseline checks
+      docContent = fetchResult.markdown || fetchResult.content || '';
+      docRevision = fetchResult.baseRevision; // Real revision from doc system
+      docTitle = fetchResult.title || docTitle;
+
+      console.log(`[Transitions] Fetched doc via adapter: system=${docMapping.docSystem}, revision=${docRevision}, content_length=${docContent.length}`);
     }
-    // Use updatedAt as a revision proxy since we don't have docRevision field
-    docRevision = docMapping.updatedAt.toISOString();
-    console.log(`[Transitions] Fetched doc: system=${docMapping.docSystem}, revision=${docRevision}`);
+  } catch (error: any) {
+    console.error(`[Transitions] Error fetching doc content:`, error);
+    // Don't fail the entire pipeline - store error and continue
+    docContent = '';
+    docRevision = null;
   }
 
   // Store fetched content in baselineFindings (DocContext extraction happens in next state)
   const updatedFindings = [{
     docId,
     docContent,
-    docRevision,
+    docRevision, // Real revision from adapter.fetch()
     fetchedAt: new Date().toISOString(),
-    docSystem: docMapping?.docSystem || 'confluence',
-    docUrl: docMapping?.docUrl || primaryDoc.doc_url || '',
-    docTitle: docMapping?.docTitle || primaryDoc.doc_title || 'Unknown',
+    docSystem: docMapping.docSystem,
+    docUrl: docMapping.docUrl || primaryDoc.doc_url || '',
+    docTitle,
   }] as unknown as import('@prisma/client').Prisma.InputJsonValue;
 
   await prisma.driftCandidate.update({

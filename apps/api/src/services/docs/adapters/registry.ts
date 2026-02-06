@@ -81,8 +81,15 @@ function registerBuiltInAdapters(): void {
     return createGitBookAdapter({ installationId, owner: owner || '', repo: repo || '', accessToken, appId, privateKey, docsPath, summaryFile });
   });
 
-  // TODO: Register Confluence adapter when OAuth is implemented
-  // adapterFactories.set('confluence', createConfluenceAdapter);
+  // Confluence adapter
+  adapterFactories.set('confluence', (config: unknown) => {
+    const { workspaceId } = config as { workspaceId?: string };
+    if (!workspaceId) {
+      throw new Error('Confluence adapter requires workspaceId');
+    }
+    const { createConfluenceAdapter } = require('./confluenceAdapter.js');
+    return createConfluenceAdapter(workspaceId);
+  });
 }
 
 // Initialize registry
@@ -182,7 +189,11 @@ export async function getAdapter(
   }
 
   try {
-    return factory(integration.config);
+    // For Confluence, inject workspaceId into config since it needs it for credentials lookup
+    const config = docSystem === 'confluence'
+      ? { ...integration.config as object, workspaceId }
+      : integration.config;
+    return factory(config);
   } catch (error) {
     console.error(`[AdapterRegistry] Failed to create adapter for ${docSystem}:`, error);
     return null;

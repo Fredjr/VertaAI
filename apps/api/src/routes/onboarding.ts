@@ -310,5 +310,91 @@ router.delete('/:workspaceId/doc-mappings/:mappingId', async (req: Request, res:
   }
 });
 
+/**
+ * GET /api/workspaces/:workspaceId/needs-mapping
+ * FIX F5: Returns all drift candidates that need doc mapping
+ * This closes the loop by surfacing items waiting for operator action
+ */
+router.get('/:workspaceId/needs-mapping', async (req: Request, res: Response) => {
+  const workspaceId = req.params.workspaceId as string;
+
+  try {
+    // Find all drift candidates in FAILED_NEEDS_MAPPING state
+    const needsMappingItems = await prisma.driftCandidate.findMany({
+      where: {
+        workspaceId,
+        state: 'FAILED_NEEDS_MAPPING',
+      },
+      select: {
+        id: true,
+        sourceType: true,
+        driftType: true,
+        service: true,
+        repo: true,
+        evidenceSummary: true,
+        confidence: true,
+        needsMappingKey: true,
+        needsMappingNotifiedAt: true,
+        createdAt: true,
+        stateUpdatedAt: true,
+        signalEvent: {
+          select: {
+            sourceType: true,
+            extracted: true,
+          }
+        },
+        docsResolution: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: 100, // Limit to most recent 100
+    });
+
+    // Group by needsMappingKey to show unique items (deduped)
+    const uniqueItems = new Map();
+    for (const item of needsMappingItems) {
+      const key = item.needsMappingKey || item.id;
+      if (!uniqueItems.has(key)) {
+        uniqueItems.set(key, {
+          ...item,
+          count: 1,
+          firstSeen: item.createdAt,
+          lastSeen: item.stateUpdatedAt,
+        });
+      } else {
+        const existing = uniqueItems.get(key);
+        existing.count += 1;
+        existing.lastSeen = item.stateUpdatedAt;
+      }
+    }
+
+    const items = Array.from(uniqueItems.values());
+
+    console.log(`[Onboarding] Found ${items.length} unique needs_mapping items for workspace ${workspaceId}`);
+
+    return res.json({
+      total: items.length,
+      items: items.map(item => ({
+        id: item.id,
+        sourceType: item.sourceType,
+        driftType: item.driftType,
+        service: item.service,
+        repo: item.repo,
+        evidenceSummary: item.evidenceSummary,
+        confidence: item.confidence,
+        count: item.count,
+        firstSeen: item.firstSeen,
+        lastSeen: item.lastSeen,
+        notifiedAt: item.needsMappingNotifiedAt,
+        docsResolution: item.docsResolution,
+      })),
+    });
+  } catch (err: any) {
+    console.error(`[Onboarding] Get needs_mapping error:`, err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
 

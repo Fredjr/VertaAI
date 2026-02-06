@@ -85,27 +85,27 @@ export const DEFAULT_ELIGIBILITY_RULES: Record<InputSourceType, unknown> = {
   } as GitHubPREligibilityRules,
 
   pagerduty_incident: {
-    minSeverity: 'P3',
+    minSeverity: 'P2',  // FIX F6: Stricter - only P1/P2 incidents (was P3)
     requireResolved: true,
-    minDurationMinutes: 5,
+    minDurationMinutes: 15,  // FIX F6: Stricter - filter short noise (was 5)
     excludeServices: ['test-', 'staging-', 'dev-', 'sandbox-'],
     requirePostmortem: false,
     excludeTags: ['test', 'drill', 'synthetic'],
   } as PagerDutyEligibilityRules,
 
   slack_cluster: {
-    minClusterSize: 3,
-    minUniqueAskers: 2,
+    minClusterSize: 5,  // FIX F6: Stricter - need more questions (was 3)
+    minUniqueAskers: 3,  // FIX F6: Stricter - need more people (was 2)
     maxAgeHours: 168,  // 1 week
     includeChannels: [],  // Empty = all channels
     excludeChannels: ['#random', '#social', '#off-topic', '#watercooler'],
   } as SlackClusterEligibilityRules,
 
   datadog_alert: {
-    minSeverity: 'warning',
+    minSeverity: 'critical',  // FIX F6: Stricter - only critical alerts (was warning)
     requireRecovery: true,
     excludeMonitorTags: ['test', 'synthetic', 'canary'],
-    minOccurrences: 2,
+    minOccurrences: 3,  // FIX F6: Stricter - need recurring pattern (was 2)
     excludeMonitorNames: ['[TEST]', '[STAGING]', '[DEV]'],
   } as DatadogAlertEligibilityRules,
 

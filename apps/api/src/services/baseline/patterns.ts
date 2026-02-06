@@ -941,11 +941,18 @@ export function checkProcessBaselineDetailed(
 
   // ============================================================================
   // Step 6: Determine recommended action
+  // FIX F4: Increase threshold to 0.80 and default to annotate_only for safety
+  // Process drift patches are high-risk for reviewer fatigue if wrong
   // ============================================================================
   let recommendedAction: 'generate_patch' | 'annotate_only' | 'review_queue' = 'annotate_only';
-  if (detected && conf >= 0.65) {
+  if (detected && conf >= 0.80) {
+    // Only generate patch if we have very high confidence (0.80+)
     recommendedAction = 'generate_patch';
-  } else if (detected && conf < 0.65) {
+  } else if (detected && conf >= 0.60 && conf < 0.80) {
+    // Medium confidence: annotate only, don't reorder steps
+    recommendedAction = 'annotate_only';
+  } else if (detected && conf < 0.60) {
+    // Low confidence: send to review queue for human decision
     recommendedAction = 'review_queue';
   }
 
