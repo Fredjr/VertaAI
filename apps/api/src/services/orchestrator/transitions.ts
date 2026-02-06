@@ -2048,17 +2048,24 @@ async function handleApproved(drift: any): Promise<TransitionResult> {
 
   // Use updatedAt as revision proxy since DocMappingV2 doesn't have docRevision
   if (docMapping && storedRevision) {
-    const currentRevision = docMapping.updatedAt.toISOString();
-    if (currentRevision !== storedRevision) {
-      console.log(`[Transitions] Doc revision conflict: expected ${storedRevision}, found ${currentRevision}`);
-      return {
-        state: DriftState.FAILED,
-        enqueueNext: false,
-        error: {
-          code: FailureCode.DOC_CONFLICT,
-          message: 'Document has been modified since patch was generated',
-        },
-      };
+    const isNumericRevision = /^[0-9]+$/.test(storedRevision);
+    if (isNumericRevision) {
+      // Confluence-style numeric revision — can't compare against timestamp
+      // Defer conflict detection to the actual writeback (adapter will check version)
+      console.log(`[Transitions] Numeric revision (${storedRevision}) — conflict check deferred to writeback`);
+    } else {
+      const currentRevision = docMapping.updatedAt.toISOString();
+      if (currentRevision !== storedRevision) {
+        console.log(`[Transitions] Doc revision conflict: expected ${storedRevision}, found ${currentRevision}`);
+        return {
+          state: DriftState.FAILED,
+          enqueueNext: false,
+          error: {
+            code: FailureCode.DOC_CONFLICT,
+            message: 'Document has been modified since patch was generated',
+          },
+        };
+      }
     }
   }
 
