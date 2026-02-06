@@ -88,11 +88,24 @@ export function analyzeKeywordHints(
     }
   }
   
-  // Find negative matches
+  // Find negative matches (use word boundary matching to avoid false positives
+  // like "move" matching inside "remove")
   const negativeMatches: string[] = [];
   for (const keyword of keywordPack.negative) {
-    if (textLower.includes(keyword.toLowerCase())) {
-      negativeMatches.push(keyword);
+    const kw = keyword.toLowerCase();
+    // For multi-word keywords, use simple includes
+    // For single-word keywords, use word boundary regex
+    if (kw.includes(' ')) {
+      if (textLower.includes(kw)) {
+        negativeMatches.push(keyword);
+      }
+    } else {
+      // Escape special regex chars and use word boundaries
+      const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(`(?:^|[^a-z])${escaped}(?:$|[^a-z])`);
+      if (regex.test(textLower)) {
+        negativeMatches.push(keyword);
+      }
     }
   }
   
@@ -175,18 +188,20 @@ export function applyKeywordHints(
 }
 
 /**
- * Check if text contains mostly negative keywords (noise filter)
+ * Check if text contains mostly negative keywords (noise filter).
+ * Only filters when negative signals clearly dominate positive ones.
  */
 export function isLikelyNoise(text: string, sourceType: InputSourceType): boolean {
   const hints = analyzeKeywordHints(text, sourceType);
-  
+
   // Likely noise if:
-  // 1. Negative score is high (>= 0.5)
-  // 2. Net score is very negative (< -0.3)
-  // 3. No positive matches but multiple negative matches
-  
+  // 1. Net score is very negative (negative keywords overwhelm positive)
+  // 2. No positive matches but multiple negative matches
+  // Note: We do NOT filter based on negative score alone - signals with
+  // strong positive matches (e.g., "auth", "secret", "breaking") should
+  // never be filtered as noise even if a negative keyword matches.
+
   return (
-    hints.negativeScore >= 0.5 ||
     hints.netScore < -0.3 ||
     (hints.positiveMatches.length === 0 && hints.negativeMatches.length >= 2)
   );
