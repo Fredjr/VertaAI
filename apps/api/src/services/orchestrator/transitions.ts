@@ -5,6 +5,7 @@ import {
   DriftState,
   FailureCode,
   TransitionResult,
+  DriftVerdict,
 } from '../../types/state-machine.js';
 import { runDriftTriage } from '../../agents/drift-triage.js';
 import { runPatchPlanner } from '../../agents/patch-planner.js';
@@ -191,6 +192,59 @@ async function handleIngested(drift: any): Promise<TransitionResult> {
     });
 
     return { state: DriftState.COMPLETED, enqueueNext: false };
+  }
+
+  // PHASE 1 QUICK WIN: Keyword hints for noise reduction (HINT ONLY, not final verdict)
+  const { analyzeKeywordHints, isLikelyNoise } = await import('../keywords/keywordHints.js');
+
+  const rawPayload = signal.rawPayload || {};
+  const extracted = signal.extracted || {};
+
+  // Build text to analyze (source-specific)
+  let textToAnalyze = '';
+  if (sourceType === 'github_pr') {
+    const prData = rawPayload.pull_request || {};
+    textToAnalyze = [
+      prData.title || '',
+      prData.body || '',
+      extracted.prTitle || '',
+      extracted.prBody || '',
+    ].join(' ');
+  } else if (sourceType === 'pagerduty_incident') {
+    textToAnalyze = [
+      extracted.title || '',
+      extracted.description || '',
+      extracted.notes?.join(' ') || '',
+    ].join(' ');
+  } else if (sourceType === 'slack_cluster') {
+    textToAnalyze = extracted.representativeQuestion || '';
+  }
+
+  // Check if likely noise based on negative keywords
+  if (textToAnalyze && isLikelyNoise(textToAnalyze, sourceType as any)) {
+    console.log(`[Transitions] PHASE 1 - Keyword hint: Likely noise, skipping`);
+
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: {
+        lastErrorCode: 'NOISE_FILTERED',
+        lastErrorMessage: 'Filtered by negative keyword hints',
+      },
+    });
+
+    return { state: DriftState.COMPLETED, enqueueNext: false };
+  }
+
+  // Analyze keyword hints for logging (not used as final verdict)
+  if (textToAnalyze) {
+    const hints = analyzeKeywordHints(textToAnalyze, sourceType as any);
+    console.log(`[Transitions] PHASE 1 - Keyword hints: positive=${hints.positiveMatches.length}, negative=${hints.negativeMatches.length}, recommendation=${hints.recommendation}`);
+    if (hints.positiveMatches.length > 0) {
+      console.log(`[Transitions]   Positive keywords: ${hints.positiveMatches.slice(0, 5).join(', ')}`);
+    }
+    if (hints.negativeMatches.length > 0) {
+      console.log(`[Transitions]   Negative keywords: ${hints.negativeMatches.slice(0, 5).join(', ')}`);
+    }
   }
 
   console.log(`[Transitions] Signal passed eligibility check`);
@@ -1132,23 +1186,62 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
     },
   }] as unknown as import('@prisma/client').Prisma.InputJsonValue;
 
+  // PHASE 1 QUICK WIN: Compute explicit drift verdict from comparison results
+  const driftVerdict: DriftVerdict = {
+    hasMatch: baselineResult.hasMatch,
+    confidence: computeComparisonConfidence(baselineResult),
+    source: 'comparison',
+    evidence: baselineResult.evidence || [],
+    comparisonType: baselineResult.driftType || driftType,
+    timestamp: new Date().toISOString(),
+  };
+
+  console.log(`[Transitions] PHASE 1 - Drift Verdict: hasMatch=${driftVerdict.hasMatch}, confidence=${driftVerdict.confidence}, source=${driftVerdict.source}`);
+
   await prisma.driftCandidate.update({
     where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
     data: {
       baselineFindings: updatedFindings,
+      driftVerdict: driftVerdict as unknown as Prisma.InputJsonValue,
     },
   });
 
-  // FIX GAP C: Baseline-gated flow control
-  // Skip patching if baseline comparison shows no drift and confidence is below threshold
-  const confidence = drift.confidence || 0.5;
-  if (!baselineResult.hasMatch && confidence < 0.6) {
-    console.log(`[Transitions] GAP C FIX - Baseline check found no drift (hasMatch=false, confidence=${confidence}), skipping patch generation`);
+  // PHASE 1 QUICK WIN: MANDATORY comparison gate (no confidence condition)
+  // If comparison found NO drift, skip patch generation (comparison is primary verdict)
+  if (!driftVerdict.hasMatch) {
+    console.log(`[Transitions] PHASE 1 - MANDATORY GATE: Comparison found no drift (hasMatch=false), skipping patch generation`);
+    console.log(`[Transitions] Evidence checked: ${baselineResult.evidence?.length || 0} items, matchCount=${baselineResult.matchCount}`);
     return { state: DriftState.COMPLETED, enqueueNext: false };
   }
 
-  console.log(`[Transitions] Baseline check complete: hasMatch=${baselineResult.hasMatch}, matchCount=${baselineResult.matchCount}, proceeding to patch planning`);
+  // If comparison confidence is very low, also skip (ambiguous comparison)
+  if (driftVerdict.confidence < 0.3) {
+    console.log(`[Transitions] PHASE 1 - MANDATORY GATE: Comparison confidence too low (${driftVerdict.confidence}), skipping patch generation`);
+    return { state: DriftState.COMPLETED, enqueueNext: false };
+  }
+
+  console.log(`[Transitions] PHASE 1 - Baseline check PASSED: hasMatch=${driftVerdict.hasMatch}, confidence=${driftVerdict.confidence}, proceeding to patch planning`);
   return { state: DriftState.BASELINE_CHECKED, enqueueNext: true };
+}
+
+/**
+ * Helper: Compute comparison confidence from baseline result
+ * Higher matchCount = higher confidence
+ */
+function computeComparisonConfidence(baselineResult: any): number {
+  if (!baselineResult.hasMatch) {
+    return 0.0; // No drift detected
+  }
+
+  const matchCount = baselineResult.matchCount || 0;
+
+  // Confidence based on number of matches
+  if (matchCount >= 5) return 0.95;
+  if (matchCount >= 3) return 0.85;
+  if (matchCount >= 2) return 0.75;
+  if (matchCount >= 1) return 0.65;
+
+  return 0.5; // Has match but low count
 }
 
 /**

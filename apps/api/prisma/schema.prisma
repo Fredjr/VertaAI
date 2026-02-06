@@ -133,6 +133,10 @@ model DriftCandidate {
   riskLevel         String? @map("risk_level") // 'low', 'medium', 'high'
   recommendedAction String? @map("recommended_action") // 'generate_patch', 'annotate_only', 'review_queue', 'ignore'
 
+  // Drift Verdict (Phase 1 Quick Win - Comparison-based verdict)
+  // Stores the explicit comparison-based drift decision
+  driftVerdict Json? @map("drift_verdict") // { hasMatch: boolean, confidence: number, source: string, evidence: string[], comparisonType: string }
+
   // Document targeting
   docCandidates    Json     @default("[]") @map("doc_candidates")
   baselineFindings Json     @default("[]") @map("baseline_findings")

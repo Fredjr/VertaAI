@@ -1,6 +1,29 @@
 // State Machine Types for VertaAI Drift Detection Pipeline
 // Based on Section 15.15.1 of the spec
 
+// ============================================================================
+// Drift Verdict Type (Phase 1 Quick Win)
+// ============================================================================
+
+/**
+ * Explicit comparison-based drift verdict.
+ * This is the PRIMARY drift decision, stored after baseline comparison.
+ *
+ * Purpose: Make comparison results first-class decision data, not advisory metadata.
+ */
+export interface DriftVerdict {
+  hasMatch: boolean;        // Comparison found drift (true = drift detected)
+  confidence: number;       // 0-1 based on comparison strength
+  source: 'comparison' | 'llm_fallback' | 'hybrid';
+  evidence: string[];       // Specific conflicts/mismatches found
+  comparisonType: string;   // Which drift type comparison ran ('instruction', 'process', etc.)
+  timestamp?: string;       // When verdict was made
+}
+
+// ============================================================================
+// State Machine States
+// ============================================================================
+
 // All possible states a DriftCandidate can be in
 export enum DriftState {
   // Initial
