@@ -15,6 +15,14 @@ Hard rules:
 - JSON only.
 - Max 120 diff lines. If patch would be larger, set needs_human=true and return a smaller patch or annotations only.
 
+Evidence Grounding (CRITICAL - Anti-Hallucination):
+- If baseline_comparison is provided, use it as the primary source of truth for what changed
+- If evidence_pack is provided, ONLY use commands/config_keys/endpoints present in the evidence
+- Do NOT invent new commands, config keys, or endpoints not present in evidence_pack
+- If baseline_comparison shows conflicts, resolve them in the patch using PR artifacts as source of truth
+- If baseline_comparison.has_match is false, prefer adding a NOTE over modifying content
+- Rule: "No new commands/ports/endpoints/config keys unless present in evidence_pack OR already in doc"
+
 Unified diff format:
 --- current
 +++ proposed
@@ -73,6 +81,29 @@ export interface PatchGeneratorInput {
     allowedEditRanges?: Array<{ startChar: number; endChar: number; reason: string }>;
     managedRegionMissing?: boolean;
   };
+  // FIX GAP A: Baseline comparison results for grounded patching
+  baselineCheck?: {
+    driftType: string;
+    hasMatch: boolean;
+    matchCount: number;
+    evidence: string[];
+    comparisonDetails?: {
+      prArtifacts: string[];
+      docArtifacts: string[];
+      conflicts: string[];
+      recommendation: string;
+    };
+  };
+  // FIX GAP A: Structured evidence pack for grounded patching
+  evidencePack?: {
+    extracted: {
+      keywords: string[];
+      tool_mentions: string[];
+      commands: string[];
+      config_keys: string[];
+      endpoints: string[];
+    };
+  };
 }
 
 /**
@@ -108,8 +139,8 @@ export async function runPatchGenerator(input: PatchGeneratorInput): Promise<Cla
   const safeDiffExcerpt = redactSecrets(input.diffExcerpt.substring(0, 8000));
   const safePrDescription = input.prDescription ? redactSecrets(input.prDescription) : null;
 
-  // Build user prompt
-  const userPrompt = JSON.stringify({
+  // FIX GAP A: Include baseline comparison results and evidence pack in prompt
+  const promptData: any = {
     doc: {
       doc_id: input.docId,
       title: input.docTitle,
@@ -132,7 +163,31 @@ export async function runPatchGenerator(input: PatchGeneratorInput): Promise<Cla
       prefer_annotation_if_uncertain: true,
       valid_source_types: ['pr_title', 'pr_description', 'diff_excerpt', 'file_paths'],
     },
-  }, null, 2);
+  };
+
+  // Add baseline comparison results if available
+  if (input.baselineCheck) {
+    promptData.baseline_comparison = {
+      drift_type: input.baselineCheck.driftType,
+      has_match: input.baselineCheck.hasMatch,
+      match_count: input.baselineCheck.matchCount,
+      evidence: input.baselineCheck.evidence,
+      comparison_details: input.baselineCheck.comparisonDetails,
+    };
+  }
+
+  // Add structured evidence pack if available
+  if (input.evidencePack) {
+    promptData.evidence_pack = {
+      commands: input.evidencePack.extracted.commands,
+      config_keys: input.evidencePack.extracted.config_keys,
+      endpoints: input.evidencePack.extracted.endpoints,
+      tool_mentions: input.evidencePack.extracted.tool_mentions,
+      keywords: input.evidencePack.extracted.keywords,
+    };
+  }
+
+  const userPrompt = JSON.stringify(promptData, null, 2);
 
   const result = await callClaude<PatchGeneratorOutput>(
     {

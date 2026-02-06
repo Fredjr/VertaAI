@@ -63,6 +63,7 @@ const TRANSITION_HANDLERS: Partial<Record<DriftState, TransitionHandler>> = {
   [DriftState.DOCS_RESOLVED]: handleDocsResolved,
   [DriftState.DOCS_FETCHED]: handleDocsFetched,
   [DriftState.DOC_CONTEXT_EXTRACTED]: handleDocContextExtracted,
+  [DriftState.EVIDENCE_EXTRACTED]: handleEvidenceExtracted,
   [DriftState.BASELINE_CHECKED]: handleBaselineChecked,
   [DriftState.PATCH_PLANNED]: handlePatchPlanned,
   [DriftState.PATCH_GENERATED]: handlePatchGenerated,
@@ -726,13 +727,23 @@ async function computeSimpleHash(text: string): Promise<string> {
 }
 
 /**
- * DOC_CONTEXT_EXTRACTED -> BASELINE_CHECKED
- * Check baseline patterns against doc content using EvidencePack vs BaselineAnchors comparison
+ * DOC_CONTEXT_EXTRACTED -> EVIDENCE_EXTRACTED
+ * Simple passthrough - DocContext already extracted in handleDocsFetched
+ * This state exists for auditability in the state timeline
+ */
+async function handleDocContextExtracted(drift: any): Promise<TransitionResult> {
+  console.log(`[Transitions] DocContext extracted, proceeding to evidence extraction`);
+  return { state: DriftState.EVIDENCE_EXTRACTED, enqueueNext: true };
+}
+
+/**
+ * EVIDENCE_EXTRACTED -> BASELINE_CHECKED
+ * Extract EvidencePack and check baseline patterns using EvidencePack vs BaselineAnchors comparison
  *
  * Per Spec - Comparison logic: drift-vs-Confluence baseline across 5 drift types
  * Core principle: Compare Evidence from PR vs Baseline from doc
  */
-async function handleDocContextExtracted(drift: any): Promise<TransitionResult> {
+async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
   // Get doc content and DocContext from baselineFindings
   const findings = drift.baselineFindings || [];
   const finding = findings[0] || {};
@@ -1128,6 +1139,15 @@ async function handleDocContextExtracted(drift: any): Promise<TransitionResult> 
     },
   });
 
+  // FIX GAP C: Baseline-gated flow control
+  // Skip patching if baseline comparison shows no drift and confidence is below threshold
+  const confidence = drift.confidence || 0.5;
+  if (!baselineResult.hasMatch && confidence < 0.6) {
+    console.log(`[Transitions] GAP C FIX - Baseline check found no drift (hasMatch=false, confidence=${confidence}), skipping patch generation`);
+    return { state: DriftState.COMPLETED, enqueueNext: false };
+  }
+
+  console.log(`[Transitions] Baseline check complete: hasMatch=${baselineResult.hasMatch}, matchCount=${baselineResult.matchCount}, proceeding to patch planning`);
   return { state: DriftState.BASELINE_CHECKED, enqueueNext: true };
 }
 
@@ -1184,6 +1204,10 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
     console.log(`[Transitions] Using raw doc content for patch planning (fallback)`);
   }
 
+  // FIX GAP A: Get baseline comparison results and evidence pack from findings
+  const baselineCheck = finding.baselineCheck;
+  const evidencePack = finding.evidencePack;
+
   // Call Agent C: Patch Planner
   const plannerResult = await runPatchPlanner({
     docId: primaryDoc.doc_id || primaryDoc.docId || 'unknown',
@@ -1198,6 +1222,9 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
       allowedEditRanges: docContext.allowedEditRanges,
       managedRegionMissing: docContext.flags?.managedRegionMissing,
     } : undefined,
+    // FIX GAP A: Pass baseline comparison results and evidence pack
+    baselineCheck: baselineCheck || undefined,
+    evidencePack: evidencePack || undefined,
   });
 
   if (!plannerResult.success || !plannerResult.data) {
@@ -1293,6 +1320,10 @@ async function handlePatchPlanned(drift: any): Promise<TransitionResult> {
     console.log(`[Transitions] Using raw doc content for patch generation (fallback)`);
   }
 
+  // FIX GAP A: Get baseline comparison results and evidence pack from findings
+  const baselineCheck = finding.baselineCheck;
+  const evidencePack = finding.evidencePack;
+
   // Call Agent D: Patch Generator with correct input shape
   const generatorResult = await runPatchGenerator({
     docId: primaryDoc.doc_id || primaryDoc.docId || 'unknown',
@@ -1309,6 +1340,9 @@ async function handlePatchPlanned(drift: any): Promise<TransitionResult> {
       allowedEditRanges: docContext.allowedEditRanges,
       managedRegionMissing: docContext.flags?.managedRegionMissing,
     } : undefined,
+    // FIX GAP A: Pass baseline comparison results and evidence pack
+    baselineCheck: baselineCheck || undefined,
+    evidencePack: evidencePack || undefined,
   });
 
   let unifiedDiff: string;
@@ -1397,6 +1431,38 @@ async function handlePatchGenerated(drift: any): Promise<TransitionResult> {
   const docContent = findings[0]?.docContent || '';
   const docRevision = findings[0]?.docRevision || null;
 
+  // FIX GAP B: Use structured evidence from evidencePack instead of LLM summary
+  const evidencePack = findings[0]?.evidencePack;
+  let structuredEvidence: string[] = [];
+
+  if (evidencePack?.extracted) {
+    // Build evidence array from structured extraction
+    structuredEvidence = [
+      ...evidencePack.extracted.commands,
+      ...evidencePack.extracted.config_keys,
+      ...evidencePack.extracted.endpoints,
+      ...evidencePack.extracted.tool_mentions,
+      ...evidencePack.extracted.keywords,
+    ];
+    console.log(`[Transitions] GAP B FIX - Using structured evidence: ${structuredEvidence.length} items from evidencePack`);
+  } else {
+    // Fallback to LLM summary if evidencePack not available
+    structuredEvidence = [drift.evidenceSummary || ''];
+    console.log(`[Transitions] GAP B FIX - Fallback to LLM evidence summary (evidencePack not available)`);
+  }
+
+  // FIX GAP B: Get PR data for hard evidence binding validator (F3)
+  const rawPayload = signal?.rawPayload || {};
+  const prData = rawPayload.pull_request || {};
+  const changedFilesRaw = extracted.changedFiles || prData.changed_files || [];
+  const changedFiles: string[] = Array.isArray(changedFilesRaw)
+    ? changedFilesRaw.map((f: any) => typeof f === 'string' ? f : f.filename || '')
+    : [];
+
+  // FIX GAP B: Auto-approve threshold (default 0.85 per F3)
+  // TODO: Make this configurable per workspace in future
+  const autoApproveThreshold = 0.85;
+
   // Build validator context
   const validatorCtx = {
     workspaceId: drift.workspaceId,
@@ -1408,9 +1474,17 @@ async function handlePatchGenerated(drift: any): Promise<TransitionResult> {
     originalMarkdown: docContent,
     patchedMarkdown: applyPatchToDoc(docContent, patchProposal.unifiedDiff),
     diff: patchProposal.unifiedDiff,
-    evidence: [drift.evidenceSummary || ''],
+    evidence: structuredEvidence, // FIX GAP B: Use structured evidence
     confidence: weightedConfidence, // Point 5: Use weighted confidence
     expectedRevision: docRevision,
+    // FIX GAP B: Add prData and autoApproveThreshold for hard evidence binding (F3)
+    autoApproveThreshold,
+    prData: {
+      changedFiles,
+      diff: extracted.diff || rawPayload.diff || '',
+      title: extracted.prTitle || prData.title || '',
+      body: extracted.prBody || prData.body || '',
+    },
   };
 
   // Point 3: Run output-specific validators first
