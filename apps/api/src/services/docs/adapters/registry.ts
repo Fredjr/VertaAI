@@ -15,6 +15,7 @@ import { createSwaggerAdapter, type SwaggerAdapterConfig } from './swaggerAdapte
 import { createBackstageAdapter, type BackstageAdapterConfig } from './backstageAdapter.js';
 import { createCodeCommentsAdapter, type CodeCommentsAdapterConfig } from './codeCommentsAdapter.js';
 import { createGitBookAdapter, type GitBookAdapterConfig } from './gitbookAdapter.js';
+import { createConfluenceAdapter } from './confluenceAdapter.js';
 import type { DocAdapter, DocCategory, DocSystem } from './types.js';
 
 // Type for adapter factory functions
@@ -87,7 +88,6 @@ function registerBuiltInAdapters(): void {
     if (!workspaceId) {
       throw new Error('Confluence adapter requires workspaceId');
     }
-    const { createConfluenceAdapter } = require('./confluenceAdapter.js');
     return createConfluenceAdapter(workspaceId);
   });
 }
