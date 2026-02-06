@@ -12,6 +12,8 @@ import { prisma } from '../lib/db.js';
 interface ConfluenceCredentials {
   cloudId: string;
   accessToken: string;
+  userEmail?: string; // Required for API token (Basic Auth) authentication
+  siteUrl?: string;   // Direct site URL for Basic Auth (e.g., https://frederic-le.atlassian.net)
 }
 
 // Cache of credentials per workspace/organization
@@ -41,10 +43,16 @@ async function getCredentials(workspaceOrOrgId: string): Promise<ConfluenceCrede
     select: { config: true, status: true },
   });
 
+  let userEmail: string | null = null;
+
+  let siteUrl: string | null = null;
+
   if (integration?.status === 'connected' && integration.config) {
-    const config = integration.config as { cloudId?: string; accessToken?: string };
+    const config = integration.config as { cloudId?: string; accessToken?: string; userEmail?: string; siteUrl?: string };
     cloudId = config.cloudId || null;
     accessToken = config.accessToken || null;
+    userEmail = config.userEmail || null;
+    siteUrl = config.siteUrl || null;
   }
 
   // Fall back to legacy Organization model
@@ -65,7 +73,12 @@ async function getCredentials(workspaceOrOrgId: string): Promise<ConfluenceCrede
     return null;
   }
 
-  const credentials = { cloudId, accessToken };
+  const credentials: ConfluenceCredentials = {
+    cloudId,
+    accessToken,
+    userEmail: userEmail || undefined,
+    siteUrl: siteUrl || undefined,
+  };
   credentialsCache.set(workspaceOrOrgId, credentials);
   return credentials;
 }
@@ -90,13 +103,36 @@ async function confluenceRequest(
     throw new Error('Confluence not connected for this organization');
   }
 
-  const url = `https://api.atlassian.com/ex/confluence/${creds.cloudId}${path}`;
-  console.log(`[ConfluenceClient] Request: ${options.method || 'GET'} ${url}`);
+  // Determine auth method: API tokens (starting with "ATATT") use Basic Auth,
+  // OAuth tokens use Bearer auth
+  const isApiToken = creds.accessToken.startsWith('ATATT');
+  let url: string;
+  let authHeader: string;
+
+  if (isApiToken) {
+    // Basic Auth with API token must use the direct site URL (Cloud API doesn't support Basic Auth)
+    const baseSiteUrl = creds.siteUrl || process.env.CONFLUENCE_SITE_URL;
+    if (!baseSiteUrl) {
+      throw new Error('CONFLUENCE_SITE_URL or siteUrl in integration config required for API token auth');
+    }
+    url = `${baseSiteUrl}${path}`;
+    const email = creds.userEmail || process.env.CONFLUENCE_USER_EMAIL || '';
+    if (!email) {
+      throw new Error('CONFLUENCE_USER_EMAIL or userEmail in integration config required for API token auth');
+    }
+    authHeader = `Basic ${Buffer.from(`${email}:${creds.accessToken}`).toString('base64')}`;
+    console.log(`[ConfluenceClient] Request (Basic Auth): ${options.method || 'GET'} ${url}`);
+  } else {
+    // OAuth Bearer token uses Atlassian cloud API
+    url = `https://api.atlassian.com/ex/confluence/${creds.cloudId}${path}`;
+    authHeader = `Bearer ${creds.accessToken}`;
+    console.log(`[ConfluenceClient] Request (Bearer): ${options.method || 'GET'} ${url}`);
+  }
 
   const response = await fetch(url, {
     ...options,
     headers: {
-      'Authorization': `Bearer ${creds.accessToken}`,
+      'Authorization': authHeader,
       'Content-Type': 'application/json',
       'Accept': 'application/json',
       ...options.headers,
