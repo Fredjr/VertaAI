@@ -1583,7 +1583,9 @@ async function handlePatchGenerated(drift: any): Promise<TransitionResult> {
   // Point 3: Run output-specific validators first
   const { validatePatchForOutput } = await import('../../config/outputValidators.js');
   const targetDocSystems = drift.targetDocSystems || [];
-  const primaryDocSystem = targetDocSystems[0] || findings[0]?.docSystem || 'confluence';
+  // Use the ACTUAL doc system from baselineFindings (the doc being patched),
+  // not the theoretical target list (which may prioritize github_readme over confluence)
+  const primaryDocSystem = findings[0]?.docSystem || targetDocSystems[0] || 'confluence';
 
   const outputValidationResult = validatePatchForOutput(
     primaryDocSystem,
