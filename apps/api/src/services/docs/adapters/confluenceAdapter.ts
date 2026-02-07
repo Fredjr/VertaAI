@@ -73,7 +73,10 @@ export function createConfluenceAdapter(workspaceId: string): ConfluenceAdapter 
 
       // Optimistic locking - check if page was modified since we fetched it
       const currentVersion = String(currentPage.version);
+      console.log(`[ConfluenceAdapter] Version check: baseRevision=${baseRevision}, currentVersion=${currentVersion}`);
+
       if (currentVersion !== baseRevision) {
+        console.warn(`[ConfluenceAdapter] Revision conflict: Expected ${baseRevision}, got ${currentVersion}`);
         return {
           success: false,
           error: `Revision conflict: page was modified since fetch. ` +

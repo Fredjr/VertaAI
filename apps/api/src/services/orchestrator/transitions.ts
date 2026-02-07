@@ -2257,6 +2257,7 @@ async function handleWritebackValidated(drift: any): Promise<TransitionResult> {
         });
 
         if (!writeResult.success) {
+          console.error(`[Transitions] Confluence writeback failed: ${writeResult.error}`);
           throw new Error(`Confluence writeback failed: ${writeResult.error}`);
         }
 
