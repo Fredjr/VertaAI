@@ -2236,6 +2236,8 @@ async function handleWritebackValidated(drift: any): Promise<TransitionResult> {
         });
       } else {
         // Confluence writeback (legacy)
+        const { createConfluenceAdapter } = await import('../docs/adapters/confluenceAdapter.js');
+
         const confluenceIntegration = await prisma.integration.findFirst({
           where: { workspaceId: drift.workspaceId, type: 'confluence', status: 'connected' },
         });
@@ -2245,9 +2247,20 @@ async function handleWritebackValidated(drift: any): Promise<TransitionResult> {
           throw new Error('Confluence integration not configured');
         }
 
-        // TODO: Implement actual Confluence API writeback
-        console.log(`[Transitions] Would call Confluence API to update doc ${patchProposal.docId}`);
-        console.log(`[Transitions] Patch diff: ${patchProposal.unifiedDiff.substring(0, 200)}...`);
+        // Use Confluence adapter to write the patch
+        const adapter = createConfluenceAdapter(drift.workspaceId);
+        const writeResult = await adapter.writePatch({
+          doc: { docId: patchProposal.docId, docSystem: 'confluence' },
+          baseRevision: docRevision,
+          newContent: newContent,
+          summary: patchProposal.summary || 'Drift fix applied via VertaAI',
+        });
+
+        if (!writeResult.success) {
+          throw new Error(`Confluence writeback failed: ${writeResult.error}`);
+        }
+
+        console.log(`[Transitions] Successfully wrote patch to Confluence doc ${patchProposal.docId}, new revision: ${writeResult.newRevision}`);
       }
     }
 
