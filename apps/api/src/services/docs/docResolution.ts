@@ -386,7 +386,14 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
   attempts.push({
     step: 'mapping_lookup',
     ok: mappings.length > 0,
-    info: { mappingsFound: mappings.length, repo, service, preferredCategories },
+    info: {
+      mappingsFound: mappings.length,
+      repo,
+      service,
+      preferredCategories,
+      targetDocSystems: targetDocSystems || null,
+      filterApplied: !!(targetDocSystems && targetDocSystems.length > 0),
+    },
   });
 
   if (mappings.length > 0) {
