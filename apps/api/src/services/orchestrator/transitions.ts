@@ -472,7 +472,10 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
       minConfidenceForSuggest: workspace.minConfidenceForSuggest,
       allowedConfluenceSpaces: workspace.allowedConfluenceSpaces,
     } : undefined,
-    // CRITICAL FIX: Pass targetDocSystems to enforce source-output compatibility
+    // NEW: Pass sourceType for explicit source-specific mappings
+    sourceType: sourceType,
+    // DEPRECATED: targetDocSystems - replaced with explicit source-specific mappings
+    // Kept for backward compatibility during transition
     targetDocSystems,
   });
 

@@ -72,13 +72,13 @@ export interface DocResolutionInput {
   ignoreReason?: string;
   // Per spec Section 1.1 + Section 7: workspace policy for doc resolution
   policy?: WorkspacePolicy;
-  // NEW: Multi-source support (Phase 1)
-  // Drift type hints from triage agent for category-aware resolution
+  // NEW: Explicit source type for source-specific mappings
+  // NULL/undefined = fallback to source-agnostic mappings
+  sourceType?: string | null;
+  // DEPRECATED: Complex scoring fields - replaced with simple explicit mappings
+  // Kept for backward compatibility during transition
   driftTypeHints?: Array<'instruction' | 'process' | 'ownership' | 'coverage' | 'environment_tooling'>;
-  // Preferred doc category based on drift type
   preferredDocCategory?: 'functional' | 'developer' | 'operational';
-  // CRITICAL: Target doc systems from source-output compatibility matrix
-  // This enforces the routing rules: e.g., GitHub PR instruction drift → README first, not Confluence
   targetDocSystems?: string[];
 }
 
@@ -351,162 +351,101 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
 
   // -------------------------------------------------------------------------
   // P1: Look up DocMappingV2 by repo or service
-  // With category-aware resolution (Phase 1 - Multi-Source)
-  // CRITICAL FIX: Filter by targetDocSystems to enforce source-output compatibility
+  // SIMPLIFIED: Explicit source-specific mappings with simple fallback
   // -------------------------------------------------------------------------
-  const preferredCategories = getDocCategoriesForDriftTypes(driftTypeHints);
-  const { targetDocSystems } = input;
+  const { sourceType } = input;
 
-  console.log(`[DocResolution] P1: Looking up DocMappingV2 for repo=${repo}, service=${service}, preferredCategories=[${preferredCategories.join(', ')}], targetDocSystems=[${targetDocSystems?.join(', ') || 'none'}]`);
+  console.log(`[DocResolution] P1: Looking up DocMappingV2 for repo=${repo}, service=${service}, sourceType=${sourceType || 'any'}`);
 
-  // Build where clause with targetDocSystems filter
-  const whereClause: any = {
-    workspaceId,
-    OR: [
-      repo ? { repo } : {},
-      service ? { service } : {},
-    ].filter(c => Object.keys(c).length > 0),
-  };
+  // Strategy: Try exact match first (source-specific), then fallback to source-agnostic
+  // 1. Exact match: workspace + repo + sourceType
+  // 2. Fallback: workspace + repo + sourceType=NULL (applies to all sources)
 
-  // CRITICAL: Filter by targetDocSystems if provided (enforces source-output compatibility)
-  if (targetDocSystems && targetDocSystems.length > 0) {
-    whereClause.docSystem = { in: targetDocSystems };
-    console.log(`[DocResolution] P1: Filtering by targetDocSystems=[${targetDocSystems.join(', ')}]`);
+  let mapping = null;
+
+  // Try exact match first (source-specific mapping)
+  if (sourceType && repo) {
+    mapping = await prisma.docMappingV2.findFirst({
+      where: {
+        workspaceId,
+        repo,
+        sourceType,
+      },
+      orderBy: [
+        { isPrimary: 'desc' },
+        { updatedAt: 'desc' },
+      ],
+    });
+
+    if (mapping) {
+      console.log(`[DocResolution] P1: Found source-specific mapping: ${mapping.docSystem} ${mapping.docId}`);
+    }
   }
 
-  const mappings = await prisma.docMappingV2.findMany({
-    where: whereClause,
-    orderBy: [
-      { isPrimary: 'desc' },
-      { updatedAt: 'desc' },
-    ],
-    take: 10, // Increased to allow category filtering
-  });
+  // Fallback to source-agnostic mapping (sourceType=NULL)
+  if (!mapping && repo) {
+    mapping = await prisma.docMappingV2.findFirst({
+      where: {
+        workspaceId,
+        repo,
+        sourceType: null, // NULL means "applies to all sources"
+        isPrimary: true,  // Prefer primary doc for fallback
+      },
+      orderBy: [
+        { updatedAt: 'desc' },
+      ],
+    });
+
+    if (mapping) {
+      console.log(`[DocResolution] P1: Found source-agnostic primary mapping: ${mapping.docSystem} ${mapping.docId}`);
+    }
+  }
 
   attempts.push({
     step: 'mapping_lookup',
-    ok: mappings.length > 0,
+    ok: !!mapping,
     info: {
-      mappingsFound: mappings.length,
+      mappingsFound: mapping ? 1 : 0,
       repo,
       service,
-      preferredCategories,
-      targetDocSystems: targetDocSystems || null,
-      filterApplied: !!(targetDocSystems && targetDocSystems.length > 0),
+      sourceType: sourceType || null,
+      matchType: mapping ? (mapping.sourceType ? 'source-specific' : 'source-agnostic') : 'none',
     },
   });
 
-  if (mappings.length > 0) {
-    console.log(`[DocResolution] P1: Found ${mappings.length} mappings`);
+  if (mapping) {
+    console.log(`[DocResolution] P1: Found mapping: ${mapping.docSystem} ${mapping.docId}`);
 
-    // Map and score candidates with category awareness
-    const p1Candidates: DocCandidate[] = mappings.map(m => {
-      // Calculate base confidence
-      let confidence = m.isPrimary ? 0.85 : 0.70;
-      const reasons: string[] = [
-        m.repo === repo ? 'Matched by repository' : 'Matched by service',
-        m.isPrimary ? 'Primary doc mapping' : 'Secondary doc mapping',
-      ];
-
-      // CRITICAL: Boost confidence based on targetDocSystems priority order
-      // This ensures source-output compatibility matrix is enforced
-      if (targetDocSystems && targetDocSystems.length > 0) {
-        const docSystemIndex = targetDocSystems.indexOf(m.docSystem);
-        if (docSystemIndex >= 0) {
-          // First target gets +0.30, second +0.20, third +0.10, fourth +0.05, etc.
-          // Increased boost to ensure priority order beats isPrimary + category boosts
-          // This ensures Backstage (index 0, non-primary) beats Confluence (index 1, primary) for ownership drift
-          const priorityBoost = Math.max(0.30 - (docSystemIndex * 0.10), 0);
-          confidence = Math.min(confidence + priorityBoost, 0.99);
-          reasons.push(`Target doc system priority: #${docSystemIndex + 1} of ${targetDocSystems.length}`);
-        }
-      }
-
-      // Boost confidence if doc category matches preferred categories
-      const docCategory = (m as any).docCategory as string | null;
-      if (docCategory && preferredCategories.includes(docCategory as any)) {
-        const categoryIndex = preferredCategories.indexOf(docCategory as any);
-        // Reduced boost to not override targetDocSystems priority
-        const categoryBoost = categoryIndex === 0 ? 0.03 : 0.01;
-        confidence = Math.min(confidence + categoryBoost, 0.99);
-        reasons.push(`Category match: ${docCategory} (preferred for drift type)`);
-      }
-
-      // Boost if doc has matching drift type affinity
-      const driftTypeAffinity = (m as any).driftTypeAffinity as string[] | null;
-      if (driftTypeHints && driftTypeAffinity && driftTypeAffinity.length > 0) {
-        const matchingAffinities = driftTypeHints.filter(dt => driftTypeAffinity.includes(dt));
-        if (matchingAffinities.length > 0) {
-          confidence = Math.min(confidence + 0.02, 0.99);
-          reasons.push(`Drift type affinity match: ${matchingAffinities.join(', ')}`);
-        }
-      }
-
-      return {
-        docId: m.docId,
-        docSystem: m.docSystem as 'confluence' | 'notion',
-        docTitle: m.docTitle,
-        docUrl: m.docUrl,
-        isPrimary: m.isPrimary,
-        hasManagedRegion: m.hasManagedRegion,
-        allowWriteback: m.allowWriteback,
-        spaceKey: m.spaceKey ?? undefined,
-        reasons,
-        confidence,
-      };
-    });
-
-    // Sort by confidence, with targetDocSystems priority as tie-breaker
-    p1Candidates.sort((a, b) => {
-      // If confidences are very close (within 0.01), use targetDocSystems priority order
-      if (targetDocSystems && Math.abs(a.confidence - b.confidence) < 0.01) {
-        const aIndex = targetDocSystems.indexOf(a.docSystem);
-        const bIndex = targetDocSystems.indexOf(b.docSystem);
-        if (aIndex >= 0 && bIndex >= 0) {
-          return aIndex - bIndex; // Lower index = higher priority
-        }
-      }
-
-      // Primary docs always first within similar confidence
-      if (a.isPrimary !== b.isPrimary && Math.abs(a.confidence - b.confidence) < 0.15) {
-        return a.isPrimary ? -1 : 1;
-      }
-      return b.confidence - a.confidence;
-    });
-
-    // Primary docs get higher confidence
-    const primaryDoc = p1Candidates.find(c => c.isPrimary);
-
-    // Per spec Section 7: If policy.primaryDocRequired=true and no primary doc, return NEEDS_MAPPING
-    if (policy?.primaryDocRequired && !primaryDoc) {
-      console.log(`[DocResolution] Policy gate: primaryDocRequired=true but no primary doc found`);
-      return {
-        status: 'needs_mapping',
-        method: 'mapping',
-        confidence: 0,
-        noWritebackMode: true,
-        candidates: p1Candidates.slice(0, 3), // Include non-primary candidates for reference
-        repoFullName,
-        attempts,
-        thresholds,
-        notes: 'Policy requires a primary doc mapping, but none found. Please mark one doc as primary.',
-      };
-    }
-
-    // noWritebackMode is true if the selected doc doesn't allow writeback
-    const selectedDoc = primaryDoc || p1Candidates[0];
-    const noWritebackMode = selectedDoc ? !selectedDoc.allowWriteback : true;
+    // Simple candidate creation - no complex scoring
+    const candidate: DocCandidate = {
+      docId: mapping.docId,
+      docSystem: mapping.docSystem as 'confluence' | 'notion',
+      docTitle: mapping.docTitle,
+      docUrl: mapping.docUrl,
+      isPrimary: mapping.isPrimary,
+      hasManagedRegion: mapping.hasManagedRegion,
+      allowWriteback: mapping.allowWriteback,
+      spaceKey: mapping.spaceKey ?? undefined,
+      reasons: [
+        mapping.sourceType ? `Source-specific mapping for ${mapping.sourceType}` : 'Source-agnostic mapping (applies to all sources)',
+        mapping.isPrimary ? 'Primary doc' : 'Secondary doc',
+        `Matched by repository: ${mapping.repo}`,
+      ],
+      confidence: 0.95, // High confidence for explicit mappings
+    };
 
     return {
       status: 'mapped',
       method: 'mapping',
-      confidence: primaryDoc?.confidence ?? p1Candidates[0]?.confidence ?? 0.70,
-      noWritebackMode,
-      candidates: p1Candidates.slice(0, 3),
+      confidence: 0.95,
+      noWritebackMode: !mapping.allowWriteback,
+      candidates: [candidate],
       repoFullName,
       attempts,
       thresholds,
-      notes: `Found ${mappings.length} mapping(s) for repo/service`,
+      notes: mapping.sourceType
+        ? `Found source-specific mapping for ${mapping.sourceType}`
+        : 'Found source-agnostic mapping (applies to all sources)',
     };
   }
 

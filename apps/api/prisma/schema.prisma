@@ -300,6 +300,7 @@ model DocMappingV2 {
   docCategory       String?  @map("doc_category") // 'functional' | 'developer' | 'operational'
   filePath          String?  @map("file_path") // For GitHub-based docs: "README.md", "docs/api.yaml"
   driftTypeAffinity String[] @default([]) @map("drift_type_affinity") // Drift types this doc is relevant for
+  sourceType        String?  @map("source_type") // 'github_pr' | 'pagerduty_incident' | 'slack_cluster' | etc. NULL = applies to all sources
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -307,6 +308,7 @@ model DocMappingV2 {
   @@index([workspaceId, service])
   @@index([workspaceId, repo])
   @@index([workspaceId, docCategory])
+  @@index([workspaceId, repo, sourceType])
   @@map("doc_mappings_v2")
 }
 
