@@ -25,23 +25,28 @@ create_test_drift() {
   local source_type=$4
   local repo=$5
   local service=$6
-  
+
+  # Use drift_id in evidence to ensure unique fingerprints
+  local evidence="E2E test drift for $drift_type from $source_type (test_id: $drift_id)"
+
   psql -h $DB_HOST -p $DB_PORT -U $DB_USER -d $DB_NAME -c "
     INSERT INTO drift_candidates (
-      workspace_id, id, signal_event_id, state, source_type, 
-      repo, service, drift_type, drift_domains, evidence_summary, 
-      confidence, risk_level, recommended_action, created_at
+      workspace_id, id, signal_event_id, state, source_type,
+      repo, service, drift_type, drift_domains, evidence_summary,
+      confidence, risk_level, recommended_action, created_at, fingerprint
     ) VALUES (
       '$WORKSPACE_ID', '$drift_id', '$signal_id', 'DRIFT_CLASSIFIED',
       '$source_type', '$repo', '$service', '$drift_type',
-      ARRAY['test'], 'E2E test drift', 0.75, 'medium', 'generate_patch', NOW()
+      ARRAY['test'], '$evidence', 0.75, 'medium', 'generate_patch', NOW(),
+      'test-fp-$drift_id-' || extract(epoch from now())::text
     )
     ON CONFLICT (workspace_id, id) DO UPDATE SET
       state = 'DRIFT_CLASSIFIED',
       doc_candidates = '[]'::jsonb,
       docs_resolution = NULL,
       baseline_findings = '[]'::jsonb,
-      selected_doc_id = NULL;
+      selected_doc_id = NULL,
+      fingerprint = 'test-fp-$drift_id-' || extract(epoch from now())::text;
   " > /dev/null 2>&1
 }
 

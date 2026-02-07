@@ -413,9 +413,10 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
       if (targetDocSystems && targetDocSystems.length > 0) {
         const docSystemIndex = targetDocSystems.indexOf(m.docSystem);
         if (docSystemIndex >= 0) {
-          // First target gets +0.20, second +0.15, third +0.10, etc.
-          // This ensures README (index 0) beats Confluence (index 3) for instruction drift
-          const priorityBoost = Math.max(0.20 - (docSystemIndex * 0.05), 0);
+          // First target gets +0.30, second +0.20, third +0.10, fourth +0.05, etc.
+          // Increased boost to ensure priority order beats isPrimary + category boosts
+          // This ensures Backstage (index 0, non-primary) beats Confluence (index 1, primary) for ownership drift
+          const priorityBoost = Math.max(0.30 - (docSystemIndex * 0.10), 0);
           confidence = Math.min(confidence + priorityBoost, 0.99);
           reasons.push(`Target doc system priority: #${docSystemIndex + 1} of ${targetDocSystems.length}`);
         }
