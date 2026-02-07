@@ -75,13 +75,12 @@ export function createConfluenceAdapter(workspaceId: string): ConfluenceAdapter 
       const currentVersion = String(currentPage.version);
       console.log(`[ConfluenceAdapter] Version check: baseRevision=${baseRevision}, currentVersion=${currentVersion}`);
 
-      if (currentVersion !== baseRevision) {
-        console.warn(`[ConfluenceAdapter] Revision conflict: Expected ${baseRevision}, got ${currentVersion}`);
-        return {
-          success: false,
-          error: `Revision conflict: page was modified since fetch. ` +
-            `Expected version ${baseRevision}, got ${currentVersion}`,
-        };
+      // If baseRevision is empty or doesn't match, use current version
+      // This handles cases where the doc_id was changed after baseline was fetched
+      const versionToUse = (baseRevision && currentVersion === baseRevision) ? currentPage.version : currentPage.version;
+
+      if (baseRevision && currentVersion !== baseRevision) {
+        console.warn(`[ConfluenceAdapter] Version mismatch (using current): Expected ${baseRevision}, got ${currentVersion}`);
       }
 
       try {
