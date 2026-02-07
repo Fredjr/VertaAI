@@ -85,19 +85,89 @@ async function handleBlockActions(payload: any, res: Response) {
     return res.json({ ok: true });
   }
 
-  // Find the proposal and its organization + document
+  // FIX: Try workspace-scoped PatchProposal first (new model)
+  const patchProposal = await prisma.patchProposal.findFirst({
+    where: { id: proposalId },
+  });
+
+  if (patchProposal) {
+    // Use workspace-scoped handlers
+    const userId = payload.user?.id;
+    const workspaceId = patchProposal.workspaceId;
+
+    console.log(`[SlackInteractions] Using workspace-scoped handler for ${actionType}`);
+
+    switch (actionType) {
+      case 'approve':
+        await handleWorkspaceApprove(workspaceId, proposalId, userId);
+        // Update Slack message
+        if (patchProposal.slackChannel && patchProposal.slackTs) {
+          await updateSlackMessage(
+            workspaceId,
+            patchProposal.slackChannel,
+            patchProposal.slackTs,
+            '✅ Approved',
+            [
+              { type: 'section', text: { type: 'mrkdwn', text: `✅ *Approved* by <@${userId}>` } },
+              { type: 'context', elements: [{ type: 'mrkdwn', text: `Approved at ${new Date().toISOString()}` }] },
+            ]
+          );
+        }
+        break;
+      case 'reject':
+        await openWorkspaceRejectModal(
+          workspaceId,
+          payload.trigger_id,
+          proposalId,
+          patchProposal.summary || undefined
+        );
+        break;
+      case 'edit':
+        await openWorkspaceEditModal(
+          workspaceId,
+          payload.trigger_id,
+          proposalId,
+          patchProposal.diffContent || '',
+          patchProposal.summary || undefined
+        );
+        break;
+      case 'snooze':
+        await handleWorkspaceSnooze(workspaceId, proposalId, userId);
+        // Update Slack message
+        if (patchProposal.slackChannel && patchProposal.slackTs) {
+          const snoozeUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+          await updateSlackMessage(
+            workspaceId,
+            patchProposal.slackChannel,
+            patchProposal.slackTs,
+            '💤 Snoozed',
+            [
+              { type: 'section', text: { type: 'mrkdwn', text: `💤 *Snoozed* until ${snoozeUntil.toISOString()}` } },
+              { type: 'context', elements: [{ type: 'mrkdwn', text: `By <@${userId}>` }] },
+            ]
+          );
+        }
+        break;
+    }
+
+    return res.json({ ok: true });
+  }
+
+  // Fallback: Try old DiffProposal model (for backwards compatibility)
   const proposal = await prisma.diffProposal.findUnique({
     where: { id: proposalId },
     include: { organization: true, document: true },
   });
 
   if (!proposal) {
-    console.error(`[SlackInteractions] Proposal not found: ${proposalId}`);
+    console.error(`[SlackInteractions] Proposal not found in both models: ${proposalId}`);
     return res.json({ ok: true });
   }
 
   const orgId = proposal.orgId;
   const userId = payload.user?.id;
+
+  console.log(`[SlackInteractions] Using legacy DiffProposal handler for ${actionType}`);
 
   switch (actionType) {
     case 'approve':
@@ -250,6 +320,127 @@ async function openRejectModal(
   });
 }
 
+/**
+ * Workspace-scoped reject modal
+ */
+async function openWorkspaceRejectModal(
+  workspaceId: string,
+  triggerId: string,
+  proposalId: string,
+  summary?: string
+) {
+  const blocks: any[] = [];
+
+  if (summary) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: summary },
+    });
+    blocks.push({ type: 'divider' });
+  }
+
+  blocks.push({
+    type: 'input',
+    block_id: 'category',
+    element: {
+      type: 'static_select',
+      action_id: 'category_select',
+      placeholder: { type: 'plain_text', text: 'Select a reason' },
+      options: [
+        { text: { type: 'plain_text', text: 'Incorrect change' }, value: 'incorrect_change' },
+        { text: { type: 'plain_text', text: 'Not needed' }, value: 'not_needed' },
+        { text: { type: 'plain_text', text: 'Out of scope' }, value: 'out_of_scope' },
+        { text: { type: 'plain_text', text: 'Needs more context' }, value: 'needs_more_context' },
+        { text: { type: 'plain_text', text: 'Wrong document' }, value: 'doc_not_source_of_truth' },
+        { text: { type: 'plain_text', text: 'Wrong owner' }, value: 'wrong_owner' },
+        { text: { type: 'plain_text', text: 'Formatting issue' }, value: 'formatting_issue' },
+        { text: { type: 'plain_text', text: 'Other' }, value: 'other' },
+      ],
+    },
+    label: { type: 'plain_text', text: 'Rejection reason' },
+  });
+
+  blocks.push({
+    type: 'input',
+    block_id: 'reason',
+    optional: true,
+    element: {
+      type: 'plain_text_input',
+      action_id: 'reason_input',
+      multiline: true,
+      placeholder: { type: 'plain_text', text: 'Add any additional details...' },
+    },
+    label: { type: 'plain_text', text: 'Additional details (optional)' },
+  });
+
+  await openSlackModal(workspaceId, triggerId, {
+    type: 'modal',
+    callback_id: `reject:${proposalId}`,
+    title: { type: 'plain_text', text: 'Reject Patch' },
+    submit: { type: 'plain_text', text: 'Reject' },
+    blocks,
+  });
+}
+
+/**
+ * Workspace-scoped edit modal
+ */
+async function openWorkspaceEditModal(
+  workspaceId: string,
+  triggerId: string,
+  proposalId: string,
+  diff: string,
+  summary?: string
+) {
+  const blocks: any[] = [];
+
+  if (summary) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: summary },
+    });
+    blocks.push({ type: 'divider' });
+  }
+
+  blocks.push({
+    type: 'input',
+    block_id: 'diff',
+    element: {
+      type: 'plain_text_input',
+      action_id: 'diff_input',
+      multiline: true,
+      initial_value: diff,
+      placeholder: { type: 'plain_text', text: 'Edit the patch...' },
+    },
+    label: { type: 'plain_text', text: 'Patch content' },
+  });
+
+  blocks.push({
+    type: 'input',
+    block_id: 'apply_option',
+    optional: true,
+    element: {
+      type: 'checkboxes',
+      action_id: 'apply_checkbox',
+      options: [
+        {
+          text: { type: 'plain_text', text: 'Apply immediately after saving' },
+          value: 'apply_now',
+        },
+      ],
+    },
+    label: { type: 'plain_text', text: 'Options' },
+  });
+
+  await openSlackModal(workspaceId, triggerId, {
+    type: 'modal',
+    callback_id: `edit:${proposalId}`,
+    title: { type: 'plain_text', text: 'Edit Patch' },
+    submit: { type: 'plain_text', text: 'Save' },
+    blocks,
+  });
+}
+
 async function openEditModal(
   orgId: string,
   triggerId: string,
@@ -327,15 +518,116 @@ async function handleViewSubmission(payload: any, res: Response) {
     return res.json({ response_action: 'clear' });
   }
 
-  // Get the proposal to find the org
+  // FIX: Try workspace-scoped PatchProposal first
+  const patchProposal = await prisma.patchProposal.findFirst({
+    where: { id: proposalId },
+  });
+
+  if (patchProposal) {
+    // Handle workspace-scoped proposal
+    const workspaceId = patchProposal.workspaceId;
+
+    console.log(`[SlackInteractions] View submission for workspace-scoped proposal`);
+
+    switch (action) {
+      case 'reject': {
+        const category = payload.view?.state?.values?.category?.category_select?.selected_option?.value || 'other';
+        const additionalDetails = payload.view?.state?.values?.reason?.reason_input?.value || '';
+
+        const categoryLabels: Record<string, string> = {
+          'incorrect_change': 'Incorrect change',
+          'not_needed': 'Not needed',
+          'out_of_scope': 'Out of scope',
+          'needs_more_context': 'Needs more context',
+          'doc_not_source_of_truth': 'Wrong document',
+          'wrong_owner': 'Wrong owner',
+          'formatting_issue': 'Formatting issue',
+          'other': 'Other',
+        };
+
+        const rejectionReason = additionalDetails
+          ? `${categoryLabels[category] || category}: ${additionalDetails}`
+          : categoryLabels[category] || category;
+
+        const result = await handleWorkspaceReject(workspaceId, proposalId, slackUserId, category, rejectionReason);
+
+        if (!result.success) {
+          console.error(`[SlackInteractions] Rejection failed: ${result.error}`);
+          return res.json({
+            response_action: 'errors',
+            errors: { category: `Rejection failed: ${result.error}` },
+          });
+        }
+
+        // Update Slack message
+        if (patchProposal.slackChannel && patchProposal.slackTs) {
+          await updateSlackMessage(
+            workspaceId,
+            patchProposal.slackChannel,
+            patchProposal.slackTs,
+            '❌ Rejected',
+            [
+              { type: 'section', text: { type: 'mrkdwn', text: `❌ *Rejected* by <@${slackUserId}>` } },
+              { type: 'context', elements: [{ type: 'mrkdwn', text: `Reason: ${rejectionReason}` }] },
+            ]
+          );
+        }
+        break;
+      }
+
+      case 'edit': {
+        const editedDiff = payload.view?.state?.values?.diff?.diff_input?.value;
+        const applyOptions = payload.view?.state?.values?.apply_option?.apply_checkbox?.selected_options || [];
+        const shouldApplyNow = applyOptions.some((opt: any) => opt.value === 'apply_now');
+
+        if (!editedDiff) {
+          break;
+        }
+
+        const result = await handleWorkspaceEdit(workspaceId, proposalId, slackUserId, editedDiff, shouldApplyNow);
+
+        if (!result.success) {
+          return res.json({
+            response_action: 'errors',
+            errors: { diff: `Edit failed: ${result.error}` },
+          });
+        }
+
+        // Update Slack message
+        if (patchProposal.slackChannel && patchProposal.slackTs) {
+          const statusText = shouldApplyNow
+            ? '✏️ *Edited & Applied* - Patch has been applied'
+            : '✏️ *Edited* - Diff saved (not applied yet)';
+
+          await updateSlackMessage(
+            workspaceId,
+            patchProposal.slackChannel,
+            patchProposal.slackTs,
+            shouldApplyNow ? '✏️ Edited & Applied' : '✏️ Edited',
+            [
+              { type: 'section', text: { type: 'mrkdwn', text: statusText } },
+              { type: 'context', elements: [{ type: 'mrkdwn', text: `By <@${slackUserId}> at ${new Date().toISOString()}` }] },
+            ]
+          );
+        }
+        break;
+      }
+    }
+
+    return res.json({ response_action: 'clear' });
+  }
+
+  // Fallback: Try old DiffProposal model
   const proposal = await prisma.diffProposal.findUnique({
     where: { id: proposalId },
   });
 
   if (!proposal) {
-    console.error(`[SlackInteractions] Proposal not found: ${proposalId}`);
+    console.error(`[SlackInteractions] Proposal not found in both models: ${proposalId}`);
     return res.json({ response_action: 'clear' });
   }
+
+  console.log(`[SlackInteractions] View submission for legacy DiffProposal`);
 
   const user = await findOrCreateUser(proposal.orgId, slackUserId);
 
