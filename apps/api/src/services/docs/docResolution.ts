@@ -408,13 +408,26 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
         m.isPrimary ? 'Primary doc mapping' : 'Secondary doc mapping',
       ];
 
+      // CRITICAL: Boost confidence based on targetDocSystems priority order
+      // This ensures source-output compatibility matrix is enforced
+      if (targetDocSystems && targetDocSystems.length > 0) {
+        const docSystemIndex = targetDocSystems.indexOf(m.docSystem);
+        if (docSystemIndex >= 0) {
+          // First target gets +0.20, second +0.15, third +0.10, etc.
+          // This ensures README (index 0) beats Confluence (index 3) for instruction drift
+          const priorityBoost = Math.max(0.20 - (docSystemIndex * 0.05), 0);
+          confidence = Math.min(confidence + priorityBoost, 0.99);
+          reasons.push(`Target doc system priority: #${docSystemIndex + 1} of ${targetDocSystems.length}`);
+        }
+      }
+
       // Boost confidence if doc category matches preferred categories
       const docCategory = (m as any).docCategory as string | null;
       if (docCategory && preferredCategories.includes(docCategory as any)) {
         const categoryIndex = preferredCategories.indexOf(docCategory as any);
-        // Higher boost for first preferred category
-        const categoryBoost = categoryIndex === 0 ? 0.10 : 0.05;
-        confidence = Math.min(confidence + categoryBoost, 0.95);
+        // Reduced boost to not override targetDocSystems priority
+        const categoryBoost = categoryIndex === 0 ? 0.03 : 0.01;
+        confidence = Math.min(confidence + categoryBoost, 0.99);
         reasons.push(`Category match: ${docCategory} (preferred for drift type)`);
       }
 
@@ -423,7 +436,7 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
       if (driftTypeHints && driftTypeAffinity && driftTypeAffinity.length > 0) {
         const matchingAffinities = driftTypeHints.filter(dt => driftTypeAffinity.includes(dt));
         if (matchingAffinities.length > 0) {
-          confidence = Math.min(confidence + 0.08, 0.95);
+          confidence = Math.min(confidence + 0.02, 0.99);
           reasons.push(`Drift type affinity match: ${matchingAffinities.join(', ')}`);
         }
       }
