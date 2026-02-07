@@ -127,7 +127,7 @@ async function handleBlockActions(payload: any, res: Response) {
           workspaceId,
           payload.trigger_id,
           proposalId,
-          patchProposal.diffContent || '',
+          patchProposal.unifiedDiff || '',
           patchProposal.summary || undefined
         );
         break;
