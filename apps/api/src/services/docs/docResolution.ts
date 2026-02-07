@@ -456,8 +456,17 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
       };
     });
 
-    // Sort by confidence (category/affinity boosts included), then isPrimary
+    // Sort by confidence, with targetDocSystems priority as tie-breaker
     p1Candidates.sort((a, b) => {
+      // If confidences are very close (within 0.01), use targetDocSystems priority order
+      if (targetDocSystems && Math.abs(a.confidence - b.confidence) < 0.01) {
+        const aIndex = targetDocSystems.indexOf(a.docSystem);
+        const bIndex = targetDocSystems.indexOf(b.docSystem);
+        if (aIndex >= 0 && bIndex >= 0) {
+          return aIndex - bIndex; // Lower index = higher priority
+        }
+      }
+
       // Primary docs always first within similar confidence
       if (a.isPrimary !== b.isPrimary && Math.abs(a.confidence - b.confidence) < 0.15) {
         return a.isPrimary ? -1 : 1;
