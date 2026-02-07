@@ -77,6 +77,9 @@ export interface DocResolutionInput {
   driftTypeHints?: Array<'instruction' | 'process' | 'ownership' | 'coverage' | 'environment_tooling'>;
   // Preferred doc category based on drift type
   preferredDocCategory?: 'functional' | 'developer' | 'operational';
+  // CRITICAL: Target doc systems from source-output compatibility matrix
+  // This enforces the routing rules: e.g., GitHub PR instruction drift → README first, not Confluence
+  targetDocSystems?: string[];
 }
 
 // ============================================================================
@@ -349,18 +352,30 @@ export async function resolveDocsForDrift(input: DocResolutionInput): Promise<Do
   // -------------------------------------------------------------------------
   // P1: Look up DocMappingV2 by repo or service
   // With category-aware resolution (Phase 1 - Multi-Source)
+  // CRITICAL FIX: Filter by targetDocSystems to enforce source-output compatibility
   // -------------------------------------------------------------------------
   const preferredCategories = getDocCategoriesForDriftTypes(driftTypeHints);
-  console.log(`[DocResolution] P1: Looking up DocMappingV2 for repo=${repo}, service=${service}, preferredCategories=[${preferredCategories.join(', ')}]`);
+  const { targetDocSystems } = input;
+
+  console.log(`[DocResolution] P1: Looking up DocMappingV2 for repo=${repo}, service=${service}, preferredCategories=[${preferredCategories.join(', ')}], targetDocSystems=[${targetDocSystems?.join(', ') || 'none'}]`);
+
+  // Build where clause with targetDocSystems filter
+  const whereClause: any = {
+    workspaceId,
+    OR: [
+      repo ? { repo } : {},
+      service ? { service } : {},
+    ].filter(c => Object.keys(c).length > 0),
+  };
+
+  // CRITICAL: Filter by targetDocSystems if provided (enforces source-output compatibility)
+  if (targetDocSystems && targetDocSystems.length > 0) {
+    whereClause.docSystem = { in: targetDocSystems };
+    console.log(`[DocResolution] P1: Filtering by targetDocSystems=[${targetDocSystems.join(', ')}]`);
+  }
 
   const mappings = await prisma.docMappingV2.findMany({
-    where: {
-      workspaceId,
-      OR: [
-        repo ? { repo } : {},
-        service ? { service } : {},
-      ].filter(c => Object.keys(c).length > 0),
-    },
+    where: whereClause,
     orderBy: [
       { isPrimary: 'desc' },
       { updatedAt: 'desc' },

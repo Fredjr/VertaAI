@@ -472,6 +472,8 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
       minConfidenceForSuggest: workspace.minConfidenceForSuggest,
       allowedConfluenceSpaces: workspace.allowedConfluenceSpaces,
     } : undefined,
+    // CRITICAL FIX: Pass targetDocSystems to enforce source-output compatibility
+    targetDocSystems,
   });
 
   console.log(`[Transitions] Doc resolution: status=${resolutionResult.status}, method=${resolutionResult.method}, candidates=${resolutionResult.candidates.length}`);
