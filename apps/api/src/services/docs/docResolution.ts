@@ -3,7 +3,7 @@
  *
  * Implements the doc resolution pipeline with priority order:
  * P0: PR link → explicit doc reference in PR body
- * P1: mapping → DocMappingV2 lookup by repo/service
+ * P1: mapping → DocMappingV2 lookup by repo/service (with source-specific override)
  * P2: search → Confluence/Notion search fallback (top-K)
  * else: NEEDS_MAPPING
  *
