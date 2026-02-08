@@ -48,6 +48,7 @@ model Workspace {
 
   integrations          Integration[]
   signalEvents          SignalEvent[]
+  driftPlans            DriftPlan[]
   driftCandidates       DriftCandidate[]
   patchProposals        PatchProposal[]
   docMappingsV2         DocMappingV2[]
@@ -628,4 +629,65 @@ model SlackQuestionCluster {
   @@index([workspaceId, lastSeen(sort: Desc)])
   @@index([workspaceId, processedAt])
   @@map("slack_question_clusters")
+}
+
+// ======================================================================
+// DRIFT PLAN (Phase 3: Control-Plane Architecture)
+// Versioned plans for reproducible drift detection and remediation
+// ======================================================================
+
+model DriftPlan {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+
+  // Plan metadata
+  name        String
+  description String?
+  status      String @default("active") // 'active', 'archived', 'draft'
+
+  // Scope definition (5-step resolution hierarchy)
+  scopeType String // 'workspace', 'service', 'repo'
+  scopeRef  String? // service ID or repo full name (null for workspace scope)
+
+  // Primary documentation target
+  primaryDocId     String? @map("primary_doc_id") // Doc ID in the doc system
+  primaryDocSystem String? @map("primary_doc_system") // 'confluence', 'notion', 'github_readme', etc.
+  docClass         String? @map("doc_class") // 'runbook', 'api_contract', 'service_catalog', etc.
+
+  // Plan configuration
+  inputSources   String[] @default([]) @map("input_sources") // Allowed source types: ['github_pr', 'pagerduty_incident', ...]
+  driftTypes     String[] @default([]) @map("drift_types") // Allowed drift types: ['instruction', 'process', ...]
+  allowedOutputs String[] @default([]) @map("allowed_outputs") // Allowed output targets: ['confluence', 'notion', ...]
+
+  // Plan rules and thresholds (JSON for flexibility)
+  thresholds     Json @default("{}") // { minConfidence: 0.7, minImpactScore: 0.5, ... }
+  eligibility    Json @default("{}") // { requiresIncident: false, minSeverity: 'sev3', ... }
+  sectionTargets Json @default("{}") // { instruction: 'Deployment Steps', process: 'Runbook', ... }
+  impactRules    Json @default("{}") // Custom impact rules for this plan
+  writeback      Json @default("{}") // { enabled: true, requiresApproval: false, ... }
+
+  // Versioning for reproducibility
+  version     Int    @default(1) // Incremented on each update
+  versionHash String @map("version_hash") // SHA-256 hash of plan content for reproducibility
+  parentId    String? @map("parent_id") // Reference to previous version (for version history)
+
+  // Template reference (if created from template)
+  templateId   String? @map("template_id") // Reference to template used
+  templateName String? @map("template_name") // Template name for display
+
+  // Audit trail
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?  @map("created_by") // User email or ID
+  updatedBy String?  @map("updated_by") // User email or ID
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@unique([workspaceId, versionHash]) // Ensure unique content hashes per workspace
+  @@index([workspaceId, status])
+  @@index([workspaceId, scopeType, scopeRef])
+  @@index([workspaceId, templateId])
+  @@map("drift_plans")
 }
