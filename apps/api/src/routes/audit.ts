@@ -9,6 +9,9 @@ import {
   generateComplianceReport,
   exportComplianceReportToCSV,
   applyRetentionPolicy,
+  getRetentionPolicy,
+  applyEvidenceBundleRetention,
+  getEvidenceBundleRetentionStats,
 } from '../services/audit/index.js';
 
 const router: Router = Router();
@@ -160,7 +163,7 @@ router.post('/compliance/report/export', async (req, res) => {
 router.post('/retention/apply', async (req, res) => {
   try {
     const { workspaceId } = req.body;
-    
+
     if (!workspaceId) {
       return res.status(400).json({ error: 'workspaceId is required' });
     }
@@ -169,6 +172,70 @@ router.post('/retention/apply', async (req, res) => {
     res.json({ deletedCount, message: `Deleted ${deletedCount} expired audit logs` });
   } catch (error: any) {
     console.error('[Audit API] Error applying retention policy:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/audit/retention/policy
+ * Get retention policy for workspace
+ */
+router.get('/retention/policy', async (req, res) => {
+  try {
+    const { workspaceId } = req.query;
+
+    if (!workspaceId || typeof workspaceId !== 'string') {
+      return res.status(400).json({ error: 'workspaceId is required' });
+    }
+
+    const policy = await getRetentionPolicy(workspaceId);
+    res.json(policy);
+  } catch (error: any) {
+    console.error('[Audit API] Error fetching retention policy:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/audit/retention/evidence-bundles/apply
+ * Apply evidence bundle retention policy
+ */
+router.post('/retention/evidence-bundles/apply', async (req, res) => {
+  try {
+    const { workspaceId } = req.body;
+
+    if (!workspaceId) {
+      return res.status(400).json({ error: 'workspaceId is required' });
+    }
+
+    const deletedCount = await applyEvidenceBundleRetention(workspaceId);
+    res.json({
+      success: true,
+      deletedCount,
+      message: `Cleared ${deletedCount} expired evidence bundles`,
+    });
+  } catch (error: any) {
+    console.error('[Audit API] Error applying evidence bundle retention:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/audit/retention/evidence-bundles/stats
+ * Get evidence bundle retention statistics
+ */
+router.get('/retention/evidence-bundles/stats', async (req, res) => {
+  try {
+    const { workspaceId } = req.query;
+
+    if (!workspaceId || typeof workspaceId !== 'string') {
+      return res.status(400).json({ error: 'workspaceId is required' });
+    }
+
+    const stats = await getEvidenceBundleRetentionStats(workspaceId);
+    res.json(stats);
+  } catch (error: any) {
+    console.error('[Audit API] Error fetching evidence bundle retention stats:', error);
     res.status(500).json({ error: error.message });
   }
 });

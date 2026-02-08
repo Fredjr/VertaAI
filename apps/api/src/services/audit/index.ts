@@ -4,4 +4,5 @@
 export * from './types.js';
 export * from './logger.js';
 export * from './compliance.js';
+export * from './retention.js';
 
