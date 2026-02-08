@@ -3,6 +3,8 @@
 // Based on multi-source/multi-target awareness
 
 import { SourceEvidence, TargetEvidence, Assessment } from './types.js';
+import { buildImpactInputs } from './impactInputs.js';
+import { computeImpactFromRules } from './impactRules.js';
 
 interface ComputeImpactArgs {
   sourceEvidence: SourceEvidence;
@@ -12,40 +14,99 @@ interface ComputeImpactArgs {
 
 /**
  * Main function to compute impact assessment
+ *
+ * ENHANCED: Now uses multi-source/multi-target aware impact rules matrix
  */
 export async function computeImpactAssessment(args: ComputeImpactArgs): Promise<Assessment> {
   const { sourceEvidence, targetEvidence, driftCandidate } = args;
-  
+
+  try {
+    // Step 1: Build normalized impact inputs from source and target evidence
+    const impactInputs = await buildImpactInputs({
+      sourceEvidence,
+      targetEvidence
+    });
+
+    // Step 2: Compute impact using rules matrix (source+target aware)
+    const rulesResult = computeImpactFromRules(impactInputs);
+
+    // Step 3: Apply drift type multiplier
+    const driftMultiplier = getDriftTypeMultiplier(driftCandidate.driftType);
+    const finalImpactScore = Math.min(1.0, rulesResult.impactScore * driftMultiplier);
+
+    // Step 4: Determine impact band
+    const impactBand = getImpactBand(finalImpactScore);
+
+    // Step 5: Combine fired rules from matrix and legacy rules
+    const legacyRules = identifyFiredRules(sourceEvidence, targetEvidence, driftCandidate, finalImpactScore);
+    const allFiredRules = [...new Set([...rulesResult.firedRules, ...legacyRules])];
+
+    // Step 6: Generate consequence text
+    const consequenceText = generateConsequenceText(
+      impactBand,
+      allFiredRules,
+      sourceEvidence,
+      targetEvidence,
+      rulesResult.appliedMultipliers
+    );
+
+    // Step 7: Calculate blast radius
+    const blastRadius = calculateBlastRadius(sourceEvidence, targetEvidence, driftCandidate);
+
+    // Step 8: Identify risk factors
+    const riskFactors = identifyRiskFactors(sourceEvidence, targetEvidence, driftCandidate);
+
+    return {
+      impactScore: finalImpactScore,
+      impactBand,
+      firedRules: allFiredRules,
+      consequenceText,
+      blastRadius,
+      riskFactors
+    };
+  } catch (error) {
+    // Fallback to legacy impact assessment if new system fails
+    console.error('Error in enhanced impact assessment, falling back to legacy:', error);
+    return computeLegacyImpactAssessment(args);
+  }
+}
+
+/**
+ * Legacy impact assessment (fallback)
+ */
+async function computeLegacyImpactAssessment(args: ComputeImpactArgs): Promise<Assessment> {
+  const { sourceEvidence, targetEvidence, driftCandidate } = args;
+
   // Step 1: Calculate base impact score
   const baseScore = calculateBaseImpactScore(sourceEvidence, targetEvidence);
-  
+
   // Step 2: Apply source-specific multipliers
   const sourceMultiplier = getSourceMultiplier(sourceEvidence.sourceType);
-  
+
   // Step 3: Apply target surface multipliers
   const targetMultiplier = getTargetSurfaceMultiplier(targetEvidence.surface);
-  
+
   // Step 4: Apply drift type multipliers
   const driftMultiplier = getDriftTypeMultiplier(driftCandidate.driftType);
-  
+
   // Step 5: Calculate final impact score
   const impactScore = Math.min(1.0, baseScore * sourceMultiplier * targetMultiplier * driftMultiplier);
-  
+
   // Step 6: Determine impact band
   const impactBand = getImpactBand(impactScore);
-  
+
   // Step 7: Identify fired rules
   const firedRules = identifyFiredRules(sourceEvidence, targetEvidence, driftCandidate, impactScore);
-  
+
   // Step 8: Generate consequence text
-  const consequenceText = generateConsequenceText(impactBand, firedRules, sourceEvidence, targetEvidence);
-  
+  const consequenceText = generateConsequenceText(impactBand, firedRules, sourceEvidence, targetEvidence, []);
+
   // Step 9: Calculate blast radius
   const blastRadius = calculateBlastRadius(sourceEvidence, targetEvidence, driftCandidate);
-  
+
   // Step 10: Identify risk factors
   const riskFactors = identifyRiskFactors(sourceEvidence, targetEvidence, driftCandidate);
-  
+
   return {
     impactScore,
     impactBand,
@@ -209,12 +270,15 @@ function identifyFiredRules(
 
 /**
  * Generate human-readable consequence text
+ *
+ * ENHANCED: Now includes information about applied multipliers
  */
 function generateConsequenceText(
-  impactBand: Assessment['impactBand'], 
-  firedRules: string[], 
-  sourceEvidence: SourceEvidence, 
-  targetEvidence: TargetEvidence
+  impactBand: Assessment['impactBand'],
+  firedRules: string[],
+  sourceEvidence: SourceEvidence,
+  targetEvidence: TargetEvidence,
+  appliedMultipliers: string[]
 ): string {
   const templates: Record<string, string> = {
     'critical': 'Critical documentation drift detected. Immediate action required to prevent operational issues.',
@@ -222,16 +286,25 @@ function generateConsequenceText(
     'medium': 'Medium-impact documentation drift. Should be addressed within this sprint.',
     'low': 'Low-impact documentation drift. Can be addressed in next planning cycle.'
   };
-  
+
   let consequence = templates[impactBand];
-  
+
   // Add specific context based on source and target
   if (sourceEvidence.sourceType === 'pagerduty_incident') {
     consequence += ' This drift was detected from an incident, indicating real operational impact.';
   }
-  
+
   if (targetEvidence.surface === 'runbook') {
     consequence += ' Runbook accuracy is critical for incident response.';
+  }
+
+  // Add context about applied multipliers (if any)
+  if (appliedMultipliers.length > 0) {
+    const multiplierNames = appliedMultipliers.map(m => {
+      const parts = m.split(':');
+      return parts[1] || m;
+    });
+    consequence += ` Impact factors: ${multiplierNames.join(', ')}.`;
   }
 
   return consequence || 'Documentation drift detected.';
