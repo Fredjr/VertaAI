@@ -17,6 +17,7 @@ import datadogRouter from './routes/datadog.js';  // Phase 5: Datadog/Grafana We
 import plansRouter from './routes/plans.js';  // Phase 3: DriftPlan Management
 import coverageRouter from './routes/coverage.js';  // Phase 3 Week 6: Coverage Monitoring
 import auditRouter from './routes/audit.js';  // Phase 4 Week 8: Audit Trail & Compliance
+import testWebhooksRouter from './routes/test-webhooks.js';  // Test endpoint for E2E testing
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -57,6 +58,9 @@ app.get('/health', async (_req: Request, res: Response) => {
 app.use('/webhooks', webhooksRouter);
 app.use('/webhooks/pagerduty', pagerdutyRouter);
 app.use('/webhooks', datadogRouter);  // Phase 5: Datadog/Grafana alert webhooks
+
+// Test webhook routes (for E2E testing without signature validation)
+app.use('/test/webhooks', testWebhooksRouter);
 
 // Slack OAuth routes (multi-tenant installation)
 app.use('/auth/slack', slackOAuthRouter);
