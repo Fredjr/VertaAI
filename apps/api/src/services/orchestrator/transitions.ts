@@ -79,6 +79,7 @@ const TRANSITION_HANDLERS: Partial<Record<DriftState, TransitionHandler>> = {
 
 /**
  * Execute a state transition for a drift candidate
+ * Phase 4 Week 8: Added comprehensive audit logging
  */
 export async function executeTransition(
   drift: any,
@@ -96,9 +97,49 @@ export async function executeTransition(
   }
 
   try {
-    return await handler(drift);
+    // Execute state transition
+    const result = await handler(drift);
+
+    // Phase 4 Week 8: Log successful state transition to audit trail
+    if (result.state !== currentState) {
+      const { logStateTransition } = await import('../audit/logger.js');
+      await logStateTransition(
+        drift.workspaceId,
+        drift.id,
+        currentState,
+        result.state,
+        'system',
+        'state-machine',
+        {
+          enqueueNext: result.enqueueNext,
+          nextStateHint: result.nextStateHint,
+        }
+      );
+    }
+
+    return result;
   } catch (error: any) {
     console.error(`[Transitions] Error in ${currentState}:`, error);
+
+    // Phase 4 Week 8: Log failed state transition to audit trail
+    const { createAuditLog } = await import('../audit/logger.js');
+    await createAuditLog({
+      workspaceId: drift.workspaceId,
+      eventType: 'state_transition_failed',
+      category: 'system',
+      severity: 'error',
+      entityType: 'drift_candidate',
+      entityId: drift.id,
+      actorType: 'system',
+      actorId: 'state-machine',
+      fromState: currentState,
+      toState: currentState,
+      metadata: {
+        error: error.message || 'Unknown error',
+        stack: error.stack,
+      },
+    });
+
     return {
       state: currentState, // Stay in current state for retry
       enqueueNext: true,
@@ -1348,6 +1389,20 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
 
       // Cache evidence bundle for 24 hours (Phase 3 Week 7)
       await cacheEvidence(drift.workspaceId, drift.id, bundle);
+
+      // Phase 4 Week 8: Log evidence bundle creation to audit trail
+      const { logEvidenceCreated } = await import('../audit/logger.js');
+      await logEvidenceCreated(
+        drift.workspaceId,
+        drift.id,
+        bundle.fingerprints.strict,
+        bundle.assessment.impactBand,
+        {
+          impactScore: bundle.assessment.impactScore,
+          claimsCount: bundle.targetEvidence.claims.length,
+          firedRulesCount: bundle.assessment.firedRules.length,
+        }
+      );
 
       console.log(`[Transitions] EvidenceBundle created: impact=${bundle.assessment.impactBand} (${bundle.assessment.impactScore.toFixed(3)}), claims=${bundle.targetEvidence.claims.length}`);
 

@@ -58,6 +58,7 @@ model Workspace {
   slackQuestionClusters SlackQuestionCluster[]
   driftSuppressions     DriftSuppression[] // NEW: Phase 1 suppression system
   coverageSnapshots     CoverageSnapshot[] // NEW: Phase 3 Week 6 coverage monitoring
+  auditTrails           AuditTrail[] // NEW: Phase 4 Week 8 comprehensive audit trail
 
   @@map("workspaces")
 }
@@ -737,4 +738,66 @@ model CoverageSnapshot {
   @@id([workspaceId, id])
   @@index([workspaceId, snapshotAt])
   @@map("coverage_snapshots")
+}
+
+// ======================================================================
+// AUDIT TRAIL SYSTEM (Phase 4 Week 8)
+// Immutable audit trail for compliance and debugging
+// Renamed from AuditLog to AuditTrail to avoid conflict with legacy model
+// ======================================================================
+
+model AuditTrail {
+  workspaceId String   @map("workspace_id")
+  id          String   @default(uuid())
+  timestamp   DateTime @default(now())
+
+  // Event classification
+  eventType   String   @map("event_type") // 'state_transition', 'evidence_created', 'plan_changed', 'approval', 'rejection', etc.
+  category    String   @default("system") // 'system', 'user', 'integration', 'compliance'
+  severity    String   @default("info") // 'debug', 'info', 'warning', 'error', 'critical'
+
+  // Entity being audited
+  entityType  String   @map("entity_type") // 'drift_candidate', 'patch_proposal', 'drift_plan', 'evidence_bundle', etc.
+  entityId    String   @map("entity_id")
+
+  // Actor who triggered the event
+  actorType   String   @map("actor_type") // 'system', 'user', 'integration', 'agent'
+  actorId     String   @map("actor_id") // User email, agent name, integration ID, etc.
+
+  // State transition details (for drift candidates)
+  fromState   String?  @map("from_state") // Previous state (if state transition)
+  toState     String?  @map("to_state") // New state (if state transition)
+
+  // Change details
+  changes     Json     @default("{}") // Structured diff of what changed
+  metadata    Json     @default("{}") // Additional context (error details, user input, etc.)
+
+  // Evidence bundle tracking
+  evidenceBundleHash String? @map("evidence_bundle_hash") // SHA-256 hash of evidence bundle (if applicable)
+  impactBand         String? @map("impact_band") // Impact band at time of event (if applicable)
+
+  // Plan version tracking
+  planId             String? @map("plan_id") // DriftPlan ID (if applicable)
+  planVersionHash    String? @map("plan_version_hash") // SHA-256 hash of plan version (if applicable)
+
+  // Compliance flags
+  requiresRetention  Boolean @default(false) @map("requires_retention") // Flag for compliance retention
+  retentionUntil     DateTime? @map("retention_until") // Retention expiry date
+  complianceTag      String? @map("compliance_tag") // SOX, SOC2, ISO27001, GDPR, etc.
+
+  // Immutability - once created, never updated
+  // No updatedAt field - audit trails are append-only
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, timestamp])
+  @@index([workspaceId, entityType, entityId])
+  @@index([workspaceId, eventType, timestamp])
+  @@index([workspaceId, actorId, timestamp])
+  @@index([workspaceId, category, severity, timestamp])
+  @@index([evidenceBundleHash])
+  @@index([planVersionHash])
+  @@map("audit_trails")
 }

@@ -16,6 +16,7 @@ import settingsRouter from './routes/settings.js';  // Phase 5: Workflow Setting
 import datadogRouter from './routes/datadog.js';  // Phase 5: Datadog/Grafana Webhooks
 import plansRouter from './routes/plans.js';  // Phase 3: DriftPlan Management
 import coverageRouter from './routes/coverage.js';  // Phase 3 Week 6: Coverage Monitoring
+import auditRouter from './routes/audit.js';  // Phase 4 Week 8: Audit Trail & Compliance
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -83,6 +84,9 @@ app.use('/api/plans', plansRouter);
 
 // Coverage API routes (Phase 3 Week 6 - Coverage Monitoring)
 app.use('/api/coverage', coverageRouter);
+
+// Audit API routes (Phase 4 Week 8 - Audit Trail & Compliance)
+app.use('/api/audit', auditRouter);
 
 // Slack interaction routes (button clicks, modals)
 app.use('/slack/interactions', slackInteractionsRouter);
