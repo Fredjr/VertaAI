@@ -2,6 +2,7 @@
 
 import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
+import Navigation from '../../components/Navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -221,12 +222,14 @@ function CoverageDashboardContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-8 flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
+    <>
+      <Navigation />
+      <div className="min-h-screen bg-gray-50 p-8">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="mb-8 flex justify-between items-center">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">
               Coverage Health Dashboard
             </h1>
             <p className="text-gray-600 mt-2">
@@ -558,6 +561,7 @@ function CoverageDashboardContent() {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

@@ -3,6 +3,7 @@
 import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import Navigation from '../../components/Navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -87,16 +88,18 @@ function PlansListContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto py-8 px-4">
-        {/* Header */}
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">📋 Drift Plans</h1>
-            <p className="mt-2 text-gray-600">
-              Manage versioned drift detection plans for your workspace
-            </p>
-          </div>
+    <>
+      <Navigation />
+      <div className="min-h-screen bg-gray-50">
+        <div className="max-w-7xl mx-auto py-8 px-4">
+          {/* Header */}
+          <div className="mb-8 flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">📋 Drift Plans</h1>
+              <p className="mt-2 text-gray-600">
+                Manage versioned drift detection plans for your workspace
+              </p>
+            </div>
           <Link
             href={`/plans/new?workspace=${workspaceId}`}
             className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
@@ -225,6 +228,7 @@ function PlansListContent() {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

@@ -2,6 +2,7 @@
 
 import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
+import Navigation from '../../components/Navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -232,15 +233,17 @@ function ComplianceDashboardContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto py-8 px-4">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">🔒 Compliance Dashboard</h1>
-          <p className="mt-2 text-gray-600">
-            Audit trail monitoring and compliance reporting for SOX, SOC2, ISO27001, and GDPR
-          </p>
-        </div>
+    <>
+      <Navigation />
+      <div className="min-h-screen bg-gray-50">
+        <div className="max-w-7xl mx-auto py-8 px-4">
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-900">🔒 Compliance Dashboard</h1>
+            <p className="mt-2 text-gray-600">
+              Audit trail monitoring and compliance reporting for SOX, SOC2, ISO27001, and GDPR
+            </p>
+          </div>
 
         {/* Error Message */}
         {error && (
@@ -574,6 +577,7 @@ function ComplianceDashboardContent() {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

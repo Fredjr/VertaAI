@@ -1,4 +1,8 @@
+import Link from 'next/link';
+
 export default function Home() {
+  const workspaceId = 'demo-workspace';
+
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-8">
       <div className="max-w-4xl mx-auto text-center">
@@ -49,10 +53,59 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Quick Access Dashboards */}
+        <div className="mb-12">
+          <h3 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
+            Quick Access
+          </h3>
+          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Link
+              href={`/compliance?workspace=${workspaceId}`}
+              className="p-6 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 hover:border-primary-500 transition-colors"
+            >
+              <div className="text-4xl mb-3">📋</div>
+              <h4 className="font-semibold text-lg mb-2">Compliance</h4>
+              <p className="text-gray-600 dark:text-gray-400 text-sm">
+                Audit trails, compliance reports, retention policies
+              </p>
+            </Link>
+            <Link
+              href={`/coverage?workspace=${workspaceId}`}
+              className="p-6 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 hover:border-primary-500 transition-colors"
+            >
+              <div className="text-4xl mb-3">📊</div>
+              <h4 className="font-semibold text-lg mb-2">Coverage</h4>
+              <p className="text-gray-600 dark:text-gray-400 text-sm">
+                Coverage health monitoring, source metrics, trends
+              </p>
+            </Link>
+            <Link
+              href={`/plans?workspace=${workspaceId}`}
+              className="p-6 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 hover:border-primary-500 transition-colors"
+            >
+              <div className="text-4xl mb-3">📝</div>
+              <h4 className="font-semibold text-lg mb-2">Plans</h4>
+              <p className="text-gray-600 dark:text-gray-400 text-sm">
+                DriftPlan management, templates, versioning
+              </p>
+            </Link>
+            <Link
+              href={`/settings?workspace=${workspaceId}`}
+              className="p-6 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 hover:border-primary-500 transition-colors"
+            >
+              <div className="text-4xl mb-3">⚙️</div>
+              <h4 className="font-semibold text-lg mb-2">Settings</h4>
+              <p className="text-gray-600 dark:text-gray-400 text-sm">
+                Workspace configuration, integrations, preferences
+              </p>
+            </Link>
+          </div>
+        </div>
+
         {/* Status */}
-        <div className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200 rounded-full text-sm">
-          <span className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></span>
-          Coming soon — Pilot launching Q1 2026
+        <div className="inline-flex items-center gap-2 px-4 py-2 bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 rounded-full text-sm">
+          <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+          Phase 1-4 Complete — Control Plane + Truth-Making System Active
         </div>
       </div>
     </main>

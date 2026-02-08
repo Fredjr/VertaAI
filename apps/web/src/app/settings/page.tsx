@@ -2,6 +2,7 @@
 
 import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
+import Navigation from '../../components/Navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -166,15 +167,17 @@ function SettingsContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto py-8 px-4">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">⚙️ Workflow Settings</h1>
-          <p className="mt-2 text-gray-600">
-            {settings?.workspace.name} • Advanced configuration for power users
-          </p>
-        </div>
+    <>
+      <Navigation />
+      <div className="min-h-screen bg-gray-50">
+        <div className="max-w-4xl mx-auto py-8 px-4">
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-900">⚙️ Workflow Settings</h1>
+            <p className="mt-2 text-gray-600">
+              {settings?.workspace.name} • Advanced configuration for power users
+            </p>
+          </div>
 
         {/* Error/Success Messages */}
         {error && (
@@ -326,6 +329,7 @@ function SettingsContent() {
         )}
       </div>
     </div>
+    </>
   );
 }
 
