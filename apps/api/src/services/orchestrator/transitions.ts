@@ -1306,6 +1306,68 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
   const baselineCheck = finding.baselineCheck;
   const evidencePack = finding.evidencePack;
 
+  // NEW: Phase 1 - Build EvidenceBundle for deterministic decision making
+  try {
+    const { buildEvidenceBundle } = await import('../evidence/builder.js');
+
+    const evidenceBundleResult = await buildEvidenceBundle({
+      driftCandidate: drift,
+      signalEvent: signal,
+      docContext: docContext || finding,
+      parserArtifacts: {
+        // Use existing extracted data as parser artifacts
+        openApiDiff: extracted.openApiDiff,
+        codeownersDiff: extracted.codeownersDiff,
+        iacSummary: extracted.iacSummary,
+        pagerdutyNormalized: extracted.pagerdutyNormalized,
+        slackCluster: extracted.slackCluster,
+        alertNormalized: extracted.alertNormalized,
+      }
+    });
+
+    if (evidenceBundleResult.success && evidenceBundleResult.bundle) {
+      const bundle = evidenceBundleResult.bundle;
+
+      // Store evidence bundle and impact assessment in database
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+        data: {
+          evidenceBundle: bundle as any,
+          impactScore: bundle.assessment.impactScore,
+          impactBand: bundle.assessment.impactBand,
+          impactJson: bundle.assessment as any,
+          consequenceText: bundle.assessment.consequenceText,
+          impactAssessedAt: new Date(),
+          fingerprintStrict: bundle.fingerprints.strict,
+          fingerprintMedium: bundle.fingerprints.medium,
+          fingerprintBroad: bundle.fingerprints.broad,
+        },
+      });
+
+      console.log(`[Transitions] EvidenceBundle created: impact=${bundle.assessment.impactBand} (${bundle.assessment.impactScore.toFixed(3)}), claims=${bundle.targetEvidence.claims.length}`);
+
+      // Check for suppressions using fingerprints
+      const suppressionCheck = await checkSuppressions(drift.workspaceId, bundle.fingerprints);
+      if (suppressionCheck.shouldSuppress) {
+        console.log(`[Transitions] Drift suppressed by ${suppressionCheck.level} fingerprint: ${suppressionCheck.reason}`);
+
+        // Update suppression last seen
+        if (suppressionCheck.fingerprint) {
+          await updateSuppressionLastSeen(drift.workspaceId, suppressionCheck.fingerprint);
+        }
+
+        // Transition to SUPPRESSED state
+        return { state: DriftState.SUPPRESSED, enqueueNext: false };
+      }
+    } else {
+      console.warn(`[Transitions] EvidenceBundle creation failed: ${evidenceBundleResult.error?.message}`);
+      // Continue with existing flow if evidence bundle creation fails
+    }
+  } catch (error: any) {
+    console.error(`[Transitions] Error creating EvidenceBundle:`, error);
+    // Continue with existing flow if there's an error
+  }
+
   // Call Agent C: Patch Planner
   const plannerResult = await runPatchPlanner({
     docId: primaryDoc.doc_id || primaryDoc.docId || 'unknown',
@@ -2303,4 +2365,108 @@ async function handleWrittenBack(drift: any): Promise<TransitionResult> {
 
   console.log(`[Transitions] Drift ${drift.id} completed`);
   return { state: DriftState.COMPLETED, enqueueNext: false };
+}
+
+// NEW: Suppression checking functions for EvidenceBundle integration
+
+/**
+ * Check if drift should be suppressed based on fingerprints
+ */
+async function checkSuppressions(workspaceId: string, fingerprints: { strict: string; medium: string; broad: string }): Promise<{
+  shouldSuppress: boolean;
+  level?: 'strict' | 'medium' | 'broad';
+  reason?: string;
+  fingerprint?: string;
+}> {
+  try {
+    // Check strict fingerprint first
+    const strictSuppression = await prisma.driftSuppression.findFirst({
+      where: {
+        workspaceId,
+        fingerprint: fingerprints.strict,
+        fingerprintLevel: 'strict',
+        OR: [
+          { expiresAt: null }, // Permanent suppression
+          { expiresAt: { gt: new Date() } } // Not expired
+        ]
+      }
+    });
+
+    if (strictSuppression) {
+      return {
+        shouldSuppress: true,
+        level: 'strict',
+        reason: strictSuppression.reason || 'Exact match suppression',
+        fingerprint: fingerprints.strict
+      };
+    }
+
+    // Check medium fingerprint
+    const mediumSuppression = await prisma.driftSuppression.findFirst({
+      where: {
+        workspaceId,
+        fingerprint: fingerprints.medium,
+        fingerprintLevel: 'medium',
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } }
+        ]
+      }
+    });
+
+    if (mediumSuppression) {
+      return {
+        shouldSuppress: true,
+        level: 'medium',
+        reason: mediumSuppression.reason || 'Normalized token suppression',
+        fingerprint: fingerprints.medium
+      };
+    }
+
+    // Check broad fingerprint
+    const broadSuppression = await prisma.driftSuppression.findFirst({
+      where: {
+        workspaceId,
+        fingerprint: fingerprints.broad,
+        fingerprintLevel: 'broad',
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } }
+        ]
+      }
+    });
+
+    if (broadSuppression) {
+      return {
+        shouldSuppress: true,
+        level: 'broad',
+        reason: broadSuppression.reason || 'Pattern-based suppression',
+        fingerprint: fingerprints.broad
+      };
+    }
+
+    return { shouldSuppress: false };
+  } catch (error: any) {
+    console.error('[Transitions] Error checking suppressions:', error);
+    return { shouldSuppress: false };
+  }
+}
+
+/**
+ * Update last seen timestamp for suppression
+ */
+async function updateSuppressionLastSeen(workspaceId: string, fingerprint: string): Promise<void> {
+  try {
+    await prisma.driftSuppression.updateMany({
+      where: {
+        workspaceId,
+        fingerprint
+      },
+      data: {
+        lastSeenAt: new Date()
+      }
+    });
+  } catch (error: any) {
+    console.error('[Transitions] Error updating suppression last seen:', error);
+  }
 }

@@ -55,6 +55,7 @@ model Workspace {
   auditEvents           AuditEvent[]
   approvals             Approval[]
   slackQuestionClusters SlackQuestionCluster[]
+  driftSuppressions     DriftSuppression[] // NEW: Phase 1 suppression system
 
   @@map("workspaces")
 }
@@ -136,6 +137,22 @@ model DriftCandidate {
   // Drift Verdict (Phase 1 Quick Win - Comparison-based verdict)
   // Stores the explicit comparison-based drift decision
   driftVerdict Json? @map("drift_verdict") // { hasMatch: boolean, confidence: number, source: string, evidence: string[], comparisonType: string }
+
+  // NEW: Evidence Bundle (Phase 1 - Truth-making system)
+  // Complete deterministic evidence bundle for reproducible decisions
+  evidenceBundle Json? @map("evidence_bundle")
+
+  // NEW: Impact Assessment (Phase 1 - Multi-source impact)
+  impactScore        Float?  @map("impact_score")        // 0-1 scale
+  impactBand         String? @map("impact_band")         // 'low', 'medium', 'high', 'critical'
+  impactJson         Json?   @map("impact_json")         // Complete impact assessment details
+  consequenceText    String? @map("consequence_text")    // Human-readable consequence
+  impactAssessedAt   DateTime? @map("impact_assessed_at") // When impact was assessed
+
+  // NEW: Fingerprints for suppression (Phase 1 - Fatigue reduction)
+  fingerprintStrict  String? @map("fingerprint_strict")  // Exact match fingerprint
+  fingerprintMedium  String? @map("fingerprint_medium")  // Normalized token fingerprint
+  fingerprintBroad   String? @map("fingerprint_broad")   // High-level pattern fingerprint
 
   // Document targeting
   docCandidates    Json     @default("[]") @map("doc_candidates")
@@ -253,6 +270,31 @@ model PatchProposal {
   @@index([workspaceId, docSystem, docId])
   @@index([workspaceId, status, updatedAt(sort: Desc)])
   @@map("patch_proposals")
+}
+
+// NEW: Drift Suppression Model (Phase 1 - Fatigue reduction)
+model DriftSuppression {
+  workspaceId        String   @map("workspace_id")
+  id                 String   @default(cuid()) @map("id")
+  fingerprint        String   @map("fingerprint")
+  fingerprintLevel   String   @map("fingerprint_level") // 'strict', 'medium', 'broad'
+  suppressionType    String   @map("suppression_type")  // 'false_positive', 'snooze', 'permanent'
+  reason             String?  @map("reason")
+  createdBy          String?  @map("created_by")
+  expiresAt          DateTime? @map("expires_at")
+  falsePositiveCount Int      @default(0) @map("false_positive_count")
+  lastSeenAt         DateTime? @map("last_seen_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@unique([workspaceId, fingerprint])
+  @@index([workspaceId, fingerprint])
+  @@index([workspaceId, expiresAt])
+  @@map("drift_suppressions")
 }
 
 // Approvals (append-only audit log for human actions)

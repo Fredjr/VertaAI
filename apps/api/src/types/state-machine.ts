@@ -59,6 +59,7 @@ export enum DriftState {
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
   FAILED_NEEDS_MAPPING = 'FAILED_NEEDS_MAPPING', // Specific failure: no doc mapping found
+  SUPPRESSED = 'SUPPRESSED', // NEW: Suppressed by fingerprint matching
 }
 
 // Failure codes from Section 15.9.9
@@ -128,6 +129,7 @@ export const TERMINAL_STATES: DriftState[] = [
   DriftState.FAILED,
   DriftState.FAILED_NEEDS_MAPPING,
   DriftState.REJECTED,
+  DriftState.SUPPRESSED, // NEW: Suppressed drifts are terminal
 ];
 
 // Human-gated states - wait for human action
