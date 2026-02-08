@@ -1992,52 +1992,71 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
   // Get owner name for display
   const ownerName = primaryOwner?.ref || 'Team';
 
-  // Build input for Slack composer
-  const sourcesUsed = Array.isArray(patchProposal.sourcesUsed)
-    ? (patchProposal.sourcesUsed as Array<{ type: string; ref: string }>)
-    : [];
-  const slackInput = {
-    patch: {
-      doc_id: patchProposal.docId,
-      unified_diff: patchProposal.unifiedDiff,
-      summary: patchProposal.summary || 'Documentation update needed',
-      confidence: drift.confidence || 0.5,
-      sources_used: sourcesUsed,
-      needs_human: true,
-      safety: {
-        secrets_redacted: true,
-        risky_change_avoided: false,
-      },
-    },
-    patchId: patchProposal.id,
-    doc: {
-      title: patchProposal.docTitle,
-      docId: patchProposal.docId,
-    },
-    owner: {
-      slackId: targetChannel,
-      name: ownerName,
-    },
-    pr: {
-      id: extracted.prNumber || prData.number || 'unknown',
-      title: extracted.prTitle || prData.title || 'Code change',
-      repo: drift.repo || signal?.repo || 'unknown',
-    },
-    maxDiffPreviewLines: 12,
-  };
-
-  // Try to compose message with Agent E (Slack Composer)
-  const composerResult = await runSlackComposer(slackInput);
-
+  // Phase 4 Week 7: Try to use zero-LLM message builder from EvidenceBundle first
   let slackMessage;
-  if (composerResult.success && composerResult.data) {
-    slackMessage = composerResult.data;
-    console.log(`[Transitions] Slack message composed by Agent E`);
+
+  // Check if we have an EvidenceBundle for this drift (stored as JSON in drift.evidenceBundle)
+  const evidenceBundle = drift.evidenceBundle;
+
+  if (evidenceBundle) {
+    // Use zero-LLM message builder (deterministic, no LLM calls)
+    const { buildSlackMessageFromEvidence } = await import('../evidence/slackMessageBuilder.js');
+    slackMessage = buildSlackMessageFromEvidence(
+      evidenceBundle as any,
+      patchProposal.id,
+      targetChannel,
+      ownerName
+    );
+    console.log(`[Transitions] Slack message built from EvidenceBundle (zero-LLM)`);
   } else {
-    // Fallback to simple message if Agent E fails
-    const { buildFallbackSlackMessage } = await import('../../agents/slack-composer.js');
-    slackMessage = buildFallbackSlackMessage(slackInput);
-    console.log(`[Transitions] Using fallback Slack message: ${composerResult.error}`);
+    // Fallback to LLM-based composer if no evidence bundle
+    console.log(`[Transitions] No EvidenceBundle found, falling back to LLM composer`);
+
+    const sourcesUsed = Array.isArray(patchProposal.sourcesUsed)
+      ? (patchProposal.sourcesUsed as Array<{ type: string; ref: string }>)
+      : [];
+    const slackInput = {
+      patch: {
+        doc_id: patchProposal.docId,
+        unified_diff: patchProposal.unifiedDiff,
+        summary: patchProposal.summary || 'Documentation update needed',
+        confidence: drift.confidence || 0.5,
+        sources_used: sourcesUsed,
+        needs_human: true,
+        safety: {
+          secrets_redacted: true,
+          risky_change_avoided: false,
+        },
+      },
+      patchId: patchProposal.id,
+      doc: {
+        title: patchProposal.docTitle,
+        docId: patchProposal.docId,
+      },
+      owner: {
+        slackId: targetChannel,
+        name: ownerName,
+      },
+      pr: {
+        id: extracted.prNumber || prData.number || 'unknown',
+        title: extracted.prTitle || prData.title || 'Code change',
+        repo: drift.repo || signal?.repo || 'unknown',
+      },
+      maxDiffPreviewLines: 12,
+    };
+
+    // Try to compose message with Agent E (Slack Composer)
+    const composerResult = await runSlackComposer(slackInput);
+
+    if (composerResult.success && composerResult.data) {
+      slackMessage = composerResult.data;
+      console.log(`[Transitions] Slack message composed by Agent E (LLM)`);
+    } else {
+      // Fallback to simple message if Agent E fails
+      const { buildFallbackSlackMessage } = await import('../../agents/slack-composer.js');
+      slackMessage = buildFallbackSlackMessage(slackInput);
+      console.log(`[Transitions] Using fallback Slack message: ${composerResult.error}`);
+    }
   }
 
   // Send the message via Slack client
