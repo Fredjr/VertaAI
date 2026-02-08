@@ -31,8 +31,9 @@ export interface SourceArtifacts {
     responders: string[];
     maxChars: number;
     lineBounded: boolean;
+    timelineExcerpt?: string;
   };
-  
+
   // Slack cluster artifacts
   slackMessages?: {
     excerpt: string;
@@ -41,8 +42,11 @@ export interface SourceArtifacts {
     timespan: string;
     maxChars: number;
     lineBounded: boolean;
+    theme?: string;
+    userCount?: number;
+    messagesExcerpt?: string;
   };
-  
+
   // Alert artifacts (Datadog/Grafana)
   alertData?: {
     excerpt: string;
@@ -51,8 +55,10 @@ export interface SourceArtifacts {
     duration: string;
     maxChars: number;
     lineBounded: boolean;
+    severity?: string;
+    affectedServices?: string[];
   };
-  
+
   // Infrastructure as Code artifacts
   iacChanges?: {
     excerpt: string;
@@ -60,8 +66,12 @@ export interface SourceArtifacts {
     changeType: 'create' | 'update' | 'delete';
     maxChars: number;
     lineBounded: boolean;
+    resourcesAdded?: string[];
+    resourcesModified?: string[];
+    resourcesDeleted?: string[];
+    changeTypes?: string[];
   };
-  
+
   // CODEOWNERS artifacts
   ownershipChanges?: {
     excerpt: string;
@@ -70,6 +80,8 @@ export interface SourceArtifacts {
     ownersRemoved: string[];
     maxChars: number;
     lineBounded: boolean;
+    pathsAdded?: string[];
+    pathsRemoved?: string[];
   };
 }
 
@@ -107,7 +119,7 @@ export interface DocClaim {
     section?: string;
   };
   confidence: number;
-  extractionMethod: 'token_pattern' | 'yaml_parse' | 'markdown_structure' | 'code_comment';
+  extractionMethod: 'token_pattern' | 'yaml_parse' | 'markdown_structure' | 'code_comment' | 'pattern_match';
 }
 
 /**
@@ -123,7 +135,7 @@ export interface Assessment {
     teams: string[];
     systems: string[];
   };
-  riskFactors: string[];
+  riskFactors?: string[];
 }
 
 /**

@@ -233,33 +233,39 @@ function hashComponents(components: string[], level: string): string {
 /**
  * Check if two fingerprints match at any level
  */
-export function fingerprintsMatch(fp1: { strict: string; medium: string; broad: string }, fp2: { strict: string; medium: string; broad: string }): { level: 'strict' | 'medium' | 'broad' | null; confidence: number } {
+export function fingerprintsMatch(
+  fp1: { strict: string; medium: string; broad: string },
+  fp2: { strict: string; medium: string; broad: string }
+): { matches: boolean; level?: 'strict' | 'medium' | 'broad'; confidence?: number } {
   if (fp1.strict === fp2.strict) {
-    return { level: 'strict', confidence: 0.95 };
+    return { matches: true, level: 'strict', confidence: 0.95 };
   }
-  
+
   if (fp1.medium === fp2.medium) {
-    return { level: 'medium', confidence: 0.8 };
+    return { matches: true, level: 'medium', confidence: 0.8 };
   }
-  
+
   if (fp1.broad === fp2.broad) {
-    return { level: 'broad', confidence: 0.6 };
+    return { matches: true, level: 'broad', confidence: 0.6 };
   }
-  
-  return { level: null, confidence: 0 };
+
+  return { matches: false };
 }
 
 /**
  * Determine if fingerprint should escalate to broader level
  */
-export function shouldEscalateFingerprint(falsePositiveCount: number, currentLevel: 'strict' | 'medium' | 'broad'): 'strict' | 'medium' | 'broad' {
+export function shouldEscalateFingerprint(
+  currentLevel: 'strict' | 'medium' | 'broad',
+  falsePositiveCount: number
+): { shouldEscalate: boolean; newLevel: 'strict' | 'medium' | 'broad' } {
   if (currentLevel === 'strict' && falsePositiveCount >= 3) {
-    return 'medium';
+    return { shouldEscalate: true, newLevel: 'medium' };
   }
-  
+
   if (currentLevel === 'medium' && falsePositiveCount >= 5) {
-    return 'broad';
+    return { shouldEscalate: true, newLevel: 'broad' };
   }
-  
-  return currentLevel;
+
+  return { shouldEscalate: false, newLevel: currentLevel };
 }
