@@ -1307,8 +1307,10 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
   const evidencePack = finding.evidencePack;
 
   // NEW: Phase 1 - Build EvidenceBundle for deterministic decision making
+  // Phase 3 Week 7: Added Redis caching for performance
   try {
     const { buildEvidenceBundle } = await import('../evidence/builder.js');
+    const { cacheEvidence } = await import('../cache/evidenceCache.js');
 
     const evidenceBundleResult = await buildEvidenceBundle({
       driftCandidate: drift,
@@ -1343,6 +1345,9 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
           fingerprintBroad: bundle.fingerprints.broad,
         },
       });
+
+      // Cache evidence bundle for 24 hours (Phase 3 Week 7)
+      await cacheEvidence(drift.workspaceId, drift.id, bundle);
 
       console.log(`[Transitions] EvidenceBundle created: impact=${bundle.assessment.impactBand} (${bundle.assessment.impactScore.toFixed(3)}), claims=${bundle.targetEvidence.claims.length}`);
 
@@ -1993,10 +1998,22 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
   const ownerName = primaryOwner?.ref || 'Team';
 
   // Phase 4 Week 7: Try to use zero-LLM message builder from EvidenceBundle first
+  // Phase 3 Week 7 Days 34-35: Check cache first for performance
   let slackMessage;
 
-  // Check if we have an EvidenceBundle for this drift (stored as JSON in drift.evidenceBundle)
-  const evidenceBundle = drift.evidenceBundle;
+  // Try to get evidence bundle from cache first (faster)
+  const { getCachedEvidence } = await import('../cache/evidenceCache.js');
+  let evidenceBundle = await getCachedEvidence(drift.workspaceId, drift.id);
+
+  // Fall back to database if not in cache
+  if (!evidenceBundle) {
+    evidenceBundle = drift.evidenceBundle;
+    if (evidenceBundle) {
+      console.log(`[Transitions] EvidenceBundle loaded from database (cache miss)`);
+    }
+  } else {
+    console.log(`[Transitions] EvidenceBundle loaded from cache (cache hit)`);
+  }
 
   if (evidenceBundle) {
     // Use zero-LLM message builder (deterministic, no LLM calls)
