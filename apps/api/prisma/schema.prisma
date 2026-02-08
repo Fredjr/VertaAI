@@ -57,6 +57,7 @@ model Workspace {
   approvals             Approval[]
   slackQuestionClusters SlackQuestionCluster[]
   driftSuppressions     DriftSuppression[] // NEW: Phase 1 suppression system
+  coverageSnapshots     CoverageSnapshot[] // NEW: Phase 3 Week 6 coverage monitoring
 
   @@map("workspaces")
 }
@@ -690,4 +691,50 @@ model DriftPlan {
   @@index([workspaceId, scopeType, scopeRef])
   @@index([workspaceId, templateId])
   @@map("drift_plans")
+}
+
+// ======================================================================
+// COVERAGE HEALTH MONITORING (Phase 3, Week 6)
+// Daily snapshots of coverage metrics for monitoring and alerting
+// ======================================================================
+
+model CoverageSnapshot {
+  workspaceId String   @map("workspace_id")
+  id          String   @default(uuid())
+  snapshotAt  DateTime @map("snapshot_at") // Timestamp of snapshot
+
+  // Mapping Coverage Metrics
+  totalServices           Int @default(0) @map("total_services") // Total unique services seen
+  servicesMapped          Int @default(0) @map("services_mapped") // Services with doc mappings
+  totalRepos              Int @default(0) @map("total_repos") // Total unique repos seen
+  reposMapped             Int @default(0) @map("repos_mapped") // Repos with doc mappings
+  mappingCoveragePercent  Float @default(0) @map("mapping_coverage_percent") // Overall mapping coverage
+
+  // Processing Coverage Metrics
+  totalSignals            Int @default(0) @map("total_signals") // Total signals in period
+  signalsProcessed        Int @default(0) @map("signals_processed") // Signals that created drift candidates
+  signalsIgnored          Int @default(0) @map("signals_ignored") // Signals ignored (no mapping, filtered, etc.)
+  processingCoveragePercent Float @default(0) @map("processing_coverage_percent") // Signals processed / total
+
+  // Source Health Metrics (JSON structure)
+  // { "github_pr": { "total": 100, "processed": 80, "ignored": 20, "health": "good" }, ... }
+  sourceHealth Json @default("{}") @map("source_health")
+
+  // Drift Type Distribution (JSON structure)
+  // { "instruction": 45, "process": 30, "ownership": 15, "coverage": 10 }
+  driftTypeDistribution Json @default("{}") @map("drift_type_distribution")
+
+  // Coverage Obligations Status (JSON structure)
+  // { "mapping_coverage": { "threshold": 0.8, "actual": 0.75, "met": false }, ... }
+  obligationsStatus Json @default("{}") @map("obligations_status")
+
+  // Metadata
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, snapshotAt])
+  @@map("coverage_snapshots")
 }
