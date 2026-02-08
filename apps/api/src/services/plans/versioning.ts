@@ -38,8 +38,18 @@ export function generatePlanHash(args: {
     },
   };
 
-  // Convert to stable JSON string (sorted keys)
-  const jsonString = JSON.stringify(canonical, Object.keys(canonical).sort());
+  // Convert to stable JSON string with sorted keys at all levels
+  const jsonString = JSON.stringify(canonical, (key, value) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return Object.keys(value)
+        .sort()
+        .reduce((sorted: any, key) => {
+          sorted[key] = value[key];
+          return sorted;
+        }, {});
+    }
+    return value;
+  });
 
   // Generate SHA-256 hash
   const hash = crypto.createHash('sha256');

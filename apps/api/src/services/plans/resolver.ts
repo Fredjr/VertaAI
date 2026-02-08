@@ -185,8 +185,8 @@ export function checkPlanEligibility(args: {
     const severityOrder = ['sev4', 'sev3', 'sev2', 'sev1'];
     const minIndex = severityOrder.indexOf(eligibility.minSeverity);
     const actualIndex = severityOrder.indexOf(severity);
-    
-    if (actualIndex > minIndex) {
+
+    if (actualIndex < minIndex) {
       return {
         eligible: false,
         reason: `Severity '${severity}' below minimum '${eligibility.minSeverity}'`,
