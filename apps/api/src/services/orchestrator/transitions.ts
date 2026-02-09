@@ -52,6 +52,11 @@ import {
   extractScenarioKeywords,
 } from '../baseline/evidencePack.js';
 
+// Phase 1 Day 1 imports - Deterministic drift detection
+import { extractArtifacts } from '../baseline/artifactExtractor.js';
+import { compareArtifacts } from '../baseline/comparison.js';
+import type { ComparisonResult } from '../baseline/types.js';
+
 // Type alias for transition handlers
 type TransitionHandler = (drift: any) => Promise<TransitionResult>;
 
@@ -1345,6 +1350,134 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
   const rawPayload = signal?.rawPayload || {};
   const prData = rawPayload.pull_request || {};
   const extracted = signal?.extracted || {};
+
+  // ============================================================================
+  // Phase 1 Day 1 Task 1.4: Deterministic Drift Classification
+  // Run deterministic comparison BEFORE patch planning
+  // This can override LLM classification if confidence is high enough
+  // ============================================================================
+
+  let comparisonResult: ComparisonResult | null = null;
+  const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
+
+  try {
+    console.log(`[Transitions] Phase 1 - Running deterministic drift comparison for source=${sourceType}`);
+
+    // Extract artifacts from source (PR, incident, alert, etc.)
+    const sourceArtifacts = extractArtifacts({
+      sourceType,
+      sourceEvidence: {
+        artifacts: {
+          prDiff: {
+            excerpt: rawPayload.diff || '',
+            filesChanged: extracted.changedFiles || [],
+          },
+          incidentTimeline: extracted.pagerdutyNormalized,
+          slackCluster: extracted.slackCluster,
+          alertData: extracted.alertNormalized,
+          iacChanges: extracted.iacSummary,
+          codeownersDiff: extracted.codeownersDiff,
+        },
+      },
+    });
+
+    // Extract artifacts from doc content
+    const docText = finding.docContent || llmPayload?.managedRegionText || '';
+    const docArtifacts = extractArtifacts({
+      sourceType: 'doc',
+      sourceEvidence: {
+        docText,
+        text: docText,
+      },
+    });
+
+    // Run deterministic comparison
+    comparisonResult = compareArtifacts({
+      sourceArtifacts,
+      docArtifacts,
+      sourceType,
+    });
+
+    console.log(
+      `[Transitions] Phase 1 - Comparison complete: ` +
+      `driftType=${comparisonResult.driftType}, ` +
+      `confidence=${comparisonResult.confidence.toFixed(2)}, ` +
+      `hasDrift=${comparisonResult.hasDrift}, ` +
+      `hasCoverageGap=${comparisonResult.hasCoverageGap}, ` +
+      `conflicts=${comparisonResult.conflicts.length}, ` +
+      `newContent=${comparisonResult.newContent.length}, ` +
+      `coverageGaps=${comparisonResult.coverageGaps.length}`
+    );
+
+    // If comparison confidence is high (≥0.6), override LLM classification
+    const shouldOverrideLLM = comparisonResult.confidence >= 0.6;
+    const llmDriftType = drift.driftType;
+    const llmConfidence = drift.confidence || 0;
+
+    if (shouldOverrideLLM && comparisonResult.hasDrift) {
+      console.log(
+        `[Transitions] Phase 1 - Overriding LLM classification: ` +
+        `LLM(type=${llmDriftType}, conf=${llmConfidence.toFixed(2)}) → ` +
+        `Deterministic(type=${comparisonResult.driftType}, conf=${comparisonResult.confidence.toFixed(2)})`
+      );
+
+      // Update drift candidate with deterministic classification
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+        data: {
+          driftType: comparisonResult.driftType,
+          confidence: comparisonResult.confidence,
+          // Store comparison results for downstream use
+          comparisonResult: comparisonResult as any,
+          classificationMethod: 'deterministic',
+          // Store original LLM classification for audit trail
+          llmDriftType: llmDriftType,
+          llmConfidence: llmConfidence,
+        },
+      });
+
+      // Update local drift object for downstream handlers
+      drift.driftType = comparisonResult.driftType;
+      drift.confidence = comparisonResult.confidence;
+      drift.comparisonResult = comparisonResult;
+      drift.classificationMethod = 'deterministic';
+    } else if (comparisonResult.hasDrift) {
+      console.log(
+        `[Transitions] Phase 1 - Low confidence (${comparisonResult.confidence.toFixed(2)}), ` +
+        `keeping LLM classification: type=${llmDriftType}, conf=${llmConfidence.toFixed(2)}`
+      );
+
+      // Store comparison results but keep LLM classification
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+        data: {
+          comparisonResult: comparisonResult as any,
+          classificationMethod: 'llm',
+        },
+      });
+
+      drift.comparisonResult = comparisonResult;
+      drift.classificationMethod = 'llm';
+    } else {
+      console.log(`[Transitions] Phase 1 - No drift detected by deterministic comparison`);
+
+      // Store comparison results
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+        data: {
+          comparisonResult: comparisonResult as any,
+          classificationMethod: 'llm',
+        },
+      });
+
+      drift.comparisonResult = comparisonResult;
+      drift.classificationMethod = 'llm';
+    }
+  } catch (error: any) {
+    console.error(`[Transitions] Phase 1 - Error in deterministic comparison:`, error);
+    // Continue with LLM classification if deterministic comparison fails
+    comparisonResult = null;
+  }
 
   // Point 4: Get target section patterns for this doc system and drift type
   const { getSectionPatterns } = await import('../../config/docTargeting.js');

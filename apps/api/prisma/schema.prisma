@@ -130,6 +130,12 @@ model DriftCandidate {
   driftType    String?  @map("drift_type") // 'instruction', 'process', 'ownership', 'coverage', 'environment_tooling'
   driftDomains String[] @map("drift_domains")
 
+  // Phase 1 Day 1: Deterministic drift classification
+  comparisonResult      Json?    @map("comparison_result")       // Complete comparison result from deterministic comparison
+  classificationMethod  String?  @map("classification_method")   // 'deterministic' | 'llm' - which method was used
+  llmDriftType          String?  @map("llm_drift_type")          // Original LLM classification (for audit trail)
+  llmConfidence         Float?   @map("llm_confidence")          // Original LLM confidence (for audit trail)
+
   // Evidence & scoring
   evidenceSummary   String? @map("evidence_summary")
   confidence        Float?
