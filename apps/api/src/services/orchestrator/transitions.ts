@@ -929,6 +929,7 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
   // ==========================================================================
   // A) INSTRUCTION DRIFT - Gap 3
   // Compare EvidencePack artifacts vs DocContext baselineAnchors
+  // ENHANCED: Also detect NEW content (coverage gaps) not just conflicts
   // ==========================================================================
   if (driftType === 'instruction') {
     const prCommands = evidencePack.extracted.commands;
@@ -943,39 +944,69 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
     // Find conflicts: PR has artifact that conflicts with doc artifact
     const conflicts: string[] = [];
 
+    // Find new content: PR has artifact NOT in doc (coverage gap)
+    const newContent: string[] = [];
+
     // Check for command conflicts (PR changed command, doc has old version)
     for (const prCmd of prCommands) {
+      let foundInDoc = false;
       for (const docCmd of docCommands) {
         // Same base command but different arguments/flags
         const prBase = prCmd.split(' ')[0];
         const docBase = docCmd.split(' ')[0];
-        if (prBase === docBase && prCmd !== docCmd) {
-          conflicts.push(`Command conflict: PR="${prCmd}" vs Doc="${docCmd}"`);
+        if (prBase === docBase) {
+          foundInDoc = true;
+          if (prCmd !== docCmd) {
+            conflicts.push(`Command conflict: PR="${prCmd}" vs Doc="${docCmd}"`);
+          }
         }
+      }
+      // NEW: If command not found in doc at all, it's new content
+      if (!foundInDoc && prCmd.trim()) {
+        newContent.push(`New command: ${prCmd}`);
       }
     }
 
-    // Check for config key changes
+    // Check for config key changes and new keys
     for (const prKey of prConfigKeys) {
+      let foundInDoc = false;
       for (const docKey of docConfigKeys) {
-        // PR mentions a config key that exists in doc (potential update)
-        if (prKey === docKey && prKeywords.some(k =>
-          ['rename', 'deprecate', 'migrate', 'replace', 'change', 'update'].includes(k)
-        )) {
-          conflicts.push(`Config change detected: ${prKey}`);
+        if (prKey === docKey) {
+          foundInDoc = true;
+          // PR mentions a config key that exists in doc (potential update)
+          if (prKeywords.some(k =>
+            ['rename', 'deprecate', 'migrate', 'replace', 'change', 'update'].includes(k)
+          )) {
+            conflicts.push(`Config change detected: ${prKey}`);
+          }
         }
+      }
+      // NEW: If config key not found in doc, it's new content
+      if (!foundInDoc && prKey.trim()) {
+        newContent.push(`New config key: ${prKey}`);
       }
     }
 
-    // Check for endpoint changes
+    // Check for endpoint changes and new endpoints
     for (const prEndpoint of prEndpoints) {
+      let foundInDoc = false;
       for (const docEndpoint of docEndpoints) {
         // Same path prefix but different full path
         const prPath = prEndpoint.replace(/^https?:\/\/[^/]+/, '');
         const docPath = docEndpoint.replace(/^https?:\/\/[^/]+/, '');
-        if (prPath.split('/').slice(0, 3).join('/') === docPath.split('/').slice(0, 3).join('/') && prPath !== docPath) {
-          conflicts.push(`Endpoint change: ${docPath} → ${prPath}`);
+        const prPrefix = prPath.split('/').slice(0, 3).join('/');
+        const docPrefix = docPath.split('/').slice(0, 3).join('/');
+
+        if (prPrefix === docPrefix) {
+          foundInDoc = true;
+          if (prPath !== docPath) {
+            conflicts.push(`Endpoint change: ${docPath} → ${prPath}`);
+          }
         }
+      }
+      // NEW: If endpoint not found in doc, it's new content
+      if (!foundInDoc && prEndpoint.trim()) {
+        newContent.push(`New endpoint: ${prEndpoint}`);
       }
     }
 
@@ -989,19 +1020,24 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
       conflicts.push(`Change intent detected (${prKeywords.filter(k => changeKeywords.includes(k)).join(', ')}) with doc artifacts present`);
     }
 
+    // ENHANCED: Combine conflicts and new content for drift detection
+    const allEvidence = [...conflicts, ...newContent];
+    const hasDrift = allEvidence.length > 0;
+
     baselineResult = {
       driftType,
-      hasMatch: conflicts.length > 0 || (prCommands.length > 0 && docCommands.length > 0),
-      matchCount: conflicts.length,
-      evidence: conflicts.slice(0, 5),
+      hasMatch: hasDrift,
+      matchCount: allEvidence.length,
+      evidence: allEvidence.slice(0, 5),
       comparisonDetails: {
         prArtifacts: [...prCommands, ...prConfigKeys, ...prEndpoints].slice(0, 10),
         docArtifacts: [...docCommands, ...docConfigKeys, ...docEndpoints].slice(0, 10),
         conflicts,
-        recommendation: conflicts.length > 0 ? 'replace_steps' : 'add_note',
+        newContent, // NEW: Track new content separately
+        recommendation: conflicts.length > 0 ? 'replace_steps' : (newContent.length > 0 ? 'add_section' : 'add_note'),
       },
     };
-    console.log(`[Transitions] Instruction drift comparison: ${conflicts.length} conflicts, PR artifacts=${prCommands.length + prConfigKeys.length + prEndpoints.length}, Doc artifacts=${docCommands.length + docConfigKeys.length + docEndpoints.length}`);
+    console.log(`[Transitions] Instruction drift comparison: ${conflicts.length} conflicts, ${newContent.length} new items, PR artifacts=${prCommands.length + prConfigKeys.length + prEndpoints.length}, Doc artifacts=${docCommands.length + docConfigKeys.length + docEndpoints.length}`);
   }
 
   // ==========================================================================

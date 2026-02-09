@@ -75,6 +75,9 @@ const ENDPOINT_PATTERNS: RegExp[] = [
   /["'](\/v\d+\/[^"'\s]+)["']/gi,             // "/v1/users"
   /["'](\/api\/[^"'\s]+)["']/gi,              // "/api/users"
   /https?:\/\/[^\s"']+/gi,                     // Full URLs
+  /router\.(get|post|put|delete|patch)\(['"]([^'"]+)['"]/gi,  // router.get('/path')
+  /app\.(get|post|put|delete|patch)\(['"]([^'"]+)['"]/gi,     // app.get('/path')
+  /@(Get|Post|Put|Delete|Patch)\(['"]([^'"]+)['"]\)/gi,       // @Get('/path') decorators
 ];
 
 // High-risk keywords that suggest drift
