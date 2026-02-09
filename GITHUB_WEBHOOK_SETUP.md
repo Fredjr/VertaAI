@@ -2,7 +2,7 @@
 
 ## Current Status
 
-✅ **PR #4 Merged Successfully**  
+✅ **PR #4 Merged Successfully**
 ⏳ **Waiting for GitHub webhook to trigger drift detection**
 
 ---
@@ -15,6 +15,15 @@ After merging PR #4, no webhook has been received by the Railway API. This indic
 
 ## Solution: Configure GitHub App Webhook
 
+### Architecture
+
+VertaAI uses a **global webhook endpoint** that automatically routes webhooks to the correct workspace based on the GitHub App `installation.id`:
+
+- **Global Endpoint**: `/webhooks/github/app`
+- **Routing**: Looks up workspace by `Integration.config.installationId`
+- **Multi-tenant**: Each customer has their own GitHub App installation
+- **No hardcoded workspace IDs**: Fully dynamic routing
+
 ### Step 1: Go to GitHub App Settings
 
 1. Visit: https://github.com/settings/apps/vertaai-drift-detection
@@ -22,28 +31,47 @@ After merging PR #4, no webhook has been received by the Railway API. This indic
 
 ### Step 2: Configure Webhook URL
 
-**Webhook URL**: `https://vertaai-api-production.up.railway.app/webhooks/github/63e8e9d1-c09d-4dd0-a921-6e54df1724ac`
+**Webhook URL**: `https://vertaai-api-production.up.railway.app/webhooks/github/app`
 
-**Important**: Replace the workspace ID if different.
+**Important**: This is a single global URL for all workspaces. The system automatically routes to the correct workspace based on the installation ID in the webhook payload.
 
-### Step 3: Configure Webhook Secret (Optional but Recommended)
+### Step 3: Configure Webhook Secret
 
-If you want signature validation:
-1. Generate a secret: `openssl rand -hex 32`
-2. Add it to Railway environment variables as `GITHUB_WEBHOOK_SECRET`
-3. Add it to GitHub App webhook secret field
+The webhook secret is stored per-workspace in the `Integration.webhookSecret` field. This was automatically generated during GitHub App installation OAuth flow.
+
+**No manual configuration needed** - the system uses the workspace-specific secret stored in the database.
 
 ### Step 4: Enable Events
 
-Make sure these events are enabled:
-- ✅ **Pull requests** (required)
-- ✅ **Push** (optional, for other signal types)
+Make sure these events are enabled in GitHub App settings:
+- ✅ **Pull requests** (required for drift detection)
+- ✅ **Push** (optional, for future signal types)
 
 ### Step 5: Test Webhook
 
 After configuration:
-1. Click "Redeliver" on the PR #4 merge event in GitHub App → Advanced → Recent Deliveries
-2. Or create a new test PR and merge it
+1. Go to GitHub App → Advanced → Recent Deliveries
+2. Find the PR #4 merge event
+3. Click "Redeliver" to resend the webhook
+4. Or create a new test PR and merge it
+
+### How It Works
+
+```
+GitHub Webhook → /webhooks/github/app
+                 ↓
+Extract installation.id from payload
+                 ↓
+Query: Integration WHERE config.installationId = installation.id
+                 ↓
+Find workspaceId
+                 ↓
+Route to workspace-specific processing
+                 ↓
+Create SignalEvent + DriftCandidate
+                 ↓
+Send Slack notification to workspace's configured channel
+```
 
 ---
 
