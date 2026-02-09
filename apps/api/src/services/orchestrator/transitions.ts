@@ -1369,7 +1369,7 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
       sourceEvidence: {
         artifacts: {
           prDiff: {
-            excerpt: rawPayload.diff || '',
+            excerpt: extracted.diff || '',  // FIX: Use extracted.diff not rawPayload.diff
             filesChanged: extracted.changedFiles || [],
           },
           incidentTimeline: extracted.pagerdutyNormalized,
