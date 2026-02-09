@@ -891,6 +891,7 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
       prArtifacts: string[];
       docArtifacts: string[];
       conflicts: string[];
+      newContent?: string[];  // NEW: Track new content (coverage gaps)
       recommendation: string;
     };
     toolMigration?: {
