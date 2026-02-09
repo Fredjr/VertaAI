@@ -466,11 +466,22 @@ async function handleDriftClassified(drift: any): Promise<TransitionResult> {
     }
 
     // Store fingerprint after dedup check passes (this is the "primary" drift for this fingerprint)
-    await prisma.driftCandidate.update({
-      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
-      data: { fingerprint },
-    });
-    console.log(`[Transitions] Fingerprint stored: ${fingerprint}`);
+    // Handle unique constraint gracefully - if fingerprint already exists, it means another drift
+    // with the same fingerprint was created concurrently. In this case, we'll skip storing the fingerprint
+    // and let the dedup check handle it on the next retry.
+    try {
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+        data: { fingerprint },
+      });
+      console.log(`[Transitions] Fingerprint stored: ${fingerprint}`);
+    } catch (error: any) {
+      if (error.code === 'P2002' && error.meta?.target?.includes('fingerprint')) {
+        console.log(`[Transitions] Fingerprint ${fingerprint} already exists - this is a duplicate drift, completing without notification`);
+        return { state: DriftState.COMPLETED, enqueueNext: false };
+      }
+      throw error; // Re-throw if it's a different error
+    }
   }
 
   // Point 2: Determine target doc systems using source-output compatibility matrix
