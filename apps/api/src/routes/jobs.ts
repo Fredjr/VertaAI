@@ -137,6 +137,7 @@ router.post('/run', async (req: Request, res: Response) => {
     let currentState = drift.state as DriftState;
     let transitions = 0;
     let lastError: { code: string; message: string } | null = null;
+    let currentDrift = drift; // Track current drift object
 
     while (
       transitions < MAX_TRANSITIONS_PER_INVOCATION &&
@@ -145,7 +146,7 @@ router.post('/run', async (req: Request, res: Response) => {
     ) {
       console.log(`[Jobs] Executing transition ${transitions + 1} from state ${currentState}`);
 
-      const result = await executeTransition(drift, currentState);
+      const result = await executeTransition(currentDrift, currentState);
 
       // Update state in DB
       await prisma.driftCandidate.update({
@@ -169,6 +170,18 @@ router.post('/run', async (req: Request, res: Response) => {
         lastError = result.error;
         console.error(`[Jobs] Transition error: ${result.error.code} - ${result.error.message}`);
         break;
+      }
+
+      // CRITICAL FIX: Refetch drift candidate to get updated fields (docCandidates, baselineFindings, etc.)
+      // This ensures each transition handler has access to data stored by previous transitions
+      if (!TERMINAL_STATES.includes(currentState) && !HUMAN_GATED_STATES.includes(currentState)) {
+        currentDrift = await prisma.driftCandidate.findUnique({
+          where: { workspaceId_id: { workspaceId, id: driftId } },
+          include: {
+            signalEvent: true,
+            workspace: true,
+          },
+        }) || currentDrift; // Fallback to current if refetch fails
       }
     }
 
