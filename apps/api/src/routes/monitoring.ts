@@ -256,4 +256,66 @@ router.get('/drift-analytics', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/monitoring/drift-trends - Get drift trends over time
+router.get('/drift-trends', async (req: Request, res: Response) => {
+  try {
+    const period = (req.query.period as string) || '7d'; // 7d, 30d, 90d
+
+    const daysMap: Record<string, number> = {
+      '7d': 7,
+      '30d': 30,
+      '90d': 90,
+    };
+
+    const days = daysMap[period] || 7;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const drifts = await prisma.driftCandidate.findMany({
+      where: {
+        createdAt: {
+          gte: startDate,
+        },
+      },
+      select: {
+        driftType: true,
+        state: true,
+        confidence: true,
+        classificationMethod: true,
+        createdAt: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    // Calculate trend metrics
+    const totalDrifts = drifts.length;
+    const avgDriftsPerDay = totalDrifts / days;
+    const completedDrifts = drifts.filter(d => d.state === 'COMPLETED').length;
+    const failedDrifts = drifts.filter(d => d.state === 'FAILED').length;
+    const successRate = totalDrifts > 0 ? (completedDrifts / totalDrifts) * 100 : 0;
+
+    return res.json({
+      timestamp: new Date().toISOString(),
+      period,
+      days,
+      trends: {
+        totalDrifts,
+        avgDriftsPerDay: parseFloat(avgDriftsPerDay.toFixed(2)),
+        completedDrifts,
+        failedDrifts,
+        successRate: parseFloat(successRate.toFixed(2)),
+      },
+      drifts,
+    });
+  } catch (error: any) {
+    console.error('[Monitoring] Drift trends fetch failed:', error);
+    return res.status(500).json({
+      error: 'Failed to fetch drift trends',
+      message: error.message,
+    });
+  }
+});
+
 export default router;
