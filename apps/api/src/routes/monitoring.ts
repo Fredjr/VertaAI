@@ -399,4 +399,80 @@ router.get('/drift-health', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/monitoring/drift-coverage
+ * Returns drift coverage metrics by drift type
+ */
+router.get('/drift-coverage', async (req: Request, res: Response) => {
+  try {
+    const workspaceId = req.query.workspaceId as string;
+
+    if (!workspaceId) {
+      return res.status(400).json({ error: 'workspaceId is required' });
+    }
+
+    // Get drift type distribution
+    const driftTypeDistribution = await prisma.driftCandidate.groupBy({
+      by: ['driftType'],
+      where: {
+        workspaceId,
+        state: 'COMPLETED',
+      },
+      _count: { driftType: true },
+    });
+
+    // Get source type distribution
+    const sourceTypeDistribution = await prisma.driftCandidate.groupBy({
+      by: ['sourceType'],
+      where: {
+        workspaceId,
+        state: 'COMPLETED',
+      },
+      _count: { sourceType: true },
+    });
+
+    // Get classification method distribution
+    const classificationMethodDistribution = await prisma.driftCandidate.groupBy({
+      by: ['classificationMethod'],
+      where: {
+        workspaceId,
+        state: 'COMPLETED',
+      },
+      _count: { classificationMethod: true },
+    });
+
+    // Calculate coverage percentage
+    const totalCompleted = driftTypeDistribution.reduce((sum, d) => sum + d._count.driftType, 0);
+    const deterministicCount = classificationMethodDistribution.find(c => c.classificationMethod === 'deterministic')?._count.classificationMethod || 0;
+    const coveragePercentage = totalCompleted > 0
+      ? Math.round((deterministicCount / totalCompleted) * 100)
+      : 0;
+
+    return res.json({
+      coveragePercentage,
+      totalCompleted,
+      deterministicCount,
+      llmCount: totalCompleted - deterministicCount,
+      driftTypeDistribution: driftTypeDistribution.map(d => ({
+        driftType: d.driftType,
+        count: d._count.driftType,
+      })),
+      sourceTypeDistribution: sourceTypeDistribution.map(s => ({
+        sourceType: s.sourceType,
+        count: s._count.sourceType,
+      })),
+      classificationMethodDistribution: classificationMethodDistribution.map(c => ({
+        method: c.classificationMethod,
+        count: c._count.classificationMethod,
+      })),
+    });
+  } catch (error: any) {
+    console.error('[Monitoring] Drift coverage fetch failed:', error);
+    return res.status(500).json({
+      error: 'Failed to fetch drift coverage',
+      message: error.message,
+    });
+  }
+});
+
 export default router;
