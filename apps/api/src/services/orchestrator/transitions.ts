@@ -342,10 +342,55 @@ async function handleIngested(drift: any): Promise<TransitionResult> {
  * ELIGIBILITY_CHECKED -> SIGNALS_CORRELATED
  * Phase 4: Correlate signals from multiple sources (GitHub + PagerDuty)
  * Point 9: Correlation Strategies - Source-aware correlation scoring
+ * Gap #6 Part 2: Add noise filtering
  */
 async function handleEligibilityChecked(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
   const service = drift.service || signal?.service;
+
+  // Gap #6 Part 2: Resolve active plan for noise filtering
+  const { resolveDriftPlan } = await import('../plans/resolver.js');
+  const planResolution = await resolveDriftPlan({
+    workspaceId: drift.workspaceId,
+    serviceId: drift.service || undefined,
+    repoFullName: drift.repo || undefined,
+    docClass: undefined,
+  });
+
+  const activePlan = planResolution.plan;
+
+  // Gap #6 Part 2: Check noise filter
+  if (activePlan) {
+    const { checkNoiseFilter } = await import('../plans/noiseFiltering.js');
+    const extracted = signal?.extracted as any;
+
+    const noiseFilterResult = await checkNoiseFilter({
+      workspaceId: drift.workspaceId,
+      planId: activePlan.id,
+      signalData: {
+        title: extracted?.prTitle || extracted?.title,
+        body: extracted?.prBody || extracted?.body || extracted?.description,
+        author: extracted?.authorLogin || extracted?.author,
+        changedFiles: extracted?.changedFiles,
+      },
+    });
+
+    if (noiseFilterResult.shouldIgnore) {
+      console.log(`[Transitions] Gap #6 - Noise filter: ${noiseFilterResult.reason}`);
+
+      // Mark as ignored and complete
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+        data: {
+          state: 'COMPLETED',
+          stateUpdatedAt: new Date(),
+          lastErrorMessage: `Filtered by noise control: ${noiseFilterResult.reason}`,
+        },
+      });
+
+      return { state: DriftState.COMPLETED, enqueueNext: false };
+    }
+  }
 
   // Phase 4: Use SignalJoiner to find correlated signals
   const joinResult = await joinSignals(
@@ -2245,6 +2290,48 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
     routingAction = 'digest_only';
   } else {
     routingAction = 'ignore';
+  }
+
+  // Gap #6 Part 2: Check budget limits
+  if (activePlan) {
+    const { checkBudget } = await import('../plans/budgetEnforcement.js');
+
+    // Check drift processing budget
+    const driftBudgetCheck = await checkBudget({
+      workspaceId: drift.workspaceId,
+      planId: activePlan.id,
+      action: 'process_drift',
+    });
+
+    if (!driftBudgetCheck.allowed) {
+      console.log(`[Transitions] Gap #6 - Budget limit: ${driftBudgetCheck.reason}`);
+
+      // Mark as completed without processing
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+        data: {
+          state: 'COMPLETED',
+          stateUpdatedAt: new Date(),
+          lastErrorMessage: `Budget limit reached: ${driftBudgetCheck.reason}`,
+        },
+      });
+
+      return { state: DriftState.COMPLETED, enqueueNext: false };
+    }
+
+    // Check Slack notification budget (if routing to Slack)
+    if (routingAction === 'slack_notify') {
+      const slackBudgetCheck = await checkBudget({
+        workspaceId: drift.workspaceId,
+        planId: activePlan.id,
+        action: 'send_slack_notification',
+      });
+
+      if (!slackBudgetCheck.allowed) {
+        console.log(`[Transitions] Gap #6 - Slack budget limit: ${slackBudgetCheck.reason}, downgrading to digest_only`);
+        routingAction = 'digest_only'; // Downgrade to digest instead of blocking
+      }
+    }
   }
 
   // Create PlanRun record for tracking

@@ -679,11 +679,17 @@ model DriftPlan {
   allowedOutputs String[] @default([]) @map("allowed_outputs") // Allowed output targets: ['confluence', 'notion', ...]
 
   // Plan rules and thresholds (JSON for flexibility)
-  thresholds     Json @default("{}") // { minConfidence: 0.7, minImpactScore: 0.5, ... }
+  thresholds     Json @default("{}") // { autoApprove: 0.98, slackNotify: 0.40, digestOnly: 0.30, ignore: 0.20 }
   eligibility    Json @default("{}") // { requiresIncident: false, minSeverity: 'sev3', ... }
   sectionTargets Json @default("{}") // { instruction: 'Deployment Steps', process: 'Runbook', ... }
   impactRules    Json @default("{}") // Custom impact rules for this plan
   writeback      Json @default("{}") // { enabled: true, requiresApproval: false, ... }
+
+  // Gap #6 Part 2: Control-Plane Fields
+  docTargeting   Json @default("{}") @map("doc_targeting") // { strategy: 'primary_first' | 'all_parallel', maxDocsPerDrift: 3, priorityOrder: ['confluence', 'notion'] }
+  sourceCursors  Json @default("{}") @map("source_cursors") // { github_pr: { lastProcessedAt: '2024-01-01T00:00:00Z', lastPrNumber: 123 }, ... }
+  budgets        Json @default("{}") // { maxDriftsPerDay: 50, maxDriftsPerWeek: 200, maxSlackNotificationsPerHour: 5 }
+  noiseControls  Json @default("{}") @map("noise_controls") // { ignorePatterns: ['WIP:', 'draft:'], ignorePaths: ['test/**'], ignoreAuthors: ['bot'] }
 
   // Versioning for reproducibility
   version     Int    @default(1) // Incremented on each update
