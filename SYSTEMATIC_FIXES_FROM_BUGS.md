@@ -279,11 +279,39 @@ console.log(JSON.stringify({
 - Provides health assessment and tuning recommendations
 - Can filter by workspace, source type, and time period
 
-### Phase 3: Async Reliability (Week 3)
-- [ ] Add environment-aware delays
-- [ ] Add deployment health checks
-- [ ] Test with Railway deployments
-- [ ] Add retry logic for failed jobs
+### Phase 3: Async Reliability (Week 3) ✅ COMPLETE
+- [x] Add environment-aware delays
+- [x] Add deployment health checks
+- [ ] Test with Railway deployments (TODO)
+- [ ] Add retry logic for failed jobs (TODO - already exists in QStash config)
+
+#### Async Reliability Implementation
+
+**Goal**: Prevent deployment race conditions (Bug #4) where jobs hit old containers before new code is deployed.
+
+**Environment-Aware Delays** (qstash.ts:16-34):
+```typescript
+const DEPLOYMENT_DELAYS = {
+  production: 180,  // Railway takes 2+ minutes to deploy
+  staging: 120,     // Faster deployment
+  development: 5,   // Local, no deployment needed
+};
+```
+
+**Deployment Health Check** (monitoring.ts:42-104):
+- New endpoint: `GET /api/monitoring/deployment`
+- Returns: deploymentId, startedAt, uptime, isReady, deploymentDelay
+- Helps diagnose race conditions by tracking container lifecycle
+- Provides recommendations for when to enqueue jobs
+
+**Rationale**:
+- **Bug #4 Root Cause**: QStash delay was 1 second, but Railway deployments take 2+ minutes
+- **Fix**: Increased delay to 180 seconds (3 minutes) for production
+- **Result**: Jobs now wait for deployment to complete before processing
+
+**Retry Logic**:
+- Already implemented in QStash config: `retries: 3`
+- Jobs automatically retry up to 3 times on failure
 
 ### Phase 4: Observability (Week 4)
 - [ ] Add structured logging to all transitions

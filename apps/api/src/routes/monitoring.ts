@@ -38,6 +38,72 @@ router.get('/health', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/monitoring/deployment
+ * Returns deployment health status (Phase 3: Async Reliability)
+ *
+ * Helps diagnose deployment race conditions (Bug #4) by tracking:
+ * - When the current container started
+ * - How long it's been running
+ * - Whether it's ready to process jobs
+ */
+router.get('/deployment', async (req: Request, res: Response) => {
+  try {
+    const startTime = process.uptime();
+    const startedAt = new Date(Date.now() - startTime * 1000);
+    const env = process.env.NODE_ENV || 'production';
+    const deploymentId = process.env.RAILWAY_DEPLOYMENT_ID || 'local';
+
+    // Consider deployment "ready" after 30 seconds (time for all services to initialize)
+    const isReady = startTime > 30;
+
+    // Get deployment delay for this environment
+    const DEPLOYMENT_DELAYS = {
+      production: 180,
+      staging: 120,
+      development: 5,
+    } as const;
+    const deploymentDelay = DEPLOYMENT_DELAYS[env as keyof typeof DEPLOYMENT_DELAYS] || DEPLOYMENT_DELAYS.production;
+
+    return res.json({
+      status: isReady ? 'ready' : 'initializing',
+      environment: env,
+      deploymentId,
+      startedAt: startedAt.toISOString(),
+      uptimeSeconds: Math.floor(startTime),
+      uptimeFormatted: formatUptime(startTime),
+      isReady,
+      deploymentDelay,
+      recommendation: isReady
+        ? `Deployment is ready. Jobs enqueued now will wait ${deploymentDelay}s before processing.`
+        : `Deployment is still initializing. Wait ${Math.ceil(30 - startTime)}s before enqueuing jobs.`,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      status: 'error',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * Format uptime in human-readable format
+ */
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  parts.push(`${secs}s`);
+
+  return parts.join(' ');
+}
+
+/**
  * GET /api/monitoring/metrics
  * Returns system metrics
  */
