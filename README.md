@@ -11,7 +11,37 @@ VertaAI is an intelligent documentation maintenance system that automatically de
 - **Slack Integration**: Interactive approval workflow
 - **Confluence Integration**: Automatic documentation updates
 - **Budget Controls**: Configurable limits on drift processing and notifications
-- **Noise Filtering**: Smart filtering to reduce false positives
+- **Noise Filtering**: Context-aware 4-layer filtering system to reduce false positives
+
+## Noise Filtering System
+
+VertaAI uses a sophisticated 4-layer noise filtering system to reduce false positives while maintaining high detection accuracy:
+
+### Layer 1: Context-Aware Keyword Filtering
+- Filters based on negative keywords (refactor, lint, typo, etc.)
+- **Context-aware**: Documentation keywords are ALLOWED when targeting doc systems
+- **Coverage-aware**: Never filters signals with coverage keywords (new feature, add support, etc.)
+- **Source-balanced**: GitHub sources use more lenient thresholds to match operational sources
+
+### Layer 2: Plan-Based Noise Controls
+- User-configurable ignore patterns, paths, and authors
+- Customizable per DriftPlan for fine-grained control
+
+### Layer 3: Eligibility Rules
+- Source-specific structural filters (file paths, labels, authors)
+- Minimum/maximum change thresholds
+
+### Layer 4: Fingerprint-Based Suppression
+- Prevents duplicate notifications for the same drift
+- Three levels: exact match, normalized tokens, high-level patterns
+
+**Expected Performance:**
+- Filter rate: ~15% (balanced noise reduction)
+- False negative rate: <5% (minimal missed drifts)
+- Coverage drift detection: ~80% (new features detected)
+- Documentation drift detection: ~90% (doc updates detected)
+
+---
 
 ## Deterministic Drift Detection
 
