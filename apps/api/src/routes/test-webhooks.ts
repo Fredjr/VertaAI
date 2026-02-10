@@ -109,6 +109,7 @@ async function handleTestPullRequest(payload: any, workspaceId: string, res: Res
           baseBranch: prInfo.baseBranch,
           headBranch: prInfo.headBranch,
           changedFiles: files,
+          diff: diff, // FIX: Add diff to extracted for Phase 1 deterministic comparison
         },
         rawPayload: payload,
       },
