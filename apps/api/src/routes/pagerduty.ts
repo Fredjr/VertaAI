@@ -198,6 +198,53 @@ router.post('/:workspaceId', async (req: Request, res: Response) => {
       details: t.details || null,
     }));
 
+    // PATTERN 1: Validate extracted data BEFORE creating SignalEvent
+    const { validateExtractedData } = await import('../services/validators/extractedDataValidator.js');
+    const extractedData = {
+      // Core incident data
+      title: normalized.extracted.title,
+      summary: normalized.extracted.summary,
+      incidentNumber: incident.incident_number,
+      incidentId: normalized.incidentId,  // REQUIRED by validator
+      incidentTitle: normalized.extracted.title,  // REQUIRED by validator
+      incidentUrl: normalized.incidentUrl,
+      // Keywords for doc matching
+      keywords: normalized.extracted.keywords,
+      // REQUIRED by pre-validation and deterministic comparison
+      status: incident.status,  // REQUIRED by preValidatePagerDutyIncident
+      service: service || 'unknown',  // REQUIRED by preValidatePagerDutyIncident
+      responders: normalized.responders,  // REQUIRED by deterministic comparison
+      timeline: timelineData,  // REQUIRED by deterministic comparison
+      // Ownership data
+      escalationPolicy: normalized.extracted.escalationPolicy,  // REQUIRED by validator
+      teams: normalized.extracted.teams,  // REQUIRED by validator
+      resolvedBy: normalized.extracted.resolvedBy || null,
+      // Duration and priority
+      durationMinutes: normalized.extracted.duration || null,
+      priority: normalized.extracted.priority || null,
+      // Troubleshooting notes
+      notes: normalized.extracted.notes || null,
+      serviceId: incident.service?.id || null,
+      // Drift hints for downstream processing (Phase 3)
+      driftTypeHints: normalized.extracted.driftTypeHints,
+      processDriftHint: processDriftHint || null,
+      ownershipDriftHint: ownershipDriftHint || null,
+    };
+
+    const validationResult = validateExtractedData('pagerduty_incident', extractedData);
+    if (!validationResult.valid) {
+      console.error(`[PagerDuty] Invalid extracted data: ${validationResult.errors.join(', ')}`);
+      return res.status(400).json({
+        error: 'Invalid extracted data',
+        errors: validationResult.errors,
+        warnings: validationResult.warnings,
+      });
+    }
+
+    if (validationResult.warnings.length > 0) {
+      console.warn(`[PagerDuty] Extracted data warnings: ${validationResult.warnings.join(', ')}`);
+    }
+
     const signalEvent = await prisma.signalEvent.create({
       data: {
         workspaceId,
@@ -206,33 +253,7 @@ router.post('/:workspaceId', async (req: Request, res: Response) => {
         occurredAt: normalized.occurredAt,
         service,
         severity: normalized.severity,
-        extracted: {
-          // Core incident data
-          title: normalized.extracted.title,
-          summary: normalized.extracted.summary,
-          incidentNumber: incident.incident_number,
-          incidentId: normalized.incidentId,
-          incidentUrl: normalized.incidentUrl,
-          // Keywords for doc matching
-          keywords: normalized.extracted.keywords,
-          // Responders and timeline for process drift
-          responders: normalized.responders,
-          timeline: timelineData,
-          // Ownership data
-          escalationPolicy: normalized.extracted.escalationPolicy,
-          teams: normalized.extracted.teams,
-          resolvedBy: normalized.extracted.resolvedBy || null,
-          // Duration and priority
-          duration: normalized.extracted.duration || null,
-          priority: normalized.extracted.priority || null,
-          // Troubleshooting notes
-          notes: normalized.extracted.notes || null,
-          serviceId: incident.service?.id || null,
-          // Drift hints for downstream processing (Phase 3)
-          driftTypeHints: normalized.extracted.driftTypeHints,
-          processDriftHint: processDriftHint || null,
-          ownershipDriftHint: ownershipDriftHint || null,
-        },
+        extracted: extractedData,
         rawPayload: eventWrapper,
       },
     });

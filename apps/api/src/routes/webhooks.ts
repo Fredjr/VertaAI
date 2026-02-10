@@ -440,6 +440,39 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
       }
     }
 
+    // PATTERN 1: Validate extracted data BEFORE creating SignalEvent
+    const { validateExtractedData } = await import('../services/validators/extractedDataValidator.js');
+    const extractedData = {
+      prNumber: prInfo.prNumber,
+      prTitle: prInfo.prTitle,
+      prBody: prInfo.prBody,
+      authorLogin: prInfo.authorLogin,
+      baseBranch: prInfo.baseBranch,
+      headBranch: prInfo.headBranch,
+      merged: prInfo.merged,  // FIX: Required by pre-validation (preValidateGitHubPR)
+      changedFiles: files,
+      diff: diff.substring(0, 50000),  // FIX: Required by deterministic comparison
+      totalChanges: files.reduce((sum, f) => sum + f.additions + f.deletions, 0),  // FIX: Required by pre-validation
+      // Include drift hints if detected (Phase 1 & 2)
+      ...(ownershipDriftHint && { ownershipDriftHint }),
+      ...(apiDriftHint && { apiDriftHint }),
+      ...(catalogDriftHint && { catalogDriftHint }),
+    };
+
+    const validationResult = validateExtractedData('github_pr', extractedData);
+    if (!validationResult.valid) {
+      console.error(`[Webhook] [V2] Invalid extracted data: ${validationResult.errors.join(', ')}`);
+      return res.status(400).json({
+        error: 'Invalid extracted data',
+        errors: validationResult.errors,
+        warnings: validationResult.warnings,
+      });
+    }
+
+    if (validationResult.warnings.length > 0) {
+      console.warn(`[Webhook] [V2] Extracted data warnings: ${validationResult.warnings.join(', ')}`);
+    }
+
     // Create SignalEvent record (workspace-scoped)
     const signalEvent = await prisma.signalEvent.create({
       data: {
@@ -449,22 +482,7 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
         occurredAt: prInfo.mergedAt ? new Date(prInfo.mergedAt) : new Date(),
         repo: prInfo.repoFullName,
         service: inferredService,
-        extracted: {
-          prNumber: prInfo.prNumber,
-          prTitle: prInfo.prTitle,
-          prBody: prInfo.prBody,
-          authorLogin: prInfo.authorLogin,
-          baseBranch: prInfo.baseBranch,
-          headBranch: prInfo.headBranch,
-          merged: prInfo.merged,  // FIX: Required by pre-validation (preValidateGitHubPR)
-          changedFiles: files,
-          diff: diff.substring(0, 50000),  // FIX: Required by deterministic comparison
-          totalChanges: files.reduce((sum, f) => sum + f.additions + f.deletions, 0),  // FIX: Required by pre-validation
-          // Include drift hints if detected (Phase 1 & 2)
-          ...(ownershipDriftHint && { ownershipDriftHint }),
-          ...(apiDriftHint && { apiDriftHint }),
-          ...(catalogDriftHint && { catalogDriftHint }),
-        },
+        extracted: extractedData,
         rawPayload: {
           ...payload,
           diff: diff.substring(0, 50000), // Limit diff size

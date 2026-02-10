@@ -356,6 +356,54 @@ router.post('/slack-analysis', async (req: Request, res: Response) => {
               });
 
               if (signal) {
+                // PATTERN 1: Validate extracted data BEFORE creating SignalEvent
+                const { validateExtractedData } = await import('../services/validators/extractedDataValidator.js');
+                const extractedData = {
+                  title: `Coverage gap: ${cluster.representativeQuestion.substring(0, 100)}`,
+                  summary: signal.evidenceSummary,
+                  driftType: signal.driftType,
+                  confidence: signal.confidence,
+                  // REQUIRED by pre-validation and deterministic comparison
+                  clusterId: cluster.id,  // REQUIRED by validator
+                  channel: cluster.channelName,  // REQUIRED by validator
+                  clusterSize: cluster.frequency,  // REQUIRED by preValidateSlackCluster (must be >= 2)
+                  uniqueAskers: cluster.uniqueAskers?.size || 2,  // REQUIRED by preValidateSlackCluster (must be >= 2)
+                  questions: cluster.questions.map(q => ({  // REQUIRED by preValidateSlackCluster (must not be empty)
+                    text: q.text,
+                    asker: q.user,
+                    timestamp: q.ts,
+                  })),
+                  messages: cluster.questions.map(q => ({  // REQUIRED by deterministic comparison
+                    text: q.text,
+                    user: q.user,
+                    timestamp: q.ts,
+                  })),
+                  participants: Array.from(cluster.uniqueAskers || []),  // REQUIRED by validator
+                  timeRange: {  // REQUIRED by validator
+                    start: cluster.firstSeen.toISOString(),
+                    end: cluster.lastSeen.toISOString(),
+                  },
+                  driftTypeHints: ['coverage'],  // REQUIRED by validator
+                  coverageDriftEvidence: signal.evidenceSummary,
+                  // Additional metadata
+                  questionCount: cluster.frequency,
+                  suggestedPatch: signal.suggestedPatch,
+                  gapType: driftResult.data.gap_type,
+                  docTitle: doc.docTitle,
+                  docUrl: doc.docUrl,
+                };
+
+                const validationResult = validateExtractedData('slack_cluster', extractedData);
+                if (!validationResult.valid) {
+                  console.error(`[Jobs] Invalid extracted data for cluster ${cluster.id}: ${validationResult.errors.join(', ')}`);
+                  await markClusterProcessed(wsId, cluster.id);
+                  continue;
+                }
+
+                if (validationResult.warnings.length > 0) {
+                  console.warn(`[Jobs] Extracted data warnings for cluster ${cluster.id}: ${validationResult.warnings.join(', ')}`);
+                }
+
                 await prisma.signalEvent.create({
                   data: {
                     workspaceId: wsId,
@@ -363,18 +411,7 @@ router.post('/slack-analysis', async (req: Request, res: Response) => {
                     sourceType: 'slack_cluster',
                     occurredAt: cluster.lastSeen,
                     service: cluster.topic,
-                    extracted: {
-                      title: `Coverage gap: ${cluster.representativeQuestion.substring(0, 100)}`,
-                      summary: signal.evidenceSummary,
-                      driftType: signal.driftType,
-                      confidence: signal.confidence,
-                      clusterId: cluster.id,
-                      questionCount: cluster.frequency,
-                      suggestedPatch: signal.suggestedPatch,
-                      gapType: driftResult.data.gap_type,
-                      docTitle: doc.docTitle,
-                      docUrl: doc.docUrl,
-                    },
+                    extracted: extractedData,
                     rawPayload: {
                       cluster: {
                         id: cluster.id,

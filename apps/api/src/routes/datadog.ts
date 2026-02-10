@@ -74,6 +74,40 @@ router.post('/datadog/:workspaceId', async (req: Request, res: Response) => {
       return res.status(200).json({ status: 'already_processed', signalEventId: normalized.id });
     }
 
+    // PATTERN 1: Validate extracted data BEFORE creating SignalEvent
+    const { validateExtractedData } = await import('../services/validators/extractedDataValidator.js');
+    const extractedData = {
+      title: normalized.extracted.title,
+      summary: normalized.extracted.summary,
+      keywords: normalized.extracted.keywords,
+      // REQUIRED by pre-validation and deterministic comparison
+      monitorName: alert.title || alert.monitor_name || 'Unknown Monitor',  // REQUIRED by preValidateDatadogAlert
+      severity: normalized.severity,  // REQUIRED by preValidateDatadogAlert
+      alertType: normalized.extracted.alertType,  // REQUIRED by deterministic comparison
+      alertId: normalized.alertId,  // REQUIRED by validator
+      metric: normalized.extracted.metric || null,
+      threshold: normalized.extracted.threshold || null,
+      currentValue: normalized.extracted.currentValue || null,
+      tags: normalized.extracted.tags,  // REQUIRED by validator
+      driftTypeHints: normalized.extracted.driftTypeHints,
+      environmentDriftEvidence: normalized.extracted.environmentDriftEvidence || null,
+      alertUrl: normalized.alertUrl || null,
+    };
+
+    const validationResult = validateExtractedData('datadog_alert', extractedData);
+    if (!validationResult.valid) {
+      console.error(`[Datadog] Invalid extracted data: ${validationResult.errors.join(', ')}`);
+      return res.status(400).json({
+        error: 'Invalid extracted data',
+        errors: validationResult.errors,
+        warnings: validationResult.warnings,
+      });
+    }
+
+    if (validationResult.warnings.length > 0) {
+      console.warn(`[Datadog] Extracted data warnings: ${validationResult.warnings.join(', ')}`);
+    }
+
     // Create SignalEvent
     const signalEvent = await prisma.signalEvent.create({
       data: {
@@ -83,20 +117,7 @@ router.post('/datadog/:workspaceId', async (req: Request, res: Response) => {
         occurredAt: normalized.occurredAt,
         service: normalized.service,
         severity: normalized.severity,
-        extracted: {
-          title: normalized.extracted.title,
-          summary: normalized.extracted.summary,
-          keywords: normalized.extracted.keywords,
-          alertType: normalized.extracted.alertType,
-          metric: normalized.extracted.metric || null,
-          threshold: normalized.extracted.threshold || null,
-          currentValue: normalized.extracted.currentValue || null,
-          tags: normalized.extracted.tags,
-          driftTypeHints: normalized.extracted.driftTypeHints,
-          environmentDriftEvidence: normalized.extracted.environmentDriftEvidence || null,
-          alertId: normalized.alertId,
-          alertUrl: normalized.alertUrl || null,
-        },
+        extracted: extractedData,
         rawPayload: JSON.parse(JSON.stringify(alert)),
       },
     });
@@ -183,6 +204,39 @@ router.post('/grafana/:workspaceId', async (req: Request, res: Response) => {
       return res.status(200).json({ status: 'already_processed', signalEventId: normalized.id });
     }
 
+    // PATTERN 1: Validate extracted data BEFORE creating SignalEvent
+    const { validateExtractedData } = await import('../services/validators/extractedDataValidator.js');
+    const extractedData = {
+      title: normalized.extracted.title,
+      summary: normalized.extracted.summary,
+      keywords: normalized.extracted.keywords,
+      // REQUIRED by pre-validation and deterministic comparison
+      monitorName: alert.title || alert.ruleName || 'Unknown Monitor',  // REQUIRED by preValidateDatadogAlert
+      severity: normalized.severity,  // REQUIRED by preValidateDatadogAlert
+      alertType: normalized.extracted.alertType,  // REQUIRED by deterministic comparison
+      alertId: normalized.alertId,  // REQUIRED by validator
+      metric: normalized.extracted.metric || null,
+      currentValue: normalized.extracted.currentValue || null,
+      tags: normalized.extracted.tags,  // REQUIRED by validator
+      driftTypeHints: normalized.extracted.driftTypeHints,
+      environmentDriftEvidence: normalized.extracted.environmentDriftEvidence || null,
+      alertUrl: normalized.alertUrl || null,
+    };
+
+    const validationResult = validateExtractedData('grafana_alert', extractedData);
+    if (!validationResult.valid) {
+      console.error(`[Grafana] Invalid extracted data: ${validationResult.errors.join(', ')}`);
+      return res.status(400).json({
+        error: 'Invalid extracted data',
+        errors: validationResult.errors,
+        warnings: validationResult.warnings,
+      });
+    }
+
+    if (validationResult.warnings.length > 0) {
+      console.warn(`[Grafana] Extracted data warnings: ${validationResult.warnings.join(', ')}`);
+    }
+
     // Create SignalEvent
     const signalEvent = await prisma.signalEvent.create({
       data: {
@@ -192,19 +246,7 @@ router.post('/grafana/:workspaceId', async (req: Request, res: Response) => {
         occurredAt: normalized.occurredAt,
         service: normalized.service,
         severity: normalized.severity,
-        extracted: {
-          title: normalized.extracted.title,
-          summary: normalized.extracted.summary,
-          keywords: normalized.extracted.keywords,
-          alertType: normalized.extracted.alertType,
-          metric: normalized.extracted.metric || null,
-          currentValue: normalized.extracted.currentValue || null,
-          tags: normalized.extracted.tags,
-          driftTypeHints: normalized.extracted.driftTypeHints,
-          environmentDriftEvidence: normalized.extracted.environmentDriftEvidence || null,
-          alertId: normalized.alertId,
-          alertUrl: normalized.alertUrl || null,
-        },
+        extracted: extractedData,
         rawPayload: JSON.parse(JSON.stringify(alert)),
       },
     });
