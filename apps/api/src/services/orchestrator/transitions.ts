@@ -7,7 +7,8 @@ import {
   TransitionResult,
   DriftVerdict,
 } from '../../types/state-machine.js';
-import { runDriftTriage } from '../../agents/drift-triage.js';
+// Gap #1: runDriftTriage no longer used (deterministic classification)
+// import { runDriftTriage } from '../../agents/drift-triage.js';
 import { runPatchPlanner } from '../../agents/patch-planner.js';
 import { runPatchGenerator } from '../../agents/patch-generator.js';
 import { runSlackComposer } from '../../agents/slack-composer.js';
@@ -547,10 +548,31 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
 
 /**
  * DRIFT_CLASSIFIED -> DOCS_RESOLVED
- * Resolve which docs to update (with Phase 3 deduplication)
- * Point 2: Doc Targeting - Use source-output compatibility matrix
+ * Gap #1: DEPRECATED - This state is no longer used in the new deterministic flow
+ * Kept as no-op for backward compatibility with old drifts
+ *
+ * New flow: SIGNALS_CORRELATED → DOCS_RESOLVED (skip DRIFT_CLASSIFIED)
  */
 async function handleDriftClassified(drift: any): Promise<TransitionResult> {
+  console.log(`[Transitions] Gap #1 - DEPRECATED: handleDriftClassified() called (should not happen in new flow)`);
+
+  // If docs are already resolved, proceed to next state
+  if (drift.docCandidates && drift.docCandidates.length > 0) {
+    console.log(`[Transitions] Gap #1 - Docs already resolved, proceeding to DOCS_RESOLVED`);
+    return { state: DriftState.DOCS_RESOLVED, enqueueNext: true };
+  }
+
+  // Otherwise, this is an old drift - complete it
+  console.log(`[Transitions] Gap #1 - Old drift in DRIFT_CLASSIFIED state, completing`);
+  return { state: DriftState.COMPLETED, enqueueNext: false };
+}
+
+/**
+ * DRIFT_CLASSIFIED -> DOCS_RESOLVED (OLD IMPLEMENTATION - DEPRECATED)
+ * Gap #1: This is the old LLM-based implementation, kept for reference
+ * DO NOT USE - Use handleSignalsCorrelated() instead
+ */
+async function handleDriftClassified_OLD_DEPRECATED(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
 
   // Phase 3: Compute fingerprint and check for duplicates
