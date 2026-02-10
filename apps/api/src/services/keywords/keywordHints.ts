@@ -17,6 +17,15 @@ const HIGH_RISK_KEYWORDS = [
   'role', 'iam', 'certificate', 'ssl', 'tls',
 ] as const;
 
+// Fix #2: Coverage-positive keywords - indicate new features/scenarios (coverage drift)
+// These should BOOST signal even if documentation keywords are present
+const COVERAGE_KEYWORDS = [
+  'new feature', 'add support', 'implement', 'introduce', 'enable',
+  'new endpoint', 'new api', 'new command', 'new option', 'new flag',
+  'new parameter', 'new field', 'new method', 'new function',
+  'add endpoint', 'add api', 'add command', 'add option', 'add flag',
+] as const;
+
 const NEGATIVE_KEYWORDS = [
   'refactor', 'lint', 'typo', 'formatting', 'whitespace', 'comment', 'documentation',
   'readme', 'test', 'spec', 'fixture', 'mock', 'example', 'sample', 'wip', 'draft',
@@ -26,6 +35,7 @@ const NEGATIVE_KEYWORDS = [
 const GITHUB_PR_KEYWORDS = {
   positive: [
     ...HIGH_RISK_KEYWORDS,
+    ...COVERAGE_KEYWORDS, // Fix #2: Include coverage keywords
     'breaking', 'deprecate', 'remove', 'upgrade', 'downgrade', 'hotfix',
     'emergency', 'critical', 'security', 'vulnerability', 'cve',
   ],
@@ -190,9 +200,53 @@ export function applyKeywordHints(
 /**
  * Check if text contains mostly negative keywords (noise filter).
  * Only filters when negative signals clearly dominate positive ones.
+ *
+ * Fix #1: Context-aware filtering - don't filter documentation keywords when targeting doc systems
+ * Fix #2: Coverage drift exception - never filter if coverage keywords are present
+ * Fix #3: Balance strictness across source types
  */
-export function isLikelyNoise(text: string, sourceType: InputSourceType): boolean {
+export function isLikelyNoise(
+  text: string,
+  sourceType: InputSourceType,
+  targetDocSystems?: string[]
+): boolean {
   const hints = analyzeKeywordHints(text, sourceType);
+
+  // Fix #2: Coverage drift exception - check for coverage keywords
+  // If text contains coverage keywords (new feature, add support, etc.), NEVER filter as noise
+  // These indicate new features/scenarios that should be documented (coverage drift)
+  const textLower = text.toLowerCase();
+  const hasCoverageKeywords = COVERAGE_KEYWORDS.some(kw => textLower.includes(kw));
+
+  if (hasCoverageKeywords) {
+    console.log(`[KeywordHints] Fix #2 - Coverage keywords detected, bypassing noise filter`);
+    return false; // Never filter coverage drift
+  }
+
+  // Fix #1: If targeting doc systems, ALLOW documentation keywords
+  // Documentation PRs should UPDATE documentation targets, not be filtered!
+  if (targetDocSystems && targetDocSystems.length > 0) {
+    const isTargetingDocs = targetDocSystems.some(system =>
+      ['confluence', 'notion', 'github_readme', 'gitbook', 'backstage'].includes(system)
+    );
+
+    if (isTargetingDocs) {
+      // Remove documentation-related keywords from negative matches
+      const docKeywords = ['documentation', 'readme', 'docs'];
+      hints.negativeMatches = hints.negativeMatches.filter(
+        kw => !docKeywords.includes(kw)
+      );
+
+      // Recalculate net score without doc keywords
+      hints.netScore = hints.positiveMatches.length * 0.1 - hints.negativeMatches.length * 0.15;
+
+      console.log(`[KeywordHints] Fix #1 - Targeting docs, removed doc keywords: negativeMatches=${hints.negativeMatches.length}, netScore=${hints.netScore.toFixed(2)}`);
+    }
+  }
+
+  // Fix #3: Balance strictness across source types
+  // GitHub sources: more lenient threshold (-0.5 vs -0.3)
+  const threshold = sourceType.startsWith('github_') ? -0.5 : -0.3;
 
   // Likely noise if:
   // 1. Net score is very negative (negative keywords overwhelm positive)
@@ -202,7 +256,7 @@ export function isLikelyNoise(text: string, sourceType: InputSourceType): boolea
   // never be filtered as noise even if a negative keyword matches.
 
   return (
-    hints.netScore < -0.3 ||
+    hints.netScore < threshold ||
     (hints.positiveMatches.length === 0 && hints.negativeMatches.length >= 2)
   );
 }

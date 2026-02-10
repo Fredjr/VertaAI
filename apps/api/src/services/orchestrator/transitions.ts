@@ -282,8 +282,9 @@ async function handleIngested(drift: any): Promise<TransitionResult> {
     return { state: DriftState.COMPLETED, enqueueNext: false };
   }
 
-  // PHASE 1 QUICK WIN: Keyword hints for noise reduction (HINT ONLY, not final verdict)
-  const { analyzeKeywordHints, isLikelyNoise } = await import('../keywords/keywordHints.js');
+  // PHASE 1 QUICK WIN: Keyword hints for logging only (moved filtering to handleSignalsCorrelated)
+  // Fix #1: Keyword filtering now happens AFTER doc targeting is determined
+  const { analyzeKeywordHints } = await import('../keywords/keywordHints.js');
 
   const rawPayload = signal.rawPayload || {};
   const extracted = signal.extracted || {};
@@ -308,22 +309,7 @@ async function handleIngested(drift: any): Promise<TransitionResult> {
     textToAnalyze = extracted.representativeQuestion || '';
   }
 
-  // Check if likely noise based on negative keywords
-  if (textToAnalyze && isLikelyNoise(textToAnalyze, sourceType as any)) {
-    console.log(`[Transitions] PHASE 1 - Keyword hint: Likely noise, skipping`);
-
-    await prisma.driftCandidate.update({
-      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
-      data: {
-        lastErrorCode: 'NOISE_FILTERED',
-        lastErrorMessage: 'Filtered by negative keyword hints',
-      },
-    });
-
-    return { state: DriftState.COMPLETED, enqueueNext: false };
-  }
-
-  // Analyze keyword hints for logging (not used as final verdict)
+  // Analyze keyword hints for logging (not used for filtering here)
   if (textToAnalyze) {
     const hints = analyzeKeywordHints(textToAnalyze, sourceType as any);
     console.log(`[Transitions] PHASE 1 - Keyword hints: positive=${hints.positiveMatches.length}, negative=${hints.negativeMatches.length}, recommendation=${hints.recommendation}`);
@@ -464,6 +450,24 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
   const targetDocSystems = SOURCE_OUTPUT_COMPATIBILITY[sourceType as keyof typeof SOURCE_OUTPUT_COMPATIBILITY] || [];
 
   console.log(`[Transitions] Gap #1 - Doc targeting (deterministic): source=${sourceType}, targets=[${targetDocSystems.join(', ')}]`);
+
+  // Fix #1: Context-aware keyword filtering - now that we know target doc systems
+  // Check if likely noise based on negative keywords (with context awareness)
+  const { isLikelyNoise } = await import('../keywords/keywordHints.js');
+
+  if (evidenceText && isLikelyNoise(evidenceText, sourceType as any, targetDocSystems)) {
+    console.log(`[Transitions] Fix #1 - Context-aware keyword filter: Likely noise, skipping`);
+
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: {
+        lastErrorCode: 'NOISE_FILTERED',
+        lastErrorMessage: 'Filtered by context-aware keyword hints',
+      },
+    });
+
+    return { state: DriftState.COMPLETED, enqueueNext: false };
+  }
 
   // Gap #1: Resolve docs using source-based targeting (no LLM classification needed)
   const { resolveDocsForDrift } = await import('../docs/docResolution.js');
