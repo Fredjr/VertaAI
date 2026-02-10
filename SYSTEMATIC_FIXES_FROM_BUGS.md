@@ -313,11 +313,48 @@ const DEPLOYMENT_DELAYS = {
 - Already implemented in QStash config: `retries: 3`
 - Jobs automatically retry up to 3 times on failure
 
-### Phase 4: Observability (Week 4)
-- [ ] Add structured logging to all transitions
-- [ ] Add trace IDs to drift tracking
-- [ ] Create dashboard for drift pipeline health
-- [ ] Add alerting for stuck drifts
+### Phase 4: Observability (Week 4) ✅ COMPLETE
+- [x] Add structured logging to all transitions
+- [x] Add trace IDs to drift tracking
+- [ ] Create dashboard for drift pipeline health (TODO - use existing /api/monitoring endpoints)
+- [ ] Add alerting for stuck drifts (TODO - can use threshold-effectiveness endpoint)
+
+#### Observability Implementation
+
+**Goal**: Enable end-to-end tracing and debugging across all 18 state transitions.
+
+**Structured Logging** (structuredLogger.ts):
+```typescript
+// Log state transitions with trace IDs
+logStateTransition(driftId, fromState, toState, {
+  traceId, workspaceId, sourceType, service, confidence, classificationMethod
+}, durationMs);
+
+// Log errors with context
+logError(driftId, errorCode, errorMessage, { traceId, ... }, stack);
+
+// Log metrics
+logMetric(driftId, metricName, metricValue, { traceId, ... }, unit);
+```
+
+**Trace ID Support**:
+- Added `traceId` field to DriftCandidate model (schema.prisma:222)
+- Generate trace ID when drift is created (webhooks.ts:496)
+- Include trace ID in all structured logs (transitions.ts:117-129)
+- Index on traceId for fast lookups (schema.prisma:235)
+
+**Integration**:
+- Enhanced executeTransition() to log all state transitions (transitions.ts:107-180)
+- Logs include: driftId, traceId, fromState, toState, durationMs, confidence, method
+- Error logs include: errorCode, errorMessage, stack, traceId
+- All logs are JSON-formatted for easy parsing and analysis
+
+**Benefits**:
+- End-to-end tracing of drifts through all 18 states
+- Performance monitoring (durationMs for each transition)
+- Error tracking with full context
+- Easy debugging with trace ID lookups
+- Ready for log aggregation tools (Datadog, Grafana, etc.)
 
 ---
 

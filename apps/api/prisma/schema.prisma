@@ -218,6 +218,9 @@ model DriftCandidate {
   lastErrorMessage String? @map("last_error_message")
   retryCount       Int     @default(0) @map("retry_count")
 
+  // Observability (Phase 4)
+  traceId String? @map("trace_id") // End-to-end trace ID for logging and debugging
+
   createdAt DateTime @default(now()) @map("created_at")
 
   workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -229,6 +232,7 @@ model DriftCandidate {
   @@index([workspaceId, state, stateUpdatedAt(sort: Desc)])
   @@index([workspaceId, service])
   @@index([workspaceId, needsMappingKey, needsMappingNotifiedAt])
+  @@index([traceId])
   @@map("drift_candidates")
 }
 

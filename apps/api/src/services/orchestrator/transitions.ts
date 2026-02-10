@@ -14,6 +14,9 @@ import { runSlackComposer } from '../../agents/slack-composer.js';
 import { prisma } from '../../lib/db.js';
 import { Prisma } from '@prisma/client';
 
+// Phase 4: Structured Logging
+import { logStateTransition, logError, generateTraceId } from '../../lib/structuredLogger.js';
+
 // Phase 3 imports
 import { computeDriftFingerprint, extractKeyTokens } from '../dedup/fingerprint.js';
 import { checkDuplicateDrift } from '../validators/dedup.js';
@@ -102,13 +105,35 @@ export async function executeTransition(
   }
 
   try {
+    const startTime = Date.now();
+
     // Execute state transition
     const result = await handler(drift);
 
+    const durationMs = Date.now() - startTime;
+
+    // PHASE 4: Structured logging for state transitions
+    if (result.state !== currentState) {
+      logStateTransition(
+        drift.id,
+        currentState,
+        result.state,
+        {
+          traceId: drift.traceId,
+          workspaceId: drift.workspaceId,
+          sourceType: drift.sourceType,
+          service: drift.service,
+          confidence: drift.confidence,
+          classificationMethod: drift.classificationMethod,
+        },
+        durationMs
+      );
+    }
+
     // Phase 4 Week 8: Log successful state transition to audit trail
     if (result.state !== currentState) {
-      const { logStateTransition } = await import('../audit/logger.js');
-      await logStateTransition(
+      const { logStateTransition: logAuditTransition } = await import('../audit/logger.js');
+      await logAuditTransition(
         drift.workspaceId,
         drift.id,
         currentState,
@@ -118,12 +143,28 @@ export async function executeTransition(
         {
           enqueueNext: result.enqueueNext,
           nextStateHint: result.nextStateHint,
+          durationMs,
+          traceId: drift.traceId,
         }
       );
     }
 
     return result;
   } catch (error: any) {
+    // PHASE 4: Structured error logging
+    logError(
+      drift.id,
+      error.code || 'TRANSITION_ERROR',
+      error.message,
+      {
+        traceId: drift.traceId,
+        workspaceId: drift.workspaceId,
+        sourceType: drift.sourceType,
+        service: drift.service,
+      },
+      error.stack
+    );
+
     console.error(`[Transitions] Error in ${currentState}:`, error);
 
     // Phase 4 Week 8: Log failed state transition to audit trail

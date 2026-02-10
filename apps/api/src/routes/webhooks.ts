@@ -492,6 +492,10 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
 
     console.log(`[Webhook] [V2] Created signal event ${signalEvent.id}`);
 
+    // PHASE 4: Generate trace ID for end-to-end observability
+    const { generateTraceId } = await import('../lib/structuredLogger.js');
+    const traceId = generateTraceId();
+
     // Create DriftCandidate in INGESTED state
     const driftCandidate = await prisma.driftCandidate.create({
       data: {
@@ -501,10 +505,11 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
         sourceType: 'github_pr',
         repo: prInfo.repoFullName,
         service: inferredService,
+        traceId, // PHASE 4: Add trace ID for observability
       },
     });
 
-    console.log(`[Webhook] [V2] Created drift candidate ${driftCandidate.id} in INGESTED state`);
+    console.log(`[Webhook] [V2] Created drift candidate ${driftCandidate.id} in INGESTED state (traceId: ${traceId})`);
 
     // Phase 2: Enqueue QStash job for async state machine processing
     const messageId = await enqueueJob({
