@@ -70,27 +70,43 @@ async function handleTestPullRequest(payload: any, workspaceId: string, res: Res
     // For testing, we'll use simplified file data
     const files = [
       {
-        filename: 'docs/DEPLOYMENT_RUNBOOK.md',
-        status: 'added',
-        additions: 184,
-        deletions: 0,
+        filename: 'apps/api/routes/monitoring.ts',
+        status: 'modified',
+        additions: payload.pull_request?.additions || 100,
+        deletions: payload.pull_request?.deletions || 10,
       },
     ];
 
-    const diff = `+++ b/docs/DEPLOYMENT_RUNBOOK.md
-+# Deployment Runbook
+    // Generate realistic diff based on PR body
+    // Extract endpoint patterns from PR body (e.g., "/api/monitoring/health")
+    const prBody = prInfo.prBody || '';
+    const endpointMatches = prBody.match(/\/api\/[^\s]+/g) || [];
+
+    // Create a realistic diff with router definitions
+    let diffContent = `diff --git a/apps/api/routes/monitoring.ts b/apps/api/routes/monitoring.ts
+index abc123..def456 100644
+--- a/apps/api/routes/monitoring.ts
++++ b/apps/api/routes/monitoring.ts
+@@ -1,5 +1,20 @@
+ import { Router } from 'express';
+ const router = Router();
+
+`;
+
+    // Add router definitions for each endpoint found in PR body
+    endpointMatches.forEach((endpoint, index) => {
+      const method = endpoint.includes('webhook') ? 'post' : 'get';
+      diffContent += `+router.${method}('${endpoint}', async (req, res) => {
++  // Implementation for ${endpoint}
++  res.json({ status: 'ok' });
++});
 +
-+This runbook covers deployment procedures for the VertaAI platform.
-+
-+## Deployment Steps
-+- Pre-deployment checklist
-+- Standard deployment
-+- Post-deployment verification
-+
-+## Rollback Procedures
-+- Frontend rollback
-+- Backend rollback
-+- Database rollback`;
+`;
+    });
+
+    diffContent += `+export default router;`;
+
+    const diff = diffContent;
 
     // Create SignalEvent record
     const signalEvent = await prisma.signalEvent.create({
