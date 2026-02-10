@@ -1082,6 +1082,27 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
         },
       });
 
+      // Gap #1 Step 4: Log comparison result for observability
+      const { logComparison, logMetric } = await import('../../lib/structuredLogger.js');
+      logComparison(drift.id, comparisonResult, classificationMethod, {
+        driftId: drift.id,
+        workspaceId: drift.workspaceId,
+        sourceType,
+        service: drift.service,
+      });
+
+      // Gap #1 Step 4: Log metrics for classification method and confidence
+      logMetric(drift.id, 'classification_method', 1, {
+        driftId: drift.id,
+        workspaceId: drift.workspaceId,
+        classificationMethod,
+      });
+      logMetric(drift.id, 'comparison_confidence', comparisonResult.confidence, {
+        driftId: drift.id,
+        workspaceId: drift.workspaceId,
+        classificationMethod,
+      });
+
       console.log(`[Transitions] Gap #1 - Using deterministic classification: type=${driftType}, confidence=${comparisonResult.confidence.toFixed(2)}`);
     } else if (comparisonResult.hasDrift) {
       // Gap #1: Comparison found drift but confidence is low - use default type
@@ -1098,10 +1119,41 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
         },
       });
 
+      // Gap #1 Step 4: Log comparison result for observability
+      const { logComparison, logMetric } = await import('../../lib/structuredLogger.js');
+      logComparison(drift.id, comparisonResult, classificationMethod, {
+        driftId: drift.id,
+        workspaceId: drift.workspaceId,
+        sourceType,
+        service: drift.service,
+      });
+
+      // Gap #1 Step 4: Log metrics for classification method and confidence
+      logMetric(drift.id, 'classification_method', 1, {
+        driftId: drift.id,
+        workspaceId: drift.workspaceId,
+        classificationMethod,
+      });
+      logMetric(drift.id, 'comparison_confidence', comparisonResult.confidence, {
+        driftId: drift.id,
+        workspaceId: drift.workspaceId,
+        classificationMethod,
+      });
+
       console.log(`[Transitions] Gap #1 - Using deterministic classification (low confidence): type=${driftType}, confidence=${comparisonResult.confidence.toFixed(2)}`);
     } else {
       // Gap #1: No drift detected by comparison - complete
       console.log(`[Transitions] Gap #1 - No drift detected by comparison, completing`);
+
+      // Gap #1 Step 4: Log that no drift was detected
+      const { logMetric } = await import('../../lib/structuredLogger.js');
+      logMetric(drift.id, 'no_drift_detected', 1, {
+        driftId: drift.id,
+        workspaceId: drift.workspaceId,
+        sourceType,
+        service: drift.service,
+      });
+
       return { state: DriftState.COMPLETED, enqueueNext: false };
     }
   }

@@ -43,6 +43,23 @@ export interface MetricLog extends LogContext {
 }
 
 /**
+ * Gap #1: Comparison result log for observability
+ */
+export interface ComparisonLog extends LogContext {
+  level?: string;
+  event: 'comparison';
+  driftType: string;
+  confidence: number;
+  hasDrift: boolean;
+  hasCoverageGap: boolean;
+  conflictCount: number;
+  newContentCount: number;
+  coverageGapCount: number;
+  classificationMethod: string;
+  timestamp: string;
+}
+
+/**
  * Log a state transition with structured data
  */
 export function logStateTransition(
@@ -107,6 +124,42 @@ export function logMetric(
     metricName,
     metricValue,
     unit,
+    timestamp: new Date().toISOString(),
+    ...context,
+  };
+
+  console.log(JSON.stringify(log));
+}
+
+/**
+ * Gap #1: Log a comparison result with structured data
+ */
+export function logComparison(
+  driftId: string,
+  comparisonResult: {
+    driftType: string;
+    confidence: number;
+    hasDrift: boolean;
+    hasCoverageGap: boolean;
+    conflicts: string[];
+    newContent: string[];
+    coverageGaps: string[];
+  },
+  classificationMethod: string,
+  context?: Partial<LogContext>
+): void {
+  const log: ComparisonLog = {
+    level: 'info',
+    event: 'comparison',
+    driftId,
+    driftType: comparisonResult.driftType,
+    confidence: comparisonResult.confidence,
+    hasDrift: comparisonResult.hasDrift,
+    hasCoverageGap: comparisonResult.hasCoverageGap,
+    conflictCount: comparisonResult.conflicts.length,
+    newContentCount: comparisonResult.newContent.length,
+    coverageGapCount: comparisonResult.coverageGaps.length,
+    classificationMethod,
     timestamp: new Date().toISOString(),
     ...context,
   };
