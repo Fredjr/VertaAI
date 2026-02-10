@@ -175,8 +175,8 @@ export function detectOwnershipDrift(
   const newContent: string[] = [];
 
   // Compare teams
-  const docTeams = new Set((doc.teams || []).map(t => t.toLowerCase()));
-  const sourceTeams = source.teams || [];
+  const docTeams = new Set((doc.teams || []).filter(t => typeof t === 'string').map(t => t.toLowerCase()));
+  const sourceTeams = (source.teams || []).filter(t => typeof t === 'string');
   for (const team of sourceTeams) {
     if (!docTeams.has(team.toLowerCase())) {
       newContent.push(`New team: ${team}`);
@@ -184,8 +184,8 @@ export function detectOwnershipDrift(
   }
 
   // Compare owners
-  const docOwners = new Set((doc.owners || []).map(o => o.toLowerCase()));
-  const sourceOwners = source.owners || [];
+  const docOwners = new Set((doc.owners || []).filter(o => typeof o === 'string').map(o => o.toLowerCase()));
+  const sourceOwners = (source.owners || []).filter(o => typeof o === 'string');
   for (const owner of sourceOwners) {
     if (!docOwners.has(owner.toLowerCase())) {
       newContent.push(`New owner: ${owner}`);
@@ -193,8 +193,8 @@ export function detectOwnershipDrift(
   }
 
   // Compare paths
-  const docPaths = new Set((doc.paths || []).map(p => p.toLowerCase()));
-  const sourcePaths = source.paths || [];
+  const docPaths = new Set((doc.paths || []).filter(p => typeof p === 'string').map(p => p.toLowerCase()));
+  const sourcePaths = (source.paths || []).filter(p => typeof p === 'string');
   for (const path of sourcePaths) {
     if (!docPaths.has(path.toLowerCase())) {
       newContent.push(`New path: ${path}`);
@@ -202,8 +202,8 @@ export function detectOwnershipDrift(
   }
 
   // Compare channels
-  const docChannels = new Set((doc.channels || []).map(c => c.toLowerCase()));
-  const sourceChannels = source.channels || [];
+  const docChannels = new Set((doc.channels || []).filter(c => typeof c === 'string').map(c => c.toLowerCase()));
+  const sourceChannels = (source.channels || []).filter(c => typeof c === 'string');
   for (const channel of sourceChannels) {
     if (!docChannels.has(channel.toLowerCase())) {
       newContent.push(`New channel: ${channel}`);
