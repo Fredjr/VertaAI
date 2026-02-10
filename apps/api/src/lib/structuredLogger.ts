@@ -16,6 +16,7 @@ export interface LogContext {
 }
 
 export interface StateTransitionLog extends LogContext {
+  level?: string;
   event: 'state_transition';
   fromState: string;
   toState: string;
@@ -24,6 +25,7 @@ export interface StateTransitionLog extends LogContext {
 }
 
 export interface ErrorLog extends LogContext {
+  level?: string;
   event: 'error';
   errorCode: string;
   errorMessage: string;
@@ -32,6 +34,7 @@ export interface ErrorLog extends LogContext {
 }
 
 export interface MetricLog extends LogContext {
+  level?: string;
   event: 'metric';
   metricName: string;
   metricValue: number;

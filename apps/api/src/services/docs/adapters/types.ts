@@ -36,7 +36,8 @@ export const INPUT_SOURCE_TYPES = [
   'github_iac',          // Phase 5: Terraform/Pulumi changes
   'pagerduty_incident',  // Phase 3: PagerDuty incidents
   'slack_cluster',       // Phase 4: Slack question clusters
-  'datadog_alert',       // Phase 5: Datadog/Grafana alert changes
+  'datadog_alert',       // Phase 5: Datadog alert changes
+  'grafana_alert',       // Phase 5: Grafana alert changes
 ] as const;
 
 export type InputSourceType = typeof INPUT_SOURCE_TYPES[number];

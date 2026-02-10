@@ -88,6 +88,12 @@ export const SOURCE_CONFIDENCE_WEIGHTS: Record<InputSourceType, SourceConfidence
     owner_mismatch: 0.85,            // Very high - CODEOWNERS is authoritative
     correlation_boost: 0.10,
   },
+
+  grafana_alert: {
+    alert_frequency: 0.45,           // Medium - recurring alert
+    alert_recovery: 0.30,            // Low-medium - recovered alert
+    correlation_boost: 0.20,
+  },
 };
 
 // ============================================================================
