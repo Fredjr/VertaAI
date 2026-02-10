@@ -61,6 +61,95 @@ All 7 source types use deterministic classification:
 - `deterministic_low_confidence`: Comparison confidence < 60% but drift detected (uses default type)
 - `llm`: Legacy method (deprecated, not used in new flow)
 
+## DriftPlan as Control-Plane
+
+VertaAI uses **DriftPlan** as the central control-plane for all drift detection and routing decisions. This provides fine-grained control over how drifts are processed, routed, and acted upon.
+
+### Key Capabilities
+
+#### 1. **Plan-Driven Routing Thresholds**
+Each DriftPlan can override workspace-level thresholds:
+- `autoApprove`: Confidence threshold for automatic approval (default: 0.98)
+- `slackNotify`: Confidence threshold for Slack notifications (default: 0.40)
+- `digestOnly`: Confidence threshold for digest-only (default: 0.30)
+- `ignore`: Confidence threshold for ignoring (default: 0.20)
+
+**Resolution Priority**: Plan → Workspace → Source Defaults
+
+#### 2. **Budget Controls**
+Prevent notification fatigue and control processing costs:
+- `maxDriftsPerDay`: Maximum drifts to process per day
+- `maxDriftsPerWeek`: Maximum drifts to process per week
+- `maxSlackNotificationsPerHour`: Rate limit for Slack notifications
+
+When budgets are exceeded, drifts are downgraded (e.g., `slack_notify` → `digest_only`).
+
+#### 3. **Noise Filtering**
+Reduce false positives with smart filtering:
+- **Ignore Patterns**: Filter by title/body patterns (e.g., "WIP:", "Draft:", "test:")
+- **Ignore Paths**: Filter by file paths (e.g., "test/**", "*.test.ts")
+- **Ignore Authors**: Filter by specific authors (e.g., "dependabot", "renovate")
+
+Filtered drifts are marked as `COMPLETED` without processing.
+
+#### 4. **Doc Targeting Strategy**
+Control which docs to update first:
+- **Strategy**: `priority_order`, `most_recent`, `highest_confidence`
+- **Max Docs Per Drift**: Limit number of docs updated per drift
+- **Priority Order**: Custom ordering of doc systems (e.g., Confluence → Notion → GitHub)
+
+#### 5. **Source Cursors**
+Track last processed signal per source for incremental processing:
+- Prevents reprocessing old signals
+- Enables "catch-up" mode after downtime
+- Tracks processing position per source type
+
+#### 6. **PlanRun Tracking**
+Every drift is linked to a PlanRun record that captures:
+- Which plan version was active
+- What thresholds were used
+- What routing decision was made
+- Timestamp of execution
+
+This enables **reproducibility** and **audit trails** for all routing decisions.
+
+### Example DriftPlan Configuration
+
+```json
+{
+  "name": "Production Drift Plan",
+  "thresholds": {
+    "autoApprove": 0.98,
+    "slackNotify": 0.40,
+    "digestOnly": 0.30,
+    "ignore": 0.20
+  },
+  "budgets": {
+    "maxDriftsPerDay": 50,
+    "maxDriftsPerWeek": 200,
+    "maxSlackNotificationsPerHour": 5
+  },
+  "noiseControls": {
+    "ignorePatterns": ["WIP:", "Draft:", "test:", "chore:"],
+    "ignorePaths": ["test/**", "*.test.ts", "*.spec.ts"],
+    "ignoreAuthors": ["dependabot[bot]", "renovate[bot]"]
+  },
+  "docTargeting": {
+    "strategy": "priority_order",
+    "maxDocsPerDrift": 3,
+    "priorityOrder": ["confluence", "notion", "github_readme"]
+  }
+}
+```
+
+### Benefits
+
+- ✅ **Reproducible**: Same plan version always produces same routing decision
+- ✅ **Auditable**: Full history of which plan was used for each drift
+- ✅ **Flexible**: Override thresholds per plan without changing workspace settings
+- ✅ **Cost-Controlled**: Budget limits prevent runaway processing costs
+- ✅ **Noise-Resistant**: Smart filtering reduces false positives
+
 ## Deployment
 
 ### Railway Deployment
