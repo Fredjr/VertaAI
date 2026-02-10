@@ -52,6 +52,7 @@ model Workspace {
   driftPlans            DriftPlan[]
   planRuns              PlanRun[] // NEW: Gap #6 - Plan execution tracking
   driftCandidates       DriftCandidate[]
+  driftClusters         DriftCluster[] // NEW: Gap #9 - Cluster-first drift triage
   patchProposals        PatchProposal[]
   docMappingsV2         DocMappingV2[]
   ownerMappings         OwnerMapping[]
@@ -228,10 +229,14 @@ model DriftCandidate {
   activePlanVersion Int?    @map("active_plan_version") // Plan version at processing time
   activePlanHash    String? @map("active_plan_hash")    // Plan hash for reproducibility
 
+  // Cluster tracking (Gap #9: Cluster-First Drift Triage)
+  clusterId String? @map("cluster_id") // Which cluster this drift belongs to (null if individual notification)
+
   createdAt DateTime @default(now()) @map("created_at")
 
   workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   signalEvent    SignalEvent     @relation(fields: [workspaceId, signalEventId], references: [workspaceId, id], onDelete: Cascade)
+  cluster        DriftCluster?   @relation(fields: [workspaceId, clusterId], references: [workspaceId, id], onDelete: SetNull)
   patchProposals PatchProposal[]
 
   @@id([workspaceId, id])
@@ -241,6 +246,55 @@ model DriftCandidate {
   @@index([workspaceId, needsMappingKey, needsMappingNotifiedAt])
   @@index([traceId])
   @@map("drift_candidates")
+}
+
+// ======================================================================
+// DRIFT CLUSTER (Gap #9: Cluster-First Drift Triage)
+// Aggregates similar drifts to reduce notification fatigue
+// ======================================================================
+
+model DriftCluster {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+
+  // Cluster key (used for grouping similar drifts)
+  service            String  // Service name (e.g., 'api-service', 'web-app')
+  driftType          String  @map("drift_type") // 'instruction', 'process', 'ownership', 'coverage', 'environment'
+  fingerprintPattern String  @map("fingerprint_pattern") // High-level pattern (e.g., 'kubectl-command', 'deployment-steps')
+
+  // Cluster metadata
+  status     String   @default("pending") // 'pending', 'notified', 'closed'
+  driftCount Int      @default(0) @map("drift_count") // Number of drifts in this cluster
+  createdAt  DateTime @default(now()) @map("created_at")
+  closedAt   DateTime? @map("closed_at") // When cluster was closed (after notification or expiry)
+  notifiedAt DateTime? @map("notified_at") // When cluster notification was sent
+
+  // Slack notification tracking
+  slackMessageTs String? @map("slack_message_ts") // Slack message timestamp (for updates)
+  slackChannel   String? @map("slack_channel") // Slack channel where notification was sent
+
+  // Cluster summary (for Slack message)
+  clusterSummary String? @map("cluster_summary") @db.Text // Human-readable summary of cluster
+  driftIds       String[] @default([]) @map("drift_ids") // Array of drift IDs in this cluster
+
+  // Bulk action tracking
+  bulkActionStatus String? @map("bulk_action_status") // 'approved', 'rejected', 'snoozed', null
+  bulkActionAt     DateTime? @map("bulk_action_at") // When bulk action was taken
+  bulkActionBy     String? @map("bulk_action_by") // User who took bulk action
+
+  // Relations
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  drifts    DriftCandidate[]
+
+  // Composite unique constraint: one active cluster per {workspace, service, driftType, pattern}
+  // This ensures we don't create duplicate clusters for the same drift pattern
+  @@unique([workspaceId, service, driftType, fingerprintPattern, status], name: "unique_active_cluster")
+  @@id([workspaceId, id])
+  @@index([workspaceId, status])
+  @@index([workspaceId, service])
+  @@index([createdAt])
+  @@index([notifiedAt])
+  @@map("drift_clusters")
 }
 
 // Patch Proposals (generated patches awaiting approval)
