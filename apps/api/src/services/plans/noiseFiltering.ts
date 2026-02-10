@@ -3,7 +3,7 @@
  * Filters out noise based on ignore patterns, paths, and authors
  */
 
-import { prisma } from '../../lib/prisma.js';
+import { prisma } from '../../lib/db.js';
 import { NoiseControlsConfig, parseNoiseControls } from './types.js';
 
 export interface NoiseFilterResult {
@@ -135,7 +135,7 @@ export async function getNoiseFilteringStats(args: {
   });
 
   const totalSignals = planRuns.length;
-  const filteredSignals = planRuns.filter((run) => run.routingAction === 'ignore').length;
+  const filteredSignals = planRuns.filter((run: any) => run.routingAction === 'ignore').length;
 
   return {
     totalSignals,

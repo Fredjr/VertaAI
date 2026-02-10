@@ -3,7 +3,7 @@
  * Enforces budget limits (max drifts per day/week, max Slack notifications per hour)
  */
 
-import { prisma } from '../../lib/prisma.js';
+import { prisma } from '../../lib/db.js';
 import { BudgetConfig, parseBudgets } from './types.js';
 
 export interface BudgetCheckResult {

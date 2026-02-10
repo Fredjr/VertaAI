@@ -461,12 +461,12 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
 
   // Gap #1: Determine target doc systems using source-output compatibility matrix (no drift type needed!)
   const { SOURCE_OUTPUT_COMPATIBILITY } = await import('../../config/docTargeting.js');
-  const targetDocSystems = SOURCE_OUTPUT_COMPATIBILITY[sourceType] || [];
+  const targetDocSystems = SOURCE_OUTPUT_COMPATIBILITY[sourceType as keyof typeof SOURCE_OUTPUT_COMPATIBILITY] || [];
 
   console.log(`[Transitions] Gap #1 - Doc targeting (deterministic): source=${sourceType}, targets=[${targetDocSystems.join(', ')}]`);
 
   // Gap #1: Resolve docs using source-based targeting (no LLM classification needed)
-  const { resolveDocsForDrift } = await import('../docs/resolver.js');
+  const { resolveDocsForDrift } = await import('../docs/docResolution.js');
 
   // Fetch workspace policy for doc resolution
   const workspace = await prisma.workspace.findUnique({
@@ -1022,7 +1022,8 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
   if (!driftType) {
     console.log(`[Transitions] Gap #1 - No drift type set, running deterministic comparison`);
 
-    const { extractArtifacts, compareArtifacts } = await import('../baseline/artifactExtractor.js');
+    const { extractArtifacts } = await import('../baseline/artifactExtractor.js');
+    const { compareArtifacts } = await import('../baseline/comparison.js');
 
     // Extract artifacts from source
     const sourceArtifacts = extractArtifacts({
