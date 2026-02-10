@@ -38,7 +38,7 @@ export async function enqueueJob(payload: JobPayload): Promise<string | null> {
         attempt: (payload.attempt || 0) + 1,
       },
       retries: 3,
-      delay: 1, // 1 second delay to allow DB writes to propagate
+      delay: 180, // FIX: 3 minute delay to account for Railway deployment time (was 1 second)
     });
 
     console.log(`[QStash] Job enqueued: ${result.messageId} for drift ${payload.driftId}`);
