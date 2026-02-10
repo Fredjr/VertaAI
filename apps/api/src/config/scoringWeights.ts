@@ -107,10 +107,10 @@ export interface SourceThresholds {
  */
 export const SOURCE_THRESHOLDS: Record<InputSourceType, SourceThresholds> = {
   github_pr: {
-    autoApprove: 0.85,      // Very high bar for auto-approval
-    slackNotify: 0.55,      // Medium confidence → Slack approval
-    digestOnly: 0.40,       // Low confidence → digest
-    ignore: 0.30,           // Below 30% → ignore
+    autoApprove: 0.98,      // FIX: Raised from 0.85 to 0.98 - nearly all drifts should go through Slack first
+    slackNotify: 0.40,      // FIX: Lowered from 0.55 to 0.40 - more drifts reach Slack notification
+    digestOnly: 0.30,       // Low confidence → digest
+    ignore: 0.20,           // Below 20% → ignore
   },
   
   pagerduty_incident: {

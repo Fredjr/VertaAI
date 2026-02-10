@@ -124,8 +124,10 @@ index abc123..def456 100644
           authorLogin: prInfo.authorLogin,
           baseBranch: prInfo.baseBranch,
           headBranch: prInfo.headBranch,
+          merged: true,  // FIX: Test webhook always processes merged PRs
           changedFiles: files,
-          diff: diff, // FIX: Add diff to extracted for Phase 1 deterministic comparison
+          diff: diff,
+          totalChanges: files.reduce((sum: number, f: any) => sum + (f.additions || 0) + (f.deletions || 0), 0),
         },
         rawPayload: payload,
       },

@@ -456,7 +456,10 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
           authorLogin: prInfo.authorLogin,
           baseBranch: prInfo.baseBranch,
           headBranch: prInfo.headBranch,
+          merged: prInfo.merged,  // FIX: Required by pre-validation (preValidateGitHubPR)
           changedFiles: files,
+          diff: diff.substring(0, 50000),  // FIX: Required by deterministic comparison
+          totalChanges: files.reduce((sum, f) => sum + f.additions + f.deletions, 0),  // FIX: Required by pre-validation
           // Include drift hints if detected (Phase 1 & 2)
           ...(ownershipDriftHint && { ownershipDriftHint }),
           ...(apiDriftHint && { apiDriftHint }),
