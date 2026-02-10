@@ -986,11 +986,106 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
   const finding = findings[0] || {};
   const docContent = finding.docContent || '';
   const docContext = finding.docContext;
-  const driftType = drift.driftType || 'instruction';
   const signal = drift.signalEvent;
   const rawPayload = signal?.rawPayload || {};
   const prData = rawPayload.pull_request || {};
   const extracted = signal?.extracted || {};
+
+  // Gap #1: Run deterministic comparison FIRST (before using LLM drift type)
+  const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
+  let driftType = drift.driftType; // May be null if we skipped LLM classification
+  let classificationMethod = drift.classificationMethod || 'llm'; // Default to 'llm' for backward compatibility
+
+  // Gap #1: If driftType is not set, run deterministic comparison to determine it
+  if (!driftType) {
+    console.log(`[Transitions] Gap #1 - No drift type set, running deterministic comparison`);
+
+    const { extractArtifacts, compareArtifacts } = await import('../baseline/artifactExtractor.js');
+
+    // Extract artifacts from source
+    const sourceArtifacts = extractArtifacts({
+      sourceType,
+      sourceEvidence: {
+        artifacts: {
+          prDiff: {
+            excerpt: extracted.diff || '',
+            filesChanged: extracted.changedFiles || [],
+          },
+          incidentTimeline: extracted.pagerdutyNormalized,
+          slackCluster: extracted.slackCluster,
+          alertData: extracted.alertNormalized,
+          iacChanges: extracted.iacSummary,
+          codeownersDiff: extracted.codeownersDiff,
+        },
+      },
+    });
+
+    // Extract artifacts from doc
+    const docArtifacts = extractArtifacts({
+      sourceType: 'doc',
+      sourceEvidence: {
+        docText: docContent,
+        text: docContent,
+      },
+    });
+
+    // Run deterministic comparison
+    const comparisonResult = compareArtifacts({
+      sourceArtifacts,
+      docArtifacts,
+      sourceType,
+    });
+
+    console.log(
+      `[Transitions] Gap #1 - Deterministic comparison: ` +
+      `driftType=${comparisonResult.driftType}, ` +
+      `confidence=${comparisonResult.confidence.toFixed(2)}, ` +
+      `hasDrift=${comparisonResult.hasDrift}, ` +
+      `hasCoverageGap=${comparisonResult.hasCoverageGap}`
+    );
+
+    // Gap #1: Use comparison result if confidence is high enough
+    if (comparisonResult.confidence >= 0.6 && comparisonResult.hasDrift) {
+      driftType = comparisonResult.driftType;
+      classificationMethod = 'deterministic';
+
+      // Store deterministic classification
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+        data: {
+          driftType,
+          confidence: comparisonResult.confidence,
+          classificationMethod,
+          comparisonResult: comparisonResult as any,
+        },
+      });
+
+      console.log(`[Transitions] Gap #1 - Using deterministic classification: type=${driftType}, confidence=${comparisonResult.confidence.toFixed(2)}`);
+    } else if (comparisonResult.hasDrift) {
+      // Gap #1: Comparison found drift but confidence is low - use default type
+      driftType = comparisonResult.driftType || 'instruction';
+      classificationMethod = 'deterministic_low_confidence';
+
+      await prisma.driftCandidate.update({
+        where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+        data: {
+          driftType,
+          confidence: comparisonResult.confidence,
+          classificationMethod,
+          comparisonResult: comparisonResult as any,
+        },
+      });
+
+      console.log(`[Transitions] Gap #1 - Using deterministic classification (low confidence): type=${driftType}, confidence=${comparisonResult.confidence.toFixed(2)}`);
+    } else {
+      // Gap #1: No drift detected by comparison - complete
+      console.log(`[Transitions] Gap #1 - No drift detected by comparison, completing`);
+      return { state: DriftState.COMPLETED, enqueueNext: false };
+    }
+  }
+
+  // At this point, driftType is set (either from deterministic comparison or from LLM)
+  driftType = driftType || 'instruction'; // Fallback to instruction if still not set
 
   // --- Build EvidencePack from PR data ---
   const changedFilesRaw = extracted.changedFiles || prData.changed_files || [];
