@@ -43,10 +43,21 @@ router.get('/health', async (req: Request, res: Response) => {
     // Check database connectivity
     await prisma.$queryRaw`SELECT 1`;
     
+    // NEW: Add deployment environment info for Railway deployments
+    const environment = process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV || 'development';
+    const deploymentId = process.env.RAILWAY_DEPLOYMENT_ID || 'local';
+    const serviceId = process.env.RAILWAY_SERVICE_ID || 'local';
+
     const response: any = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       database: 'connected',
+      environment,
+      deployment: {
+        id: deploymentId,
+        serviceId,
+        platform: 'railway',
+      },
     };
     
     // NEW: Include metrics if requested
