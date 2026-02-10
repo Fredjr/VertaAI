@@ -174,4 +174,86 @@ router.get('/drift-stats', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/monitoring/drift-analytics
+ * Returns time-series drift analytics with trend data
+ *
+ * This endpoint provides historical drift trends and pattern analysis.
+ * Used for identifying drift patterns over time and forecasting.
+ */
+router.get('/drift-analytics', async (req: Request, res: Response) => {
+  try {
+    const { days = 30 } = req.query;
+    const daysNum = parseInt(days as string, 10);
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - daysNum);
+
+    // Get drift counts over time
+    const driftsOverTime = await prisma.driftCandidate.findMany({
+      where: {
+        createdAt: {
+          gte: startDate,
+        },
+      },
+      select: {
+        id: true,
+        driftType: true,
+        confidence: true,
+        state: true,
+        classificationMethod: true,
+        createdAt: true,
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    // Calculate daily aggregates
+    const dailyStats = driftsOverTime.reduce((acc: Record<string, any>, drift) => {
+      const date = drift.createdAt.toISOString().split('T')[0];
+      if (!date) return acc;
+
+      if (!acc[date]) {
+        acc[date] = {
+          date,
+          total: 0,
+          byType: {} as Record<string, number>,
+          byMethod: {} as Record<string, number>,
+          avgConfidence: 0,
+          confidenceSum: 0,
+        };
+      }
+      acc[date].total += 1;
+      acc[date].byType[drift.driftType || 'unknown'] = (acc[date].byType[drift.driftType || 'unknown'] || 0) + 1;
+      acc[date].byMethod[drift.classificationMethod || 'unknown'] = (acc[date].byMethod[drift.classificationMethod || 'unknown'] || 0) + 1;
+      acc[date].confidenceSum += drift.confidence || 0;
+      acc[date].avgConfidence = acc[date].confidenceSum / acc[date].total;
+      return acc;
+    }, {} as Record<string, any>);
+
+    return res.json({
+      timestamp: new Date().toISOString(),
+      period: {
+        days: daysNum,
+        startDate: startDate.toISOString(),
+        endDate: new Date().toISOString(),
+      },
+      analytics: {
+        totalDrifts: driftsOverTime.length,
+        dailyStats: Object.values(dailyStats),
+        trends: {
+          avgDriftsPerDay: driftsOverTime.length / daysNum,
+          avgConfidence: driftsOverTime.reduce((sum, d) => sum + (d.confidence || 0), 0) / driftsOverTime.length || 0,
+        },
+      },
+    });
+  } catch (error: any) {
+    console.error('[Monitoring] Drift analytics fetch failed:', error);
+    return res.status(500).json({
+      error: 'Failed to fetch drift analytics',
+      message: error.message,
+    });
+  }
+});
+
 export default router;
