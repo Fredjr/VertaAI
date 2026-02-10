@@ -439,75 +439,110 @@ async function handleEligibilityChecked(drift: any): Promise<TransitionResult> {
 }
 
 /**
- * SIGNALS_CORRELATED -> DRIFT_CLASSIFIED
- * Run drift triage agent
+ * SIGNALS_CORRELATED -> DOCS_RESOLVED
+ * Gap #1: Skip LLM classification, go directly to doc resolution
+ * Use source-output compatibility matrix (deterministic)
  * Point 10: Domain Patterns - Source-specific domain detection
  */
 async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
   const signal = drift.signalEvent;
   const rawPayload = signal?.rawPayload || {};
-  const prData = rawPayload.pull_request || {};
   const extracted = signal?.extracted || {};
+  const prData = rawPayload.pull_request || {};
 
-  // Build input for drift triage agent
-  const triageInput = {
-    prNumber: extracted.prNumber || prData.number,
-    prTitle: extracted.prTitle || prData.title || '',
-    prBody: extracted.prBody || prData.body || '',
-    repoFullName: signal?.repo || '',
-    authorLogin: extracted.authorLogin || prData.user?.login || '',
-    mergedAt: prData.merged_at || null,
-    changedFiles: extracted.changedFiles || [],
-    diff: rawPayload.diff || '',
-  };
-
-  const result = await runDriftTriage(triageInput);
-
-  if (!result.success || !result.data?.drift_detected) {
-    console.log(`[Transitions] No drift detected - completing`);
-    return { state: DriftState.COMPLETED, enqueueNext: false };
-  }
-
-  const triageData = result.data;
-
-  // Phase 3: Extract drift type and metadata
-  const primaryDriftType = triageData.drift_types?.[0] || 'instruction';
-
-  // Point 10: Enhance domain detection with source-specific patterns
+  // Gap #1: Use deterministic domain detection (no LLM needed)
   const { detectDomainsFromSource } = await import('../baseline/patterns.js');
   const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
-  const evidenceText = `${triageInput.prTitle} ${triageInput.prBody}`;
+  const evidenceText = `${extracted.prTitle || prData.title || ''} ${extracted.prBody || prData.body || ''}`;
   const detectedDomains = detectDomainsFromSource(evidenceText, sourceType);
 
-  // Merge LLM-detected domains with pattern-detected domains
-  const llmDomains = triageData.impacted_domains || [];
-  const allDomains = [...new Set([...llmDomains, ...detectedDomains])];
+  console.log(`[Transitions] Gap #1 - Deterministic domain detection: source=${sourceType}, domains=[${detectedDomains.join(', ')}]`);
 
-  console.log(`[Transitions] Point 10 - Domain detection: LLM=[${llmDomains.join(', ')}], patterns=[${detectedDomains.join(', ')}], merged=[${allDomains.join(', ')}]`);
+  // Gap #1: Determine target doc systems using source-output compatibility matrix (no drift type needed!)
+  const { SOURCE_OUTPUT_COMPATIBILITY } = await import('../../config/docTargeting.js');
+  const targetDocSystems = SOURCE_OUTPUT_COMPATIBILITY[sourceType] || [];
 
-  // Phase 4: Apply correlation boost to confidence
-  const baseConfidence = triageData.confidence || 0;
-  const correlationBoost = drift.correlationBoost || 0;
-  const boostedConfidence = Math.min(1, baseConfidence + correlationBoost);
+  console.log(`[Transitions] Gap #1 - Doc targeting (deterministic): source=${sourceType}, targets=[${targetDocSystems.join(', ')}]`);
 
-  // Update drift with triage results (fingerprint stored in DRIFT_CLASSIFIED after dedup check)
-  await prisma.driftCandidate.update({
-    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
-    data: {
-      driftType: primaryDriftType,
-      driftDomains: allDomains, // Point 10: Use merged domains
-      evidenceSummary: triageData.evidence_summary || '',
-      confidence: boostedConfidence,
-      driftScore: triageData.drift_score || (boostedConfidence * (triageData.impact_score || 1)),
-      riskLevel: triageData.risk_level || null,
-      recommendedAction: triageData.recommended_action || null,
-      // Note: fingerprint stored after dedup check in DRIFT_CLASSIFIED state
+  // Gap #1: Resolve docs using source-based targeting (no LLM classification needed)
+  const { resolveDocsForDrift } = await import('../docs/resolver.js');
+
+  // Fetch workspace policy for doc resolution
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: drift.workspaceId },
+    select: {
+      primaryDocRequired: true,
+      allowPrLinkOverride: true,
+      allowSearchSuggestMapping: true,
+      minConfidenceForSuggest: true,
+      allowedConfluenceSpaces: true,
     },
   });
 
-  console.log(`[Transitions] Drift classified: type=${primaryDriftType}, base_conf=${baseConfidence}, boost=${correlationBoost}, final_conf=${boostedConfidence}, risk=${triageData.risk_level}`);
+  const resolutionResult = await resolveDocsForDrift({
+    workspaceId: drift.workspaceId,
+    repo: signal?.repo || null,
+    service: drift.service || null,
+    prBody: extracted.prBody || prData.body || null,
+    prTitle: extracted.prTitle || prData.title || null,
+    policy: workspace ? {
+      primaryDocRequired: workspace.primaryDocRequired,
+      allowPrLinkOverride: workspace.allowPrLinkOverride,
+      allowSearchSuggestMapping: workspace.allowSearchSuggestMapping,
+      minConfidenceForSuggest: workspace.minConfidenceForSuggest,
+      allowedConfluenceSpaces: workspace.allowedConfluenceSpaces,
+    } : undefined,
+    sourceType: sourceType,
+    targetDocSystems,
+  });
 
-  return { state: DriftState.DRIFT_CLASSIFIED, enqueueNext: true };
+  console.log(`[Transitions] Gap #1 - Doc resolution: status=${resolutionResult.status}, method=${resolutionResult.method}, candidates=${resolutionResult.candidates.length}`);
+
+  // Handle NEEDS_MAPPING case
+  if (resolutionResult.status === 'needs_mapping') {
+    const needsMappingKey = `${drift.workspaceId}:${signal?.repo || drift.service || 'unknown'}`;
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const recentNotification = await prisma.driftCandidate.findFirst({
+      where: {
+        workspaceId: drift.workspaceId,
+        needsMappingKey,
+        needsMappingNotifiedAt: { gte: oneWeekAgo },
+      },
+      select: { id: true, needsMappingNotifiedAt: true },
+    });
+
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: {
+        needsMappingKey,
+        needsMappingNotifiedAt: recentNotification ? null : new Date(),
+        docsResolutionStatus: 'needs_mapping',
+        docsResolutionMethod: resolutionResult.method,
+        driftDomains: detectedDomains,
+        targetDocSystems,
+      },
+    });
+
+    console.log(`[Transitions] Gap #1 - Needs mapping: key=${needsMappingKey}, will_notify=${!recentNotification}`);
+    return { state: DriftState.FAILED_NEEDS_MAPPING, enqueueNext: false };
+  }
+
+  // Store doc candidates and metadata
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: {
+      docCandidates: resolutionResult.candidates as any,
+      docsResolutionStatus: resolutionResult.status,
+      docsResolutionMethod: resolutionResult.method,
+      driftDomains: detectedDomains,
+      targetDocSystems,
+      // Note: driftType will be set later by comparison or LLM fallback
+    },
+  });
+
+  console.log(`[Transitions] Gap #1 - Docs resolved deterministically, proceeding to fetch docs`);
+
+  return { state: DriftState.DOCS_RESOLVED, enqueueNext: true };
 }
 
 /**
