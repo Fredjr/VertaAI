@@ -123,6 +123,14 @@ export const DEFAULT_ELIGIBILITY_RULES: Record<InputSourceType, unknown> = {
   github_codeowners: {
     // CODEOWNERS changes are always eligible
   },
+
+  grafana_alert: {
+    minSeverity: 'critical',  // Same as datadog_alert
+    requireRecovery: true,
+    excludeMonitorTags: ['test', 'synthetic', 'canary'],
+    minOccurrences: 3,
+    excludeMonitorNames: ['[TEST]', '[STAGING]', '[DEV]'],
+  } as DatadogAlertEligibilityRules,
 };
 
 // ============================================================================

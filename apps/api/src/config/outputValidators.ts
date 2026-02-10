@@ -282,6 +282,7 @@ export function getPreValidators(sourceType: InputSourceType): Array<(signal: an
     datadog_alert: [preValidateDatadogAlert],
     github_iac: [preValidateGitHubPR],  // Same as PR
     github_codeowners: [],  // Always valid
+    grafana_alert: [preValidateDatadogAlert],  // Same as datadog_alert
   };
 
   return validators[sourceType] || [];

@@ -1113,6 +1113,29 @@ export const SOURCE_DOMAIN_PATTERNS: Record<InputSourceType, Record<string, RegE
       /team/gi,
     ],
   },
+
+  grafana_alert: {
+    rollback: [
+      /rollback/gi,
+      /revert/gi,
+    ],
+    deployment: [
+      /deploy/gi,
+      /release/gi,
+    ],
+    infra: [
+      /host/gi,
+      /container/gi,
+      /pod/gi,
+      /node/gi,
+    ],
+    observability: [
+      /alert/gi,
+      /monitor/gi,
+      /metric/gi,
+      /dashboard/gi,
+    ],
+  },
 };
 
 /**

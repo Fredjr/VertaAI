@@ -198,6 +198,12 @@ export const SOURCE_OUTPUT_COMPATIBILITY: Record<InputSourceType, DocSystem[]> =
     'confluence',     // Team pages
     'notion',         // Team pages
   ],
+
+  grafana_alert: [
+    'confluence',   // Observability runbooks
+    'notion',       // Observability runbooks
+    'gitbook',      // Observability runbooks
+  ],
 };
 
 /**

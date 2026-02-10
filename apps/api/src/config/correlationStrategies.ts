@@ -85,6 +85,14 @@ export const SOURCE_CORRELATION_STRATEGIES: Record<InputSourceType, CorrelationC
     boostFactor: 0.10,
     compatibleSources: ['pagerduty_incident', 'github_pr'],
   },
+
+  grafana_alert: {
+    strategy: 'service_exact',
+    timeWindowHours: 48,  // 2 days (alerts are timely)
+    minSimilarityScore: 0.8,
+    boostFactor: 0.20,
+    compatibleSources: ['pagerduty_incident', 'github_pr'],
+  },
 };
 
 // ============================================================================
