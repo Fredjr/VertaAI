@@ -318,4 +318,85 @@ router.get('/drift-trends', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/monitoring/drift-health
+ * Returns drift pipeline health metrics
+ */
+router.get('/drift-health', async (req: Request, res: Response) => {
+  try {
+    const workspaceId = req.query.workspaceId as string;
+
+    if (!workspaceId) {
+      return res.status(400).json({ error: 'workspaceId is required' });
+    }
+
+    // Get drift state distribution
+    const stateDistribution = await prisma.driftCandidate.groupBy({
+      by: ['state'],
+      where: { workspaceId },
+      _count: { state: true },
+    });
+
+    // Get error distribution
+    const errorDistribution = await prisma.driftCandidate.groupBy({
+      by: ['lastErrorCode'],
+      where: {
+        workspaceId,
+        lastErrorCode: { not: null },
+      },
+      _count: { lastErrorCode: true },
+    });
+
+    // Get recent failures
+    const recentFailures = await prisma.driftCandidate.findMany({
+      where: {
+        workspaceId,
+        state: 'FAILED',
+      },
+      orderBy: { stateUpdatedAt: 'desc' },
+      take: 10,
+      select: {
+        id: true,
+        state: true,
+        lastErrorCode: true,
+        lastErrorMessage: true,
+        stateUpdatedAt: true,
+        driftType: true,
+        confidence: true,
+      },
+    });
+
+    // Calculate health score (0-100)
+    const totalDrifts = stateDistribution.reduce((sum, s) => sum + s._count.state, 0);
+    const failedDrifts = stateDistribution.find(s => s.state === 'FAILED')?._count.state || 0;
+    const completedDrifts = stateDistribution.find(s => s.state === 'COMPLETED')?._count.state || 0;
+
+    const healthScore = totalDrifts > 0
+      ? Math.round(((completedDrifts / totalDrifts) * 100))
+      : 100;
+
+    return res.json({
+      healthScore,
+      totalDrifts,
+      completedDrifts,
+      failedDrifts,
+      stateDistribution: stateDistribution.map(s => ({
+        state: s.state,
+        count: s._count.state,
+      })),
+      errorDistribution: errorDistribution.map(e => ({
+        errorCode: e.lastErrorCode,
+        count: e._count.lastErrorCode,
+      })),
+      recentFailures,
+    });
+  } catch (error: any) {
+    console.error('[Monitoring] Drift health fetch failed:', error);
+    return res.status(500).json({
+      error: 'Failed to fetch drift health',
+      message: error.message,
+    });
+  }
+});
+
 export default router;
