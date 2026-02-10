@@ -2572,6 +2572,55 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
     return { state: DriftState.APPROVED, enqueueNext: true };
   }
 
+  // ========================================================================
+  // Gap #9: Cluster-First Drift Triage (OPT-IN)
+  // ========================================================================
+  // Check if clustering is enabled in the active plan
+  const budgetsConfig = ((activePlan as any)?.budgets || {}) as any;
+  const clusteringEnabled = budgetsConfig.enableClustering === true;
+
+  if (clusteringEnabled) {
+    console.log(`[Transitions] Gap #9 - Clustering enabled, attempting to cluster drift`);
+
+    try {
+      const { extractClusterKey, findOrCreateCluster, addDriftToCluster, shouldNotifyCluster } = await import('../clustering/aggregator.js');
+
+      // Extract cluster key from drift
+      const clusterKey = extractClusterKey(drift);
+      console.log(`[Transitions] Gap #9 - Cluster key: service=${clusterKey.service}, driftType=${clusterKey.driftType}, pattern=${clusterKey.fingerprintPattern}`);
+
+      // Find or create cluster
+      const cluster = await findOrCreateCluster(drift.workspaceId, clusterKey);
+
+      // Add drift to cluster
+      await addDriftToCluster(drift.workspaceId, drift.id, cluster.id);
+
+      // Check if cluster should be notified
+      const notificationCheck = shouldNotifyCluster(cluster as any);
+      console.log(`[Transitions] Gap #9 - Cluster notification check: ${notificationCheck.reason}`);
+
+      if (!notificationCheck.shouldNotify) {
+        // Cluster not ready yet - mark drift as AWAITING_HUMAN (waiting for cluster notification)
+        console.log(`[Transitions] Gap #9 - Drift added to cluster ${cluster.id}, waiting for cluster notification`);
+        return { state: DriftState.AWAITING_HUMAN, enqueueNext: false };
+      }
+
+      // Cluster is ready to notify - continue with cluster notification
+      // TODO: Step 3 will implement cluster Slack message
+      console.log(`[Transitions] Gap #9 - Cluster ${cluster.id} ready to notify (Step 3 not implemented yet)`);
+      console.log(`[Transitions] Gap #9 - Falling back to individual notification for now`);
+
+      // TEMPORARY: Fall back to individual notification until Step 3 is implemented
+      // This ensures zero regression - clustering is attempted but falls back gracefully
+    } catch (error: any) {
+      console.error(`[Transitions] Gap #9 - Clustering error: ${error.message}`);
+      console.log(`[Transitions] Gap #9 - Falling back to individual notification`);
+      // Fall through to individual notification logic below
+    }
+  } else {
+    console.log(`[Transitions] Gap #9 - Clustering disabled, using individual notification`);
+  }
+
   // Get Slack integration
   const slackIntegration = await prisma.integration.findFirst({
     where: {
