@@ -2189,30 +2189,89 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
     };
   }
 
-  // Point 8: Apply source-specific thresholds
-  const { getSourceThreshold } = await import('../../config/scoringWeights.js');
+  // Gap #6: Resolve active plan and thresholds
+  const { resolveDriftPlan } = await import('../plans/resolver.js');
+  const { resolveThresholds } = await import('../plans/resolver.js');
+
   const signal = drift.signalEvent;
   const sourceType = drift.sourceType || signal?.sourceType || 'github_pr';
-  const threshold = getSourceThreshold(sourceType);
   const confidence = drift.confidence || 0.5;
 
-  // Store threshold for reference
-  await prisma.driftCandidate.update({
-    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
-    data: { sourceThreshold: threshold.slackNotify },
+  // Resolve active plan
+  const planResolution = await resolveDriftPlan({
+    workspaceId: drift.workspaceId,
+    serviceId: drift.service || undefined,
+    repoFullName: drift.repo || undefined,
+    docClass: undefined, // Will be enhanced later
   });
 
-  console.log(`[Transitions] Point 8 - Threshold check: source=${sourceType}, confidence=${confidence.toFixed(2)}, slackThreshold=${threshold.slackNotify}, autoApproveThreshold=${threshold.autoApprove}`);
+  const activePlan = planResolution.plan;
+
+  // Resolve thresholds (plan → workspace → source defaults)
+  const thresholdResolution = await resolveThresholds({
+    workspaceId: drift.workspaceId,
+    planId: activePlan?.id || null,
+    sourceType,
+  });
+
+  const threshold = {
+    autoApprove: thresholdResolution.autoApprove,
+    slackNotify: thresholdResolution.slackNotify,
+    digestOnly: thresholdResolution.digestOnly,
+    ignore: thresholdResolution.ignore,
+  };
+
+  // Store plan tracking and threshold for reference
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: {
+      activePlanId: activePlan?.id || null,
+      activePlanVersion: activePlan?.version || null,
+      activePlanHash: activePlan?.versionHash || null,
+      sourceThreshold: threshold.slackNotify,
+    },
+  });
+
+  console.log(`[Transitions] Gap #6 - Plan resolved: planId=${activePlan?.id || 'none'}, thresholdSource=${thresholdResolution.source}`);
+  console.log(`[Transitions] Gap #6 - Threshold check: source=${sourceType}, confidence=${confidence.toFixed(2)}, slackThreshold=${threshold.slackNotify}, autoApproveThreshold=${threshold.autoApprove}`);
+
+  // Determine routing action
+  let routingAction: 'auto_approve' | 'slack_notify' | 'digest_only' | 'ignore';
+  if (confidence >= threshold.autoApprove) {
+    routingAction = 'auto_approve';
+  } else if (confidence >= threshold.slackNotify) {
+    routingAction = 'slack_notify';
+  } else if (confidence >= threshold.digestOnly) {
+    routingAction = 'digest_only';
+  } else {
+    routingAction = 'ignore';
+  }
+
+  // Create PlanRun record for tracking
+  await prisma.planRun.create({
+    data: {
+      workspaceId: drift.workspaceId,
+      planId: activePlan?.id || 'none',
+      planVersion: activePlan?.version || 0,
+      planHash: activePlan?.versionHash || 'none',
+      driftId: drift.id,
+      routingAction,
+      confidence,
+      thresholdsUsed: threshold,
+    },
+  });
+
+  console.log(`[Transitions] Gap #6 - Routing decision: ${routingAction}`);
 
   // Check if confidence meets threshold for Slack notification
   if (confidence < threshold.slackNotify) {
-    console.log(`[Transitions] Point 8 - Confidence ${confidence.toFixed(2)} below Slack threshold ${threshold.slackNotify}, completing without notification`);
+    console.log(`[Transitions] Gap #6 - Confidence ${confidence.toFixed(2)} below Slack threshold ${threshold.slackNotify}, completing without notification`);
     return { state: DriftState.COMPLETED, enqueueNext: false };
   }
 
   // Check if confidence meets auto-approve threshold
   if (confidence >= threshold.autoApprove) {
-    console.log(`[Transitions] Point 8 - Confidence ${confidence.toFixed(2)} meets auto-approve threshold ${threshold.autoApprove}, auto-approving`);
+    console.log(`[Transitions] Gap #6 - Confidence ${confidence.toFixed(2)} meets auto-approve threshold ${threshold.autoApprove}, auto-approving`);
     // Auto-approve and proceed to writeback
     return { state: DriftState.APPROVED, enqueueNext: true };
   }

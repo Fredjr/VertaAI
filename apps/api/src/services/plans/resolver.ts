@@ -197,3 +197,70 @@ export function checkPlanEligibility(args: {
   return { eligible: true };
 }
 
+/**
+ * Resolve thresholds for routing decisions
+ *
+ * Priority:
+ * 1. Plan-specific thresholds (from plan.thresholds JSON)
+ * 2. Workspace defaults (highConfidenceThreshold, mediumConfidenceThreshold)
+ * 3. Source-specific defaults (from scoringWeights.ts)
+ *
+ * Gap #6: DriftPlan as True Control-Plane
+ */
+export async function resolveThresholds(args: {
+  workspaceId: string;
+  planId?: string | null;
+  sourceType: string;
+}): Promise<{
+  autoApprove: number;
+  slackNotify: number;
+  digestOnly: number;
+  ignore: number;
+  source: 'plan' | 'workspace' | 'source_default';
+}> {
+  const { workspaceId, planId, sourceType } = args;
+
+  // Step 1: Try plan-specific thresholds
+  if (planId) {
+    const plan = await prisma.driftPlan.findUnique({
+      where: { workspaceId_id: { workspaceId, id: planId } },
+    });
+
+    if (plan && plan.thresholds && typeof plan.thresholds === 'object') {
+      const thresholds = plan.thresholds as any;
+      if (thresholds.autoApprove !== undefined && thresholds.slackNotify !== undefined) {
+        return {
+          autoApprove: thresholds.autoApprove,
+          slackNotify: thresholds.slackNotify,
+          digestOnly: thresholds.digestOnly ?? 0.30,
+          ignore: thresholds.ignore ?? 0.20,
+          source: 'plan',
+        };
+      }
+    }
+  }
+
+  // Step 2: Try workspace defaults
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+  });
+
+  if (workspace) {
+    return {
+      autoApprove: workspace.highConfidenceThreshold || 0.98,
+      slackNotify: workspace.mediumConfidenceThreshold || 0.40,
+      digestOnly: 0.30,
+      ignore: 0.20,
+      source: 'workspace',
+    };
+  }
+
+  // Step 3: Fallback to source-specific defaults
+  const { getThresholds } = await import('../../config/scoringWeights.js');
+  const sourceThresholds = getThresholds(sourceType as any);
+
+  return {
+    ...sourceThresholds,
+    source: 'source_default',
+  };
+}

@@ -28,8 +28,9 @@ model Workspace {
   defaultOwnerRef        String   @default("#engineering") @map("default_owner_ref")
 
   // Notification policy (confidence-based routing)
-  highConfidenceThreshold   Float   @default(0.70) @map("high_confidence_threshold")
-  mediumConfidenceThreshold Float   @default(0.55) @map("medium_confidence_threshold")
+  // UPDATED: Aligned with Phase 2 systematic fixes (was 0.70/0.55, now 0.98/0.40)
+  highConfidenceThreshold   Float   @default(0.98) @map("high_confidence_threshold")
+  mediumConfidenceThreshold Float   @default(0.40) @map("medium_confidence_threshold")
   digestChannel             String? @map("digest_channel")
 
   // Workspace policy for doc resolution (per spec Section 1.1 + Section 7)
@@ -49,6 +50,7 @@ model Workspace {
   integrations          Integration[]
   signalEvents          SignalEvent[]
   driftPlans            DriftPlan[]
+  planRuns              PlanRun[] // NEW: Gap #6 - Plan execution tracking
   driftCandidates       DriftCandidate[]
   patchProposals        PatchProposal[]
   docMappingsV2         DocMappingV2[]
@@ -220,6 +222,11 @@ model DriftCandidate {
 
   // Observability (Phase 4)
   traceId String? @map("trace_id") // End-to-end trace ID for logging and debugging
+
+  // Plan tracking (Gap #6: DriftPlan as True Control-Plane)
+  activePlanId      String? @map("active_plan_id")      // Which plan was active when this drift was processed
+  activePlanVersion Int?    @map("active_plan_version") // Plan version at processing time
+  activePlanHash    String? @map("active_plan_hash")    // Plan hash for reproducibility
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -702,6 +709,44 @@ model DriftPlan {
   @@index([workspaceId, scopeType, scopeRef])
   @@index([workspaceId, templateId])
   @@map("drift_plans")
+}
+
+// ======================================================================
+// PLAN RUN TRACKING (Gap #6: DriftPlan as True Control-Plane)
+// Tracks which drifts were processed under which plan version
+// ======================================================================
+
+model PlanRun {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+
+  // Plan reference
+  planId      String @map("plan_id")
+  planVersion Int    @map("plan_version") // Snapshot of plan version at execution time
+  planHash    String @map("plan_hash") // Snapshot of plan hash for reproducibility
+
+  // Drift reference
+  driftId String @map("drift_id")
+
+  // Execution metadata
+  executedAt DateTime @default(now()) @map("executed_at")
+
+  // Routing decision (captured at execution time)
+  routingAction String @map("routing_action") // 'auto_approve', 'slack_notify', 'digest_only', 'ignore'
+  confidence    Float  // Confidence score at execution time
+
+  // Thresholds used (snapshot for reproducibility)
+  thresholdsUsed Json @map("thresholds_used") // { autoApprove: 0.98, slackNotify: 0.40, ... }
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, planId])
+  @@index([workspaceId, driftId])
+  @@index([workspaceId, executedAt])
+  @@index([workspaceId, routingAction])
+  @@map("plan_runs")
 }
 
 // ======================================================================
