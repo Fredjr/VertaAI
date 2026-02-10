@@ -2605,13 +2605,114 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
         return { state: DriftState.AWAITING_HUMAN, enqueueNext: false };
       }
 
-      // Cluster is ready to notify - continue with cluster notification
-      // TODO: Step 3 will implement cluster Slack message
-      console.log(`[Transitions] Gap #9 - Cluster ${cluster.id} ready to notify (Step 3 not implemented yet)`);
-      console.log(`[Transitions] Gap #9 - Falling back to individual notification for now`);
+      // Cluster is ready to notify - send cluster notification
+      console.log(`[Transitions] Gap #9 - Cluster ${cluster.id} ready to notify, sending cluster message`);
 
-      // TEMPORARY: Fall back to individual notification until Step 3 is implemented
-      // This ensures zero regression - clustering is attempted but falls back gracefully
+      // Get Slack integration first (needed for target channel)
+      const clusterSlackIntegration = await prisma.integration.findFirst({
+        where: {
+          workspaceId: drift.workspaceId,
+          type: 'slack',
+          status: 'connected',
+        },
+      });
+
+      if (!clusterSlackIntegration) {
+        console.error(`[Transitions] Gap #9 - Slack integration not found, falling back to individual notification`);
+        throw new Error('Slack integration not configured');
+      }
+
+      // Get all drifts in cluster with patch proposals
+      const clusterDrifts = await prisma.driftCandidate.findMany({
+        where: {
+          workspaceId: drift.workspaceId,
+          clusterId: cluster.id,
+        },
+        include: {
+          patchProposals: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      });
+
+      // Build drift summaries for cluster message
+      const { buildClusterSlackMessage } = await import('../clustering/slackClusterMessage.js');
+      const { closeCluster } = await import('../clustering/aggregator.js');
+
+      const driftSummaries = clusterDrifts.map(d => {
+        // Extract source ref from evidence bundle
+        const evidenceBundle = (d.evidenceBundle as any) || {};
+        const sourceEvidence = evidenceBundle.sourceEvidence || {};
+        const sourceRef = sourceEvidence.sourceRef || d.id.substring(0, 8);
+
+        // Extract doc title from evidence bundle
+        const targetEvidence = evidenceBundle.targetEvidence || {};
+        const docTitle = targetEvidence.docTitle || 'Documentation';
+
+        return {
+          id: d.id,
+          service: d.service || 'unknown',
+          driftType: d.driftType || 'unknown',
+          confidence: d.confidence || 0,
+          sourceType: d.sourceType || 'unknown',
+          sourceRef,
+          docTitle,
+          patchId: d.patchProposals[0]?.id || '',
+        };
+      });
+
+      // Get owner info for notification routing
+      const ownerResolution = drift.ownerResolution || {};
+      const primaryOwner = ownerResolution.primary || ownerResolution;
+      const fallbackOwner = ownerResolution.fallback;
+      const ownerChannel = primaryOwner?.type === 'slack_channel' ? primaryOwner.ref :
+                           (fallbackOwner?.type === 'slack_channel' ? fallbackOwner.ref : null);
+
+      const clusterIntegrationConfig = (clusterSlackIntegration.config as any) || {};
+      const targetChannel = ownerChannel || clusterIntegrationConfig.defaultChannel || 'general';
+
+      // Build cluster Slack message
+      const clusterMessage = buildClusterSlackMessage(cluster, driftSummaries, targetChannel);
+
+      // Send cluster message
+      const { sendSlackMessage } = await import('../slack-client.js');
+      const slackResult = await sendSlackMessage(
+        drift.workspaceId,
+        clusterMessage.channel,
+        clusterMessage.text,
+        clusterMessage.blocks
+      );
+
+      if (!slackResult.ok) {
+        console.error(`[Transitions] Gap #9 - Failed to send cluster message: ${slackResult.error}`);
+        throw new Error(`Failed to send cluster message: ${slackResult.error}`);
+      }
+
+      // Close cluster and store Slack metadata
+      await closeCluster(
+        drift.workspaceId,
+        cluster.id,
+        clusterMessage.channel,
+        slackResult.ts || ''
+      );
+
+      // Mark all drifts in cluster as SLACK_SENT
+      await prisma.driftCandidate.updateMany({
+        where: {
+          workspaceId: drift.workspaceId,
+          clusterId: cluster.id,
+        },
+        data: {
+          state: DriftState.SLACK_SENT,
+          stateUpdatedAt: new Date(),
+        },
+      });
+
+      console.log(`[Transitions] Gap #9 - Cluster notification sent successfully to ${clusterMessage.channel}`);
+
+      // Return AWAITING_HUMAN for this drift (cluster notification sent)
+      return { state: DriftState.AWAITING_HUMAN, enqueueNext: false };
     } catch (error: any) {
       console.error(`[Transitions] Gap #9 - Clustering error: ${error.message}`);
       console.log(`[Transitions] Gap #9 - Falling back to individual notification`);

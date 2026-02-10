@@ -85,6 +85,99 @@ async function handleBlockActions(payload: any, res: Response) {
     return res.json({ ok: true });
   }
 
+  // Gap #9: Check if this is a cluster action
+  if (actionType.endsWith('_cluster')) {
+    const clusterId = proposalId; // For cluster actions, the ID is the cluster ID
+    const userId = payload.user?.id;
+
+    // Find cluster to get workspaceId
+    const cluster = await prisma.driftCluster.findFirst({
+      where: { id: clusterId },
+    });
+
+    if (!cluster) {
+      console.error(`[SlackInteractions] Cluster ${clusterId} not found`);
+      return res.json({ ok: true });
+    }
+
+    const workspaceId = cluster.workspaceId;
+
+    // Import cluster interaction handlers
+    const {
+      handleClusterApproveAll,
+      handleClusterRejectAll,
+      handleClusterSnoozeAll,
+      handleClusterReviewIndividually
+    } = await import('../services/clustering/clusterInteractions.js');
+
+    console.log(`[SlackInteractions] Handling cluster action: ${actionType}`);
+
+    switch (actionType) {
+      case 'approve_cluster':
+        const approveResult = await handleClusterApproveAll(workspaceId, clusterId, userId);
+        if (approveResult.success) {
+          await updateSlackMessage(
+            workspaceId,
+            payload.channel?.id,
+            payload.message?.ts,
+            '✅ All Approved',
+            [
+              { type: 'section', text: { type: 'mrkdwn', text: `✅ *All ${approveResult.approvedCount} drifts approved* by <@${userId}>` } },
+              { type: 'context', elements: [{ type: 'mrkdwn', text: `Approved at ${new Date().toISOString()}` }] },
+            ]
+          );
+        }
+        break;
+      case 'reject_cluster':
+        const rejectResult = await handleClusterRejectAll(workspaceId, clusterId, userId);
+        if (rejectResult.success) {
+          await updateSlackMessage(
+            workspaceId,
+            payload.channel?.id,
+            payload.message?.ts,
+            '❌ All Rejected',
+            [
+              { type: 'section', text: { type: 'mrkdwn', text: `❌ *All ${rejectResult.rejectedCount} drifts rejected* by <@${userId}>` } },
+              { type: 'context', elements: [{ type: 'mrkdwn', text: `Rejected at ${new Date().toISOString()}` }] },
+            ]
+          );
+        }
+        break;
+      case 'snooze_cluster':
+        const snoozeResult = await handleClusterSnoozeAll(workspaceId, clusterId, userId);
+        if (snoozeResult.success) {
+          await updateSlackMessage(
+            workspaceId,
+            payload.channel?.id,
+            payload.message?.ts,
+            '💤 All Snoozed',
+            [
+              { type: 'section', text: { type: 'mrkdwn', text: `💤 *All ${snoozeResult.snoozedCount} drifts snoozed for 48h* by <@${userId}>` } },
+              { type: 'context', elements: [{ type: 'mrkdwn', text: `Snoozed at ${new Date().toISOString()}` }] },
+            ]
+          );
+        }
+        break;
+      case 'review_cluster':
+        const reviewResult = await handleClusterReviewIndividually(workspaceId, clusterId);
+        if (reviewResult.success) {
+          await updateSlackMessage(
+            workspaceId,
+            payload.channel?.id,
+            payload.message?.ts,
+            '👀 Reviewing Individually',
+            [
+              { type: 'section', text: { type: 'mrkdwn', text: `👀 *Sending ${reviewResult.sentCount} individual notifications*` } },
+              { type: 'context', elements: [{ type: 'mrkdwn', text: `Requested by <@${userId}>` }] },
+            ]
+          );
+        }
+        break;
+    }
+
+    return res.json({ ok: true });
+  }
+
   // FIX: Try workspace-scoped PatchProposal first (new model)
   const patchProposal = await prisma.patchProposal.findFirst({
     where: { id: proposalId },
