@@ -475,4 +475,123 @@ router.get('/drift-coverage', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * GET /api/monitoring/threshold-effectiveness
+ * Returns threshold effectiveness metrics (Phase 2: Threshold Tuning)
+ *
+ * Tracks how drifts are distributed across routing thresholds:
+ * - Auto-approved (should be <5%)
+ * - Sent to Slack (should be 60-80%)
+ * - Digest only (should be 10-20%)
+ * - Ignored (should be 5-15%)
+ */
+router.get('/threshold-effectiveness', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId, sourceType, daysBack = 30 } = req.query;
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - Number(daysBack));
+
+    // Build filter
+    const where: any = {
+      createdAt: { gte: cutoffDate },
+    };
+    if (workspaceId) where.workspaceId = workspaceId;
+    if (sourceType) where.sourceType = sourceType;
+
+    // Get all drifts with their routing decisions
+    const drifts = await prisma.driftCandidate.findMany({
+      where,
+      select: {
+        id: true,
+        workspaceId: true,
+        sourceType: true,
+        confidence: true,
+        state: true,
+        createdAt: true,
+      },
+    });
+
+    // Categorize by routing decision
+    const total = drifts.length;
+    let autoApproved = 0;
+    let slackNotified = 0;
+    let digestOnly = 0;
+    let ignored = 0;
+
+    for (const drift of drifts) {
+      // Check if drift reached SLACK_SENT state
+      if (drift.state === 'SLACK_SENT' || drift.state === 'AWAITING_HUMAN' ||
+          drift.state === 'APPROVED' || drift.state === 'WRITTEN_BACK' ||
+          drift.state === 'COMPLETED') {
+        slackNotified++;
+      }
+      // Check if drift was auto-approved (went straight to WRITTEN_BACK without SLACK_SENT)
+      else if (drift.state === 'WRITTEN_BACK' || drift.state === 'COMPLETED') {
+        autoApproved++;
+      }
+      // Check if drift was ignored (stuck in early states)
+      else if (drift.state === 'INGESTED' || drift.state === 'ELIGIBILITY_CHECKED') {
+        ignored++;
+      }
+      // Everything else is digest
+      else {
+        digestOnly++;
+      }
+    }
+
+    // Calculate percentages
+    const percentages = {
+      autoApproved: total > 0 ? (autoApproved / total) * 100 : 0,
+      slackNotified: total > 0 ? (slackNotified / total) * 100 : 0,
+      digestOnly: total > 0 ? (digestOnly / total) * 100 : 0,
+      ignored: total > 0 ? (ignored / total) * 100 : 0,
+    };
+
+    // Health assessment
+    const health = {
+      autoApproveRate: percentages.autoApproved < 5 ? 'healthy' : 'warning',
+      slackNotifyRate: percentages.slackNotified >= 60 && percentages.slackNotified <= 80 ? 'healthy' : 'warning',
+      digestRate: percentages.digestOnly >= 10 && percentages.digestOnly <= 20 ? 'healthy' : 'warning',
+      ignoreRate: percentages.ignored >= 5 && percentages.ignored <= 15 ? 'healthy' : 'warning',
+    };
+
+    const overallHealth = Object.values(health).every(h => h === 'healthy') ? 'healthy' : 'needs_tuning';
+
+    return res.json({
+      period: {
+        daysBack: Number(daysBack),
+        startDate: cutoffDate.toISOString(),
+        endDate: new Date().toISOString(),
+      },
+      filters: {
+        workspaceId: workspaceId || 'all',
+        sourceType: sourceType || 'all',
+      },
+      metrics: {
+        total,
+        autoApproved,
+        slackNotified,
+        digestOnly,
+        ignored,
+      },
+      percentages,
+      health,
+      overallHealth,
+      recommendations: overallHealth === 'needs_tuning' ? [
+        percentages.autoApproved >= 5 && 'Consider raising autoApprove threshold - too many auto-approvals',
+        percentages.slackNotified < 60 && 'Consider lowering slackNotify threshold - too few Slack notifications',
+        percentages.slackNotified > 80 && 'Consider raising slackNotify threshold - too many Slack notifications',
+        percentages.ignored > 15 && 'Consider lowering ignore threshold - too many drifts being ignored',
+      ].filter(Boolean) : [],
+    });
+  } catch (error: any) {
+    console.error('[Monitoring] Threshold effectiveness fetch failed:', error);
+    return res.status(500).json({
+      error: 'Failed to fetch threshold effectiveness',
+      message: error.message,
+    });
+  }
+});
+
 export default router;

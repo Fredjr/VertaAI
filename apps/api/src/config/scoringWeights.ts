@@ -114,38 +114,45 @@ export const SOURCE_THRESHOLDS: Record<InputSourceType, SourceThresholds> = {
   },
   
   pagerduty_incident: {
-    autoApprove: 0.90,      // Higher bar - incidents are noisy
-    slackNotify: 0.60,      // Medium-high for Slack
-    digestOnly: 0.45,       // Medium for digest
-    ignore: 0.35,           // Slightly higher ignore threshold
+    autoApprove: 0.95,      // PHASE 2: Raised from 0.90 to 0.95 - nearly all drifts should go through Slack first
+    slackNotify: 0.45,      // PHASE 2: Lowered from 0.60 to 0.45 - more drifts reach Slack notification
+    digestOnly: 0.35,       // PHASE 2: Lowered from 0.45 to 0.35
+    ignore: 0.25,           // PHASE 2: Lowered from 0.35 to 0.25
   },
-  
+
   slack_cluster: {
-    autoApprove: 0.95,      // Very high bar - questions can be vague
-    slackNotify: 0.65,      // Higher bar for Slack
-    digestOnly: 0.50,       // Medium for digest
-    ignore: 0.40,           // Higher ignore threshold
+    autoApprove: 0.98,      // PHASE 2: Raised from 0.95 to 0.98 - questions can be vague, need human review
+    slackNotify: 0.45,      // PHASE 2: Lowered from 0.65 to 0.45 - more drifts reach Slack notification
+    digestOnly: 0.35,       // PHASE 2: Lowered from 0.50 to 0.35
+    ignore: 0.25,           // PHASE 2: Lowered from 0.40 to 0.25
   },
-  
+
   datadog_alert: {
-    autoApprove: 0.88,      // High bar - alerts can be noisy
-    slackNotify: 0.58,      // Medium for Slack
-    digestOnly: 0.43,       // Medium-low for digest
-    ignore: 0.33,           // Medium ignore threshold
+    autoApprove: 0.95,      // PHASE 2: Raised from 0.88 to 0.95 - alerts can be noisy, need human review
+    slackNotify: 0.45,      // PHASE 2: Lowered from 0.58 to 0.45 - more drifts reach Slack notification
+    digestOnly: 0.35,       // PHASE 2: Lowered from 0.43 to 0.35
+    ignore: 0.25,           // PHASE 2: Lowered from 0.33 to 0.25
   },
-  
+
   github_iac: {
-    autoApprove: 0.82,      // High bar - IaC changes are critical
-    slackNotify: 0.52,      // Medium for Slack
-    digestOnly: 0.38,       // Low-medium for digest
-    ignore: 0.28,           // Lower ignore threshold
+    autoApprove: 0.95,      // PHASE 2: Raised from 0.82 to 0.95 - IaC changes are critical, need human review
+    slackNotify: 0.45,      // PHASE 2: Lowered from 0.52 to 0.45 - more drifts reach Slack notification
+    digestOnly: 0.35,       // PHASE 2: Lowered from 0.38 to 0.35
+    ignore: 0.25,           // PHASE 2: Lowered from 0.28 to 0.25
   },
-  
+
   github_codeowners: {
-    autoApprove: 0.80,      // High confidence in CODEOWNERS
-    slackNotify: 0.50,      // Medium for Slack
-    digestOnly: 0.35,       // Low for digest
-    ignore: 0.25,           // Low ignore threshold
+    autoApprove: 0.95,      // PHASE 2: Raised from 0.80 to 0.95 - even CODEOWNERS should go through human review
+    slackNotify: 0.45,      // PHASE 2: Lowered from 0.50 to 0.45 - more drifts reach Slack notification
+    digestOnly: 0.35,       // PHASE 2: Kept at 0.35
+    ignore: 0.25,           // PHASE 2: Kept at 0.25
+  },
+
+  grafana_alert: {
+    autoApprove: 0.95,      // PHASE 2: Same as datadog_alert - alerts need human review
+    slackNotify: 0.45,      // PHASE 2: Same as datadog_alert - more drifts reach Slack notification
+    digestOnly: 0.35,       // PHASE 2: Same as datadog_alert
+    ignore: 0.25,           // PHASE 2: Same as datadog_alert
   },
 };
 
