@@ -130,8 +130,9 @@ model DriftCandidate {
   repo       String?
 
   // Drift classification
-  driftType    String?  @map("drift_type") // 'instruction', 'process', 'ownership', 'coverage', 'environment_tooling'
-  driftDomains String[] @map("drift_domains")
+  driftType       String?  @map("drift_type") // 'instruction', 'process', 'ownership', 'coverage', 'environment_tooling'
+  driftDomains    String[] @map("drift_domains")
+  hasCoverageGap  Boolean  @default(false) @map("has_coverage_gap") // Gap #2: Coverage as orthogonal dimension - can be true for ANY drift type
 
   // Phase 1 Day 1: Deterministic drift classification
   comparisonResult      Json?    @map("comparison_result")       // Complete comparison result from deterministic comparison
