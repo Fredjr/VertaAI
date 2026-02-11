@@ -80,10 +80,14 @@ const TRANSITION_HANDLERS: Partial<Record<DriftState, TransitionHandler>> = {
   [DriftState.PATCH_VALIDATED]: handlePatchValidated,
   [DriftState.OWNER_RESOLVED]: handleOwnerResolved,
   [DriftState.SLACK_SENT]: handleSlackSent,
+  [DriftState.AWAITING_HUMAN]: handleAwaitingHuman, // P1-1: Added missing handler
   [DriftState.APPROVED]: handleApproved,
+  [DriftState.REJECTED]: handleRejected, // P1-2: Added missing handler
+  [DriftState.SNOOZED]: handleSnoozed, // P1-3: Added missing handler
   [DriftState.EDIT_REQUESTED]: handleEditRequested,
   [DriftState.WRITEBACK_VALIDATED]: handleWritebackValidated,
   [DriftState.WRITTEN_BACK]: handleWrittenBack,
+  [DriftState.COMPLETED]: handleCompleted, // P1-4: Added missing handler
 };
 
 /**
@@ -1788,6 +1792,76 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
     comparisonResult = null;
   }
 
+  // ========================================================================
+  // P0-3: Early Threshold Routing - Check thresholds BEFORE patch planning
+  // This prevents wasting LLM calls on patches that will be ignored
+  // ========================================================================
+  const { resolveDriftPlan } = await import('../plans/resolver.js');
+  const { resolveThresholds } = await import('../plans/resolver.js');
+
+  // sourceType already declared at line 1669
+  const confidence = drift.confidence || 0.5;
+
+  // Resolve active plan
+  const planResolution = await resolveDriftPlan({
+    workspaceId: drift.workspaceId,
+    serviceId: drift.service || undefined,
+    repoFullName: drift.repo || undefined,
+    docClass: undefined, // Will be enhanced later
+  });
+
+  const activePlan = planResolution.plan;
+
+  // Resolve thresholds (plan → workspace → source defaults)
+  const thresholdResolution = await resolveThresholds({
+    workspaceId: drift.workspaceId,
+    planId: activePlan?.id || null,
+    sourceType,
+  });
+
+  const threshold = {
+    autoApprove: thresholdResolution.autoApprove,
+    slackNotify: thresholdResolution.slackNotify,
+    digestOnly: thresholdResolution.digestOnly,
+    ignore: thresholdResolution.ignore,
+  };
+
+  console.log(`[Transitions] P0-3 - Early threshold check: source=${sourceType}, confidence=${confidence.toFixed(2)}, ignoreThreshold=${threshold.ignore}`);
+
+  // Check if confidence is below ignore threshold
+  if (confidence < threshold.ignore) {
+    console.log(`[Transitions] P0-3 - Confidence ${confidence.toFixed(2)} below ignore threshold ${threshold.ignore}, skipping patch planning`);
+
+    // Store plan tracking and mark as completed without patch
+    await prisma.driftCandidate.update({
+      where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+      data: {
+        activePlanId: activePlan?.id || null,
+        activePlanVersion: activePlan?.version || null,
+        activePlanHash: activePlan?.versionHash || null,
+        sourceThreshold: threshold.slackNotify,
+        state: DriftState.COMPLETED,
+        stateUpdatedAt: new Date(),
+      },
+    });
+
+    return { state: DriftState.COMPLETED, enqueueNext: false };
+  }
+
+  // Store plan tracking for downstream use
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: {
+      activePlanId: activePlan?.id || null,
+      activePlanVersion: activePlan?.version || null,
+      activePlanHash: activePlan?.versionHash || null,
+      sourceThreshold: threshold.slackNotify,
+    },
+  });
+
+  console.log(`[Transitions] P0-3 - Threshold check passed, proceeding with patch planning`);
+  console.log(`[Transitions] Gap #6 - Plan resolved: planId=${activePlan?.id || 'none'}, thresholdSource=${thresholdResolution.source}`);
+
   // Point 4: Get target section patterns for this doc system and drift type
   const { getSectionPatterns } = await import('../../config/docTargeting.js');
   const docSystem = finding.docSystem || 'confluence';
@@ -2906,6 +2980,104 @@ async function handleOwnerResolved(drift: any): Promise<TransitionResult> {
  */
 async function handleSlackSent(drift: any): Promise<TransitionResult> {
   return { state: DriftState.AWAITING_HUMAN, enqueueNext: false };
+}
+
+/**
+ * P1-1: AWAITING_HUMAN Handler
+ * This is a terminal state until human responds from Slack
+ * The state machine will not auto-advance from here
+ */
+async function handleAwaitingHuman(drift: any): Promise<TransitionResult> {
+  console.log(`[Transitions] P1-1 - Drift ${drift.id} awaiting human action from Slack`);
+
+  // This is a terminal state - do not enqueue next transition
+  // Human actions (approve/reject/snooze) will trigger state changes via Slack webhook
+  return { state: DriftState.AWAITING_HUMAN, enqueueNext: false };
+}
+
+/**
+ * P1-2: REJECTED Handler
+ * Clean up and mark drift as completed when human rejects
+ */
+async function handleRejected(drift: any): Promise<TransitionResult> {
+  console.log(`[Transitions] P1-2 - Drift ${drift.id} rejected by human, marking as completed`);
+
+  // Create audit event for rejection
+  await prisma.auditEvent.create({
+    data: {
+      workspaceId: drift.workspaceId,
+      entityType: 'drift',
+      entityId: drift.id,
+      eventType: 'rejected',
+      payload: {
+        state: DriftState.REJECTED,
+        reason: 'Human rejected drift from Slack',
+      },
+      actorType: 'human',
+      actorId: drift.rejectedBy || 'unknown',
+    },
+  });
+
+  // Mark drift as completed
+  await prisma.driftCandidate.update({
+    where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
+    data: {
+      state: DriftState.COMPLETED,
+      stateUpdatedAt: new Date(),
+    },
+  });
+
+  return { state: DriftState.COMPLETED, enqueueNext: false };
+}
+
+/**
+ * P1-3: SNOOZED Handler
+ * Re-queue drift after snooze period expires
+ */
+async function handleSnoozed(drift: any): Promise<TransitionResult> {
+  const snoozeUntil = drift.snoozeUntil ? new Date(drift.snoozeUntil) : new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+  console.log(`[Transitions] P1-3 - Drift ${drift.id} snoozed until ${snoozeUntil.toISOString()}`);
+
+  // Check if snooze period has expired
+  if (new Date() < snoozeUntil) {
+    console.log(`[Transitions] P1-3 - Still snoozed, waiting until ${snoozeUntil.toISOString()}`);
+    return { state: DriftState.SNOOZED, enqueueNext: false };
+  }
+
+  // Snooze period expired - re-send notification
+  console.log(`[Transitions] P1-3 - Snooze period expired, re-sending notification`);
+
+  // Create audit event for snooze expiry
+  await prisma.auditEvent.create({
+    data: {
+      workspaceId: drift.workspaceId,
+      entityType: 'drift',
+      entityId: drift.id,
+      eventType: 'snooze_expired',
+      payload: {
+        snoozeUntil: snoozeUntil.toISOString(),
+        state: DriftState.SNOOZED,
+      },
+      actorType: 'system',
+      actorId: 'drift-agent',
+    },
+  });
+
+  // Transition back to OWNER_RESOLVED to re-send notification
+  return { state: DriftState.OWNER_RESOLVED, enqueueNext: true };
+}
+
+/**
+ * P1-4: COMPLETED Handler
+ * Final cleanup step for completed drifts
+ */
+async function handleCompleted(drift: any): Promise<TransitionResult> {
+  console.log(`[Transitions] P1-4 - Drift ${drift.id} completed, performing final cleanup`);
+
+  // This is a terminal state - no further processing needed
+  // The drift has reached its final state
+  return { state: DriftState.COMPLETED, enqueueNext: false };
 }
 
 /**
