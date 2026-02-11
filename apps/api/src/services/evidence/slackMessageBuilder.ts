@@ -24,13 +24,22 @@ export function buildSlackMessageFromEvidence(
 ): SlackMessageBlocks {
   const blocks: any[] = [];
 
-  // 1. Header with impact band
+  // 1. Header with impact band and drift type (Gap #2)
   const impactEmoji = getImpactEmoji(bundle.assessment.impactBand);
+  const driftType = bundle.driftType || 'instruction';
+  const driftTypeEmoji = getDriftTypeEmoji(driftType);
+
+  // Gap #2: Show drift type AND coverage gap if present
+  let headerText = `${impactEmoji} ${driftTypeEmoji} ${capitalizeFirst(driftType)} Drift: ${bundle.assessment.impactBand.toUpperCase()} Impact`;
+  if (bundle.hasCoverageGap) {
+    headerText += ` + 📊 Coverage Gap`;
+  }
+
   blocks.push({
     type: 'header',
     text: {
       type: 'plain_text',
-      text: `${impactEmoji} Drift Detected: ${bundle.assessment.impactBand.toUpperCase()} Impact`,
+      text: headerText,
       emoji: true,
     },
   });
@@ -280,6 +289,27 @@ function formatSourceType(sourceType: string): string {
     github_swagger: 'GitHub Swagger/OpenAPI',
   };
   return typeMap[sourceType] || sourceType;
+}
+
+/**
+ * Get emoji for drift type (Gap #2)
+ */
+function getDriftTypeEmoji(driftType: string): string {
+  const emojiMap: Record<string, string> = {
+    instruction: '📋',
+    process: '🔄',
+    ownership: '👥',
+    coverage: '📊',
+    environment: '🔧',
+  };
+  return emojiMap[driftType] || '📝';
+}
+
+/**
+ * Capitalize first letter (Gap #2)
+ */
+function capitalizeFirst(str: string): string {
+  return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
 

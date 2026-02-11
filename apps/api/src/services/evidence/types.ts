@@ -146,23 +146,27 @@ export interface EvidenceBundle {
   workspaceId: string;
   driftCandidateId: string;
   createdAt: string;
-  
+
   // Source evidence
   sourceEvidence: SourceEvidence;
-  
+
   // Target evidence
   targetEvidence: TargetEvidence;
-  
+
   // Impact assessment
   assessment: Assessment;
-  
+
+  // Drift classification (Gap #2)
+  driftType?: string; // 'instruction', 'process', 'ownership', 'environment'
+  hasCoverageGap?: boolean; // Gap #2: Coverage as orthogonal dimension
+
   // Fingerprints for suppression
   fingerprints: {
     strict: string;
     medium: string;
     broad: string;
   };
-  
+
   // Metadata
   version: string;
   schemaVersion: string;

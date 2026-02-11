@@ -1082,6 +1082,7 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
         data: {
           driftType,
           confidence: comparisonResult.confidence,
+          hasCoverageGap: comparisonResult.hasCoverageGap || false, // Gap #2: Coverage as orthogonal dimension
           classificationMethod,
           comparisonResult: comparisonResult as any,
         },
@@ -1119,6 +1120,7 @@ async function handleEvidenceExtracted(drift: any): Promise<TransitionResult> {
         data: {
           driftType,
           confidence: comparisonResult.confidence,
+          hasCoverageGap: comparisonResult.hasCoverageGap || false, // Gap #2: Coverage as orthogonal dimension
           classificationMethod,
           comparisonResult: comparisonResult as any,
         },
@@ -1733,6 +1735,7 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
         data: {
           driftType: comparisonResult.driftType,
           confidence: comparisonResult.confidence,
+          hasCoverageGap: comparisonResult.hasCoverageGap || false, // Gap #2: Coverage as orthogonal dimension
           // Store comparison results for downstream use
           comparisonResult: comparisonResult as any,
           classificationMethod: 'deterministic',

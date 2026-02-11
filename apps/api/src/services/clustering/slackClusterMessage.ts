@@ -21,6 +21,7 @@ export interface DriftSummary {
   sourceRef: string; // PR number, incident ID, etc.
   docTitle: string;
   patchId: string;
+  hasCoverageGap?: boolean; // Gap #2: Coverage as orthogonal dimension
 }
 
 /**
@@ -36,11 +37,18 @@ export function buildClusterSlackMessage(
 
   // 1. Header with cluster info
   const driftTypeEmoji = getDriftTypeEmoji(cluster.driftType);
+
+  // Gap #2: Check if any drifts in cluster have coverage gap
+  const hasCoverageGap = drifts.some(d => d.hasCoverageGap === true);
+  const headerText = hasCoverageGap
+    ? `${driftTypeEmoji} ${cluster.driftCount} Similar Drifts Detected + 📊 Coverage Gap`
+    : `${driftTypeEmoji} ${cluster.driftCount} Similar Drifts Detected`;
+
   blocks.push({
     type: 'header',
     text: {
       type: 'plain_text',
-      text: `${driftTypeEmoji} ${cluster.driftCount} Similar Drifts Detected`,
+      text: headerText,
       emoji: true,
     },
   });
@@ -188,6 +196,11 @@ function buildDriftSummaryText(drift: DriftSummary, index: number): string {
   let text = `*${index}.* ${sourceIcon} *${drift.sourceRef}*\n`;
   text += `   📄 ${drift.docTitle}\n`;
   text += `   📊 Confidence: ${confidencePercent}%`;
+
+  // Gap #2: Show coverage gap indicator
+  if (drift.hasCoverageGap) {
+    text += ` + 📊 Coverage Gap`;
+  }
 
   return text;
 }
