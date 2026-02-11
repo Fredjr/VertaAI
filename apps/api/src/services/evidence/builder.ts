@@ -84,6 +84,9 @@ export async function buildEvidenceBundle(args: BuildEvidenceBundleArgs): Promis
       sourceEvidence,
       targetEvidence,
       assessment,
+      // Gap #2: Include drift classification fields for Slack messages
+      driftType: driftCandidate.driftType || 'instruction',
+      hasCoverageGap: driftCandidate.hasCoverageGap || false,
       fingerprints,
       version: '1.0.0',
       schemaVersion: '1.0.0'
