@@ -63,6 +63,11 @@ export async function createDriftPlan(args: CreatePlanArgs): Promise<DriftPlan> 
       sectionTargets: config.sectionTargets as any,
       impactRules: config.impactRules as any,
       writeback: config.writeback as any,
+      // Gap #6: Control-Plane Fields
+      budgets: config.budgets as any,
+      docTargeting: config.docTargeting as any,
+      noiseControls: config.noiseControls as any,
+      sourceCursors: config.sourceCursors as any,
       version: 1,
       versionHash,
       templateId,
@@ -149,6 +154,11 @@ export async function updateDriftPlan(args: {
         sectionTargets: { ...currentPlan.sectionTargets, ...config.sectionTargets },
         impactRules: { ...currentPlan.impactRules, ...config.impactRules },
         writeback: { ...currentPlan.writeback, ...config.writeback },
+        // Gap #6: Control-Plane Fields
+        budgets: { ...currentPlan.budgets, ...config.budgets },
+        docTargeting: { ...currentPlan.docTargeting, ...config.docTargeting },
+        noiseControls: { ...currentPlan.noiseControls, ...config.noiseControls },
+        sourceCursors: { ...currentPlan.sourceCursors, ...config.sourceCursors },
       }
     : {
         inputSources: currentPlan.inputSources,
@@ -159,6 +169,11 @@ export async function updateDriftPlan(args: {
         sectionTargets: currentPlan.sectionTargets,
         impactRules: currentPlan.impactRules,
         writeback: currentPlan.writeback,
+        // Gap #6: Control-Plane Fields
+        budgets: currentPlan.budgets,
+        docTargeting: currentPlan.docTargeting,
+        noiseControls: currentPlan.noiseControls,
+        sourceCursors: currentPlan.sourceCursors,
       };
 
   // Generate new hash
@@ -197,6 +212,11 @@ export async function updateDriftPlan(args: {
         sectionTargets: newConfig.sectionTargets as any,
         impactRules: newConfig.impactRules as any,
         writeback: newConfig.writeback as any,
+        // Gap #6: Control-Plane Fields
+        budgets: newConfig.budgets as any,
+        docTargeting: newConfig.docTargeting as any,
+        noiseControls: newConfig.noiseControls as any,
+        sourceCursors: newConfig.sourceCursors as any,
       }),
       version: newVersion,
       versionHash: newHash,

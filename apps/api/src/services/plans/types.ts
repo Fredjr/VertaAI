@@ -4,27 +4,31 @@
 export interface DriftPlanConfig {
   // Input sources allowed for this plan
   inputSources: string[]; // ['github_pr', 'pagerduty_incident', 'slack_cluster', ...]
-  
+
   // Drift types allowed for this plan
   driftTypes: string[]; // ['instruction', 'process', 'ownership', 'coverage', 'environment_tooling']
-  
+
   // Allowed output targets
   allowedOutputs: string[]; // ['confluence', 'notion', 'github_readme', ...]
-  
+
   // Thresholds for drift detection
   thresholds: {
     minConfidence?: number; // Minimum confidence score (0-1)
     minImpactScore?: number; // Minimum impact score (0-1)
     minDriftScore?: number; // Minimum drift score (0-1)
+    autoApprove?: number; // Auto-approve threshold (0-1)
+    slackNotify?: number; // Slack notification threshold (0-1)
+    digestOnly?: number; // Digest-only threshold (0-1)
+    ignore?: number; // Ignore threshold (0-1)
   };
-  
+
   // Eligibility rules
   eligibility: {
     requiresIncident?: boolean; // Requires PagerDuty incident
     minSeverity?: string; // Minimum severity level ('sev1', 'sev2', 'sev3', 'sev4')
     requiresApproval?: boolean; // Requires human approval before writeback
   };
-  
+
   // Section targets for different drift types
   sectionTargets: {
     instruction?: string; // Target section for instruction drift
@@ -33,7 +37,7 @@ export interface DriftPlanConfig {
     coverage?: string; // Target section for coverage drift
     environment_tooling?: string; // Target section for environment/tooling drift
   };
-  
+
   // Custom impact rules
   impactRules: {
     baseImpact?: number; // Base impact score (0-1)
@@ -43,13 +47,42 @@ export interface DriftPlanConfig {
       condition: string; // Condition expression
     }>;
   };
-  
+
   // Writeback configuration
   writeback: {
     enabled: boolean;
     requiresApproval: boolean;
     autoMerge?: boolean;
     reviewers?: string[]; // List of required reviewers
+  };
+
+  // Gap #6: Control-Plane Fields
+  budgets?: {
+    enableClustering?: boolean; // Enable cluster-first triage
+    maxDriftsPerDay?: number; // Max drifts to process per day
+    maxDriftsPerWeek?: number; // Max drifts to process per week
+    maxSlackNotificationsPerHour?: number; // Max Slack notifications per hour
+  };
+
+  docTargeting?: {
+    strategy?: 'primary_first' | 'all_parallel'; // Doc targeting strategy
+    maxDocsPerDrift?: number; // Max docs to update per drift
+    priorityOrder?: string[]; // Priority order for doc systems
+  };
+
+  noiseControls?: {
+    ignorePatterns?: string[]; // Patterns to ignore (e.g., 'WIP:', 'draft:')
+    ignorePaths?: string[]; // Paths to ignore (e.g., 'test/**')
+    ignoreAuthors?: string[]; // Authors to ignore (e.g., 'bot')
+  };
+
+  sourceCursors?: {
+    [source: string]: {
+      lastProcessedAt?: string; // ISO timestamp
+      lastPrNumber?: number; // For GitHub PRs
+      lastIncidentId?: string; // For PagerDuty incidents
+      [key: string]: any; // Flexible for other sources
+    };
   };
 }
 
@@ -78,7 +111,13 @@ export interface DriftPlan {
   sectionTargets: any;
   impactRules: any;
   writeback: any;
-  
+
+  // Gap #6: Control-Plane Fields
+  budgets: any;
+  docTargeting: any;
+  noiseControls: any;
+  sourceCursors: any;
+
   // Versioning
   version: number;
   versionHash: string;

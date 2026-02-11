@@ -6,16 +6,16 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-async function checkPR16() {
-  console.log('\n=== Checking PR #16 Drift Detection Results ===\n');
+async function checkPR17() {
+  console.log('\n=== Checking PR #17 Drift Detection Results ===\n');
 
-  // Find signal events for PR #16
+  // Find signal events for PR #17
   const signals = await prisma.signalEvent.findMany({
     where: {
       sourceType: 'github_pr',
       extracted: {
         path: ['prNumber'],
-        equals: 16
+        equals: 17
       }
     },
     include: {
@@ -29,14 +29,14 @@ async function checkPR16() {
   const drifts = signals.flatMap(s => s.driftCandidates);
 
   if (drifts.length === 0) {
-    console.log('❌ No drift candidates found for PR #16');
+    console.log('❌ No drift candidates found for PR #17');
     console.log('\nLet me check recent drifts instead...\n');
-    
+
     const recentDrifts = await prisma.driftCandidate.findMany({
       orderBy: { createdAt: 'desc' },
       take: 3,
     });
-    
+
     console.log(`Found ${recentDrifts.length} recent drifts:`);
     for (const drift of recentDrifts) {
       console.log(`\n- Drift ID: ${drift.id}`);
@@ -49,7 +49,7 @@ async function checkPR16() {
       console.log(`  Confidence: ${drift.confidence || 'N/A'}`);
     }
   } else {
-    console.log(`✅ Found ${drifts.length} drift candidate(s) for PR #16:\n`);
+    console.log(`✅ Found ${drifts.length} drift candidate(s) for PR #17:\n`);
     
     for (const drift of drifts) {
       console.log(`\n=== Drift ID: ${drift.id} ===`);
@@ -109,5 +109,5 @@ async function checkPR16() {
   await prisma.$disconnect();
 }
 
-checkPR16().catch(console.error);
+checkPR17().catch(console.error);
 
