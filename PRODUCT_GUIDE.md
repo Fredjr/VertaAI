@@ -79,27 +79,34 @@ Code Changes → Docs Become Stale → Engineers Waste Time → Incidents Happen
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  2. ANALYZE & CLASSIFY (Deterministic Comparison)                │
+│  2. ANALYZE & CLASSIFY (Deterministic Comparison + Typed Deltas) │
 │  ├─ Extract artifacts from source (commands, URLs, steps)        │
 │  ├─ Extract artifacts from docs (current state)                  │
-│  ├─ Compare artifacts to detect drift type                       │
+│  ├─ Bounded context expansion: fetch up to 3 key changed files   │
+│  ├─ Compare artifacts with typed deltas (key:value, not just     │
+│  │   key presence; tool replacement; version mismatch)           │
 │  ├─ Detect coverage gaps (orthogonal dimension)                  │
 │  └─ Confidence score (0-100%) based on artifact overlap          │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  3. EARLY THRESHOLD ROUTING (Filter Low-Confidence)              │
+│  3. THRESHOLD ROUTING + MATERIALITY GATE                         │
 │  ├─ Check confidence against ignore threshold                    │
 │  ├─ If below threshold → Skip patch generation (save LLM calls)  │
-│  └─ If above threshold → Continue to patch generation            │
+│  ├─ Materiality gate: skip low-value patches deterministically   │
+│  │   (e.g., single low-confidence delta, missing managed region) │
+│  ├─ Check temporal drift accumulation (bundle small drifts)      │
+│  └─ If above threshold + material → Continue to patch generation │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  4. GENERATE PATCH (NOT FULL REWRITE)                            │
-│  ├─ Fetch current doc content                                    │
-│  ├─ Compare with evidence from signal                            │
+│  4. GENERATE PATCH (Evidence-Grounded, NOT Full Rewrite)         │
+│  ├─ LLM receives typed deltas from EvidenceBundle (not raw diff) │
+│  ├─ Structured evidence contract: deltas, impact band, drift     │
+│  │   type, consequence text, fired rules                         │
+│  ├─ Truncation priority: critical/high deltas included first     │
 │  ├─ Generate unified diff (like a PR)                            │
 │  └─ Add summary and sources                                      │
 └─────────────────────────────────────────────────────────────────┘
@@ -137,16 +144,19 @@ Code Changes → Docs Become Stale → Engineers Waste Time → Incidents Happen
 
 ### Key Differentiators
 
-1. **Deterministic detection**: 100% reproducible artifact comparison (no LLM randomness)
-2. **Cluster-first triage**: Groups similar drifts for bulk actions (80-90% notification reduction)
-3. **Orthogonal coverage**: Detects both incorrect AND missing documentation
-4. **Early threshold routing**: Filters low-confidence drifts before patch generation (30-40% LLM call reduction)
-5. **Diff-based, not rewrites**: We propose surgical changes, not full document regeneration
-6. **Evidence-driven**: Every change is backed by a real signal (PR, incident, etc.)
-7. **Human-in-the-loop**: No autonomous publishing - you always approve
-8. **Multi-source correlation**: Combines GitHub + PagerDuty + Slack signals
-9. **Ownership-aware**: Routes to the right person based on CODEOWNERS, mappings, on-call
-10. **Complete audit trail**: Full observability with PlanRun tracking and EvidenceBundle pattern
+1. **Deterministic detection with typed deltas**: 100% reproducible artifact comparison producing machine-readable typed deltas (no LLM randomness)
+2. **Evidence-grounded patching**: LLM agents receive structured typed deltas from the EvidenceBundle — not raw diffs — ensuring every patch element traces to deterministic evidence
+3. **Materiality gate**: Deterministic pre-patch filter prevents low-value patches (tag-only changes, low-confidence single deltas) from reaching the LLM
+4. **Bounded context expansion**: Fetches up to 3 key changed files (config, Dockerfile, API specs) to distinguish critical changes from trivial edits
+5. **Temporal drift accumulation**: Tracks cumulative drift per document over time, bundling multiple small drifts into comprehensive updates
+6. **Cluster-first triage**: Groups similar drifts for bulk actions (80-90% notification reduction)
+7. **Orthogonal coverage**: Detects both incorrect AND missing documentation
+8. **Early threshold routing**: Filters low-confidence drifts before patch generation (30-40% LLM call reduction)
+9. **Diff-based, not rewrites**: We propose surgical changes, not full document regeneration
+10. **Human-in-the-loop**: No autonomous publishing — you always approve
+11. **Multi-source correlation**: Combines GitHub + PagerDuty + Slack signals
+12. **Ownership-aware**: Routes to the right person based on CODEOWNERS, mappings, on-call
+13. **Complete audit trail**: Full observability with PlanRun tracking, EvidenceBundle pattern, and materiality skip reasons
 
 ---
 
@@ -366,21 +376,23 @@ INGESTED
   ↓
 ELIGIBILITY_CHECKED ────→ (filtered out if noise)
   ↓
-SIGNALS_CORRELATED ─────→ (join multiple signals for same drift)
+SIGNALS_CORRELATED ─────→ (join signals + check temporal drift accumulation)
   ↓
 DOCS_RESOLVED ──────────→ (deterministic doc targeting, no LLM)
   ↓
-DOCS_FETCHED ───────────→ (fetch current doc content)
+DOCS_FETCHED ───────────→ (fetch doc content + bounded context expansion: up to 3 key files)
   ↓
 DOC_CONTEXT_EXTRACTED ──→ (extract relevant sections)
   ↓
-EVIDENCE_EXTRACTED ─────→ (deterministic comparison: drift type + coverage gap)
+EVIDENCE_EXTRACTED ─────→ (deterministic comparison with typed deltas: key:value, tool
+                           replacement, version mismatch, coverage gap)
   ↓
-BASELINE_CHECKED ───────→ (early threshold routing: filter low-confidence)
+BASELINE_CHECKED ───────→ (build EvidenceBundle + early threshold routing + materiality gate)
+  ↓                        ├─ Below threshold → COMPLETED
+  ↓                        └─ Not material → COMPLETED (skip reason persisted for temporal tracking)
+PATCH_PLANNED ──────────→ (LLM receives typed deltas from EvidenceBundle, not raw diff)
   ↓
-PATCH_PLANNED ──────────→ (LLM: which sections to change?)
-  ↓
-PATCH_GENERATED ────────→ (LLM: generate unified diff)
+PATCH_GENERATED ────────→ (LLM: generate unified diff, evidence-grounded)
   ↓
 PATCH_VALIDATED ────────→ (code validation: secrets, size, scope)
   ↓
@@ -402,13 +414,13 @@ AWAITING_HUMAN ─────────→ (wait for button click)
 |-------|--------------|-----------------|
 | **INGESTED** | Signal received from webhook | Always → ELIGIBILITY_CHECKED |
 | **ELIGIBILITY_CHECKED** | Apply noise filters (file paths, labels, size) | Pass → SIGNALS_CORRELATED<br>Fail → COMPLETED |
-| **SIGNALS_CORRELATED** | Join multiple signals for same drift (dedup) | Always → DOCS_RESOLVED |
+| **SIGNALS_CORRELATED** | Join multiple signals for same drift (dedup). Check temporal drift accumulation: has this doc accumulated N small drifts that should be bundled into a comprehensive update? | Always → DOCS_RESOLVED |
 | **DOCS_RESOLVED** | Deterministic doc targeting (no LLM) | Found → DOCS_FETCHED<br>Not found → FAILED_NEEDS_MAPPING |
-| **DOCS_FETCHED** | Fetch current doc content via adapter | Success → DOC_CONTEXT_EXTRACTED<br>Error → FAILED |
+| **DOCS_FETCHED** | Fetch current doc content via adapter. **Bounded context expansion**: also fetch up to 3 key changed files (`*.yaml`, `*.conf`, `Dockerfile`, `*.tf`, `openapi.*`, `CODEOWNERS`) with a 30K char budget for richer artifact extraction | Success → DOC_CONTEXT_EXTRACTED<br>Error → FAILED |
 | **DOC_CONTEXT_EXTRACTED** | Extract relevant sections (deployment, rollback, etc.) | Always → EVIDENCE_EXTRACTED |
-| **EVIDENCE_EXTRACTED** | Deterministic comparison: extract artifacts, detect drift type + coverage gap | Always → BASELINE_CHECKED |
-| **BASELINE_CHECKED** | Early threshold routing: filter low-confidence drifts | Above threshold → PATCH_PLANNED<br>Below threshold → COMPLETED |
-| **PATCH_PLANNED** | LLM decides which sections to modify | Success → PATCH_GENERATED<br>Uncertain → COMPLETED |
+| **EVIDENCE_EXTRACTED** | Deterministic comparison with **typed deltas**: extract artifacts from source + doc (with file context when available), compare using key:value matching, tool replacement detection, version mismatch detection. Output: `TypedDelta[]` with `{artifactType, action, sourceValue, docValue, confidence}` | Always → BASELINE_CHECKED |
+| **BASELINE_CHECKED** | Build EvidenceBundle with typed deltas. Early threshold routing filters low-confidence drifts. **Materiality gate**: deterministic rules skip low-value patches (e.g., `impactBand=low` + single delta, managed region missing + non-additive change). Skip reasons persisted for temporal tracking | Above threshold + material → PATCH_PLANNED<br>Below threshold → COMPLETED<br>Not material → COMPLETED (skip reason stored) |
+| **PATCH_PLANNED** | LLM receives structured typed deltas from EvidenceBundle (not raw diff). Evidence contract includes: deltas, impact band, drift type, consequence text, fired rules. Truncation priority: critical/high deltas first | Success → PATCH_GENERATED<br>Uncertain → COMPLETED |
 | **PATCH_GENERATED** | LLM generates unified diff | Success → PATCH_VALIDATED<br>Error → FAILED |
 | **PATCH_VALIDATED** | Validate diff (no secrets, size < 120 lines, applies cleanly) | Valid → OWNER_RESOLVED<br>Invalid → FAILED |
 | **OWNER_RESOLVED** | Determine owner + clustering (if enabled, group similar drifts) | Always → SLACK_SENT |
@@ -913,28 +925,32 @@ Coverage gaps are detected **independently** and can apply to ANY drift type:
 - **Detection**: `driftType = "instruction"` + `hasCoverageGap = true`
 - **Slack**: "📋 Instruction Drift + 📊 Coverage Gap Detected"
 
-### 2. Evidence-Based Detection (EvidenceBundle Pattern)
+### 2. Evidence-Based Detection (EvidenceBundle Pattern + Typed Deltas)
 
-**Purpose:** Deterministic, reproducible drift detection without LLM randomness
+**Purpose:** Deterministic, reproducible drift detection without LLM randomness. Produces machine-readable typed deltas that flow directly to LLM agents.
 
 **How it works:**
-1. **Extract artifacts from source signal**:
+1. **Extract artifacts from source signal** (with bounded context expansion):
    - Commands: `kubectl apply`, `helm install`, `docker run`
    - URLs: API endpoints, service URLs, documentation links
-   - Config values: Environment variables, settings, parameters
+   - Config values: Environment variables, settings, parameters (key:value pairs)
    - Process steps: Deployment steps, runbook procedures, workflows
    - Ownership: Teams, channels, on-call rotations, CODEOWNERS
    - Environment: Tools, platforms, versions, dependencies
+   - When available, full file content (up to 3 key files, 30K chars) enriches artifact extraction beyond diff-only context
 
 2. **Extract artifacts from documentation**:
    - Parse current doc content for same artifact types
    - Build structured representation of doc state
 
-3. **Deterministic comparison**:
-   - Compare source artifacts vs doc artifacts
-   - Detect conflicts (source says X, doc says Y)
+3. **Deterministic comparison with typed deltas**:
+   - Compare source artifacts vs doc artifacts using typed delta comparison
+   - **Key:value comparison** for config keys (detects value changes, not just presence)
+   - **Tool replacement detection**: A removed + B added in same artifact category
+   - **Version mismatch detection**: Pinned version changes (e.g., `node:18` → `node:20`)
    - Detect coverage gaps (source has X, doc doesn't mention it)
-   - Calculate confidence score (0.0 to 1.0) based on overlap
+   - Each difference produces a `TypedDelta`: `{artifactType, action, sourceValue, docValue, section, confidence}`
+   - Calculate overall confidence score (0.0 to 1.0) based on artifact overlap
 
 4. **Classification**:
    - If confidence ≥ 0.6 → Use comparison result (deterministic)
@@ -947,7 +963,7 @@ Coverage gaps are detected **independently** and can apply to ANY drift type:
   workspaceId: string;
   id: string;
   driftId: string;
-  sourceArtifacts: Json; // Extracted from signal
+  sourceArtifacts: Json; // Extracted from signal (+ file context when available)
   docArtifacts: Json;    // Extracted from documentation
   comparisonResult: {
     driftType: string;
@@ -955,6 +971,19 @@ Coverage gaps are detected **independently** and can apply to ANY drift type:
     confidence: number;
     conflicts: Array<{type, source, doc}>;
     gaps: Array<{type, content}>;
+    typedDeltas: Array<{        // Machine-readable deltas for LLM agents
+      artifactType: string;     // 'command' | 'configKey' | 'endpoint' | 'tool' | 'version' | ...
+      action: string;           // 'added' | 'removed' | 'changed' | 'missing_in_doc'
+      sourceValue: string;
+      docValue?: string;
+      section?: string;
+      confidence: number;
+    }>;
+  };
+  assessment: {
+    impactBand: string;         // 'critical' | 'high' | 'medium' | 'low'
+    consequenceText: string;    // Deterministic impact narrative
+    firedRules: string[];       // Which comparison rules matched
   };
   createdAt: DateTime;
 }
@@ -963,9 +992,10 @@ Coverage gaps are detected **independently** and can apply to ANY drift type:
 **Why this matters:**
 - **100% Reproducible**: Same input always produces same output
 - **Fast**: No LLM calls needed for classification (~10x faster)
-- **Transparent**: Clear explanation of what changed and why
-- **Accurate**: Detects 5 types of drift across 7 source types
-- **Auditable**: Full evidence trail for compliance
+- **Transparent**: Typed deltas explain exactly what changed, how, and where
+- **Evidence-grounded**: LLM agents receive structured deltas, not raw text — preventing hallucination
+- **Accurate**: Detects 5 types of drift across 7 source types with key:value depth
+- **Auditable**: Full evidence trail with per-delta provenance for compliance
 
 ### 3. Patch Generation (Unified Diff)
 
@@ -1118,16 +1148,24 @@ All significant actions are logged as audit events:
 - ✅ **Analytics**: Understand system behavior and user patterns
 - ✅ **Accountability**: Know who did what and when
 
-### 8. Early Threshold Routing
+### 8. Early Threshold Routing + Materiality Gate
 
-**Purpose:** Filter low-confidence drifts BEFORE patch generation to save LLM calls
+**Purpose:** Two-layer pre-patch filter at BASELINE_CHECKED that prevents both low-confidence AND low-value drifts from reaching the LLM.
 
-**How it works:**
+**Layer 1 — Confidence Threshold Routing:**
 1. At BASELINE_CHECKED state (before PATCH_PLANNED)
 2. Resolve active DriftPlan and thresholds
 3. Check drift confidence against ignore threshold
 4. If confidence < ignore threshold → Skip to COMPLETED
-5. If confidence ≥ ignore threshold → Continue to PATCH_PLANNED
+
+**Layer 2 — Materiality Gate (runs after threshold check passes):**
+1. Examine typed deltas from the EvidenceBundle
+2. Apply deterministic materiality rules:
+   - **Skip** if `impactBand = low` AND only 1 typed delta AND `delta.confidence < 0.5`
+   - **Skip** if managed region missing in target doc AND change is non-additive (removal/change, not addition)
+   - **Skip** if all deltas are tag-only changes with no semantic content change
+3. If not material → Skip to COMPLETED with `materialitySkipReason` persisted
+4. Skip reasons feed into temporal drift accumulation (Phase 5)
 
 **Implementation:**
 ```typescript
@@ -1135,21 +1173,29 @@ All significant actions are logged as audit events:
 const confidence = drift.confidence || 0.5;
 const threshold = resolveThresholds({...});
 
+// Layer 1: Confidence threshold
 if (confidence < threshold.ignore) {
-  // Skip patch planning, mark as COMPLETED
+  return { state: DriftState.COMPLETED, enqueueNext: false };
+}
+
+// Layer 2: Materiality gate
+const materialityResult = evaluateMateriality(evidenceBundle.typedDeltas, evidenceBundle.assessment);
+if (!materialityResult.isMaterial) {
+  await persistMaterialitySkip(drift.id, materialityResult.skipReason);
+  await recordTemporalDriftEvent(drift.docId, materialityResult); // Feed to Phase 5
   return { state: DriftState.COMPLETED, enqueueNext: false };
 }
 ```
 
 **Benefits:**
-- ✅ **Cost Savings**: 30-40% reduction in unnecessary LLM calls
-- ✅ **Faster Processing**: Low-confidence drifts complete immediately
-- ✅ **Resource Efficiency**: Don't waste compute on drifts that will be ignored
+- ✅ **Cost Savings**: 30-40% reduction from threshold routing + additional ~30% from materiality gate
+- ✅ **Noise Elimination**: Low-value patches (tag-only, single low-confidence delta) never reach LLM
+- ✅ **Faster Processing**: Non-material drifts complete immediately
+- ✅ **Temporal Tracking**: Skip reasons feed into drift accumulation for future bundled updates
 
 **Example:**
-- Drift confidence: 0.15
-- Ignore threshold: 0.20
-- Result: Skip patch generation, mark as COMPLETED (saves 2-3 LLM calls)
+- Drift confidence: 0.15, Ignore threshold: 0.20 → **Skipped by threshold** (saves 2-3 LLM calls)
+- Drift confidence: 0.65, but single delta with `impactBand=low` and `confidence=0.4` → **Skipped by materiality gate** (skip reason persisted for temporal bundling)
 
 ### 9. Cluster-First Drift Triage
 
@@ -1194,6 +1240,113 @@ Drifts:
 
 **Status:** ✅ Fully implemented and verified functional (P0-2 audit)
 
+### 10. Typed Deltas & Evidence-Grounded Patching
+
+**Purpose:** Replace raw diff text with structured, machine-readable typed deltas that flow from deterministic comparison all the way to LLM agents.
+
+**What are Typed Deltas?**
+
+A `TypedDelta` is a machine-readable object that describes a single, atomic difference between a source signal and a target document:
+
+```typescript
+interface TypedDelta {
+  artifactType: 'command' | 'configKey' | 'endpoint' | 'tool' | 'step' | 'owner' | 'version' | 'dependency' | 'scenario';
+  action: 'added' | 'removed' | 'changed' | 'missing_in_doc';
+  sourceValue: string;       // What the source signal says
+  docValue?: string;         // What the doc currently says (if applicable)
+  section?: string;          // Which doc section is affected
+  confidence: number;        // Per-delta confidence (0.0-1.0)
+}
+```
+
+**How Typed Deltas flow to LLM agents:**
+
+Instead of passing raw `diffExcerpt` + `prTitle` + `prDescription` to the patch planner and generator, the system now passes a **structured evidence contract**:
+
+```typescript
+interface EvidenceContract {
+  typedDeltas: TypedDelta[];        // Machine-readable deltas
+  consequenceText: string;          // Deterministic impact narrative
+  impactBand: 'critical' | 'high' | 'medium' | 'low';
+  sourceType: string;               // github_pr, pagerduty_incident, etc.
+  driftType: string;                // instruction, process, ownership, etc.
+  firedRules: string[];             // Which comparison rules matched
+}
+```
+
+**Truncation priority order:** When the LLM token budget is tight, deltas are prioritized:
+1. `critical` and `high` impact deltas always included
+2. `medium` deltas included if budget allows
+3. `low` impact deltas dropped first
+
+**Comparison depth improvements:**
+- **Config keys**: Compared by key name AND value (detects `DB_HOST=localhost` → `DB_HOST=prod.db.com`)
+- **Tool replacement**: Detects when tool A is removed AND tool B is added (e.g., `kubectl` → `helm`)
+- **Version mismatch**: Detects pinned version changes (e.g., `node:18` → `node:20`)
+
+### 11. Bounded Context Expansion
+
+**Purpose:** Fetch full file content for key changed files to provide richer artifact extraction beyond diff-only context.
+
+**The problem:**
+Without context expansion, artifact extraction operates only on diff text — the lines that changed. This means a config key that appears in the diff but whose full context (surrounding keys, file structure) is in the unchanged portion of the file goes undetected.
+
+**How it works:**
+1. At DOCS_FETCHED state, after fetching the target doc
+2. Identify key changed files from the source signal (PR file list)
+3. Apply file selection heuristic (prioritize operational files):
+   - `*.yaml`, `*.yml`, `*.conf`, `*.toml`, `*.ini` (config files)
+   - `Dockerfile`, `docker-compose.yml` (container definitions)
+   - `*.tf`, `*.tfvars` (Terraform infrastructure)
+   - `*.proto`, `openapi.*`, `swagger.*` (API definitions)
+   - `CODEOWNERS` (ownership)
+4. Fetch up to **3 files**, max **10K chars per file** (30K total budget)
+5. Feed full file content into artifact extraction alongside diff text
+
+**Benefits:**
+- ✅ **Richer extraction**: Full file context reveals config keys, versions, and tools not visible in diff alone
+- ✅ **Bounded by design**: Hard limits on file count (3) and size (30K chars) prevent unbounded expansion
+- ✅ **Operational focus**: File selection heuristic targets the files most likely to contain operational truth
+
+### 12. Temporal Drift Accumulation
+
+**Purpose:** Track cumulative drift per document over time, bundling multiple small drifts into comprehensive updates.
+
+**The problem:**
+Without temporal tracking, each signal is processed independently. A document that accumulates 10 individually non-material drifts over a week (each skipped by the materiality gate) never gets updated — even though the cumulative effect is significant.
+
+**How it works:**
+1. Every time the materiality gate **skips** a drift, the skip reason is recorded in a `DriftHistory` record for that document
+2. At SIGNALS_CORRELATED, check the drift history for the target document:
+   - Count skipped drifts within the configured time window (default: 7 days)
+   - If count ≥ bundling threshold (default: 5 skips) → **Promote to bundled update**
+3. A bundled update aggregates all the skipped typed deltas into a single comprehensive patch
+4. The bundled update bypasses the materiality gate (it's already been determined to be material in aggregate)
+
+**DriftHistory Model:**
+```typescript
+{
+  id: string;
+  workspaceId: string;
+  docId: string;                // Which document this tracks
+  driftCandidateId: string;     // The drift that was skipped
+  skipReason: string;           // Why materiality gate skipped it
+  typedDeltas: TypedDelta[];    // What deltas were skipped
+  timeWindow: string;           // '7d', '14d', '30d'
+  createdAt: DateTime;
+}
+```
+
+**Configurable thresholds:**
+- `temporalWindow`: Time window for accumulation (default: 7 days)
+- `bundlingThreshold`: Number of skips before bundling (default: 5)
+- `maxBundleSize`: Maximum deltas in a single bundled update (default: 30)
+
+**Benefits:**
+- ✅ **No stale docs**: Documents can't silently accumulate drift indefinitely
+- ✅ **Comprehensive updates**: Bundled patches are more valuable than N individual small patches
+- ✅ **Configurable**: Teams control the window and threshold per workspace
+
 ---
 
 ## Example Workflows
@@ -1217,17 +1370,25 @@ Drifts:
 
 10:00:10 AM - State machine runs (Job 1)
   ├─ INGESTED → ELIGIBILITY_CHECKED (passes: touches deploy/)
-  ├─ ELIGIBILITY_CHECKED → SIGNALS_CORRELATED (no duplicates)
-  ├─ SIGNALS_CORRELATED → DRIFT_CLASSIFIED (LLM: "instruction drift")
-  ├─ DRIFT_CLASSIFIED → DOCS_RESOLVED (mapping: repo=acme/api → doc=164013)
-  └─ DOCS_RESOLVED → DOCS_FETCHED (fetches Confluence page 164013)
+  ├─ ELIGIBILITY_CHECKED → SIGNALS_CORRELATED (no duplicates, no temporal bundle pending)
+  ├─ SIGNALS_CORRELATED → DOCS_RESOLVED (mapping: repo=acme/api → doc=164013)
+  ├─ DOCS_RESOLVED → DOCS_FETCHED (fetches Confluence page 164013)
+  └─ Context expansion: fetches deploy/helm/values.yaml (full content, 2.1K chars)
 
 10:00:15 AM - State machine runs (Job 2)
   ├─ DOCS_FETCHED → DOC_CONTEXT_EXTRACTED (extracts "Deployment" section)
-  ├─ DOC_CONTEXT_EXTRACTED → EVIDENCE_EXTRACTED (finds "kubectl" → "helm" migration)
-  ├─ EVIDENCE_EXTRACTED → BASELINE_CHECKED (finds "kubectl apply" in doc)
-  ├─ BASELINE_CHECKED → PATCH_PLANNED (LLM: modify deployment section)
-  └─ PATCH_PLANNED → PATCH_GENERATED (LLM: generates diff)
+  ├─ DOC_CONTEXT_EXTRACTED → EVIDENCE_EXTRACTED
+  │   Typed deltas generated:
+  │     [1] {artifactType: "tool", action: "changed", sourceValue: "helm", docValue: "kubectl", confidence: 0.95}
+  │     [2] {artifactType: "command", action: "removed", sourceValue: "kubectl apply -f k8s/deployment.yaml", confidence: 0.92}
+  │     [3] {artifactType: "command", action: "added", sourceValue: "helm install api-service ./chart", confidence: 0.92}
+  ├─ EVIDENCE_EXTRACTED → BASELINE_CHECKED
+  │   EvidenceBundle built: impactBand=high, 3 typed deltas
+  │   Threshold routing: confidence 0.92 > ignore 0.20 → PASS
+  │   Materiality gate: impactBand=high, 3 deltas → MATERIAL (no skip)
+  ├─ BASELINE_CHECKED → PATCH_PLANNED
+  │   LLM receives typed deltas (not raw diff): tool replacement kubectl→helm + 2 command changes
+  └─ PATCH_PLANNED → PATCH_GENERATED (LLM: generates evidence-grounded diff)
 
 10:00:25 AM - State machine runs (Job 3)
   ├─ PATCH_GENERATED → PATCH_VALIDATED (passes: no secrets, 8 lines, applies cleanly)
@@ -1410,11 +1571,14 @@ A: Yes! Click "Edit" in Slack, modify the diff, then click "Approve" on the upda
 **Q: How does VertaAI prevent hallucinations?**
 
 A: Multiple layers:
-1. **Baseline checking** - Only propose changes if we find exact evidence in the signal
-2. **Diff-only output** - LLM can't rewrite entire docs, only generate diffs
-3. **Validation layer** - Code checks for secrets, size limits, scope violations
-4. **Human approval** - You always review before publishing
-5. **Evidence trail** - Every change links back to source signal (PR, incident, etc.)
+1. **Evidence-grounded patching** - LLM agents receive structured typed deltas from the EvidenceBundle, not raw text. Every element in the prompt is backed by deterministic evidence
+2. **Typed deltas as source of truth** - The LLM can only reference artifacts that appear in the typed deltas (commands, config keys, endpoints, tools, versions). It cannot invent new content
+3. **Materiality gate** - Deterministic pre-patch filter prevents low-value, ambiguous drifts from reaching the LLM at all
+4. **Baseline checking** - Only propose changes if we find exact evidence in the signal
+5. **Diff-only output** - LLM can't rewrite entire docs, only generate diffs
+6. **Validation layer** - Code checks for secrets, size limits, scope violations
+7. **Human approval** - You always review before publishing
+8. **Evidence trail** - Every change links back to source signal with full typed delta provenance
 
 **Q: What if the wrong doc is selected?**
 
@@ -1550,11 +1714,24 @@ A:
 
 ---
 
-**Last Updated:** February 11, 2026
-**Version:** 2.0
+**Last Updated:** February 12, 2026
+**Version:** 3.0
 **Maintained by:** VertaAI Team
 
-**Recent Updates (v2.0)**:
+**Recent Updates (v3.0 — Evidence-Grounded Patching System)**:
+- **Phase 1**: Typed deltas in ComparisonResult (key:value comparison, tool replacement detection, version mismatch detection)
+- **Phase 2**: Wired EvidenceBundle to LLM agents (structured evidence contract replaces raw diff, truncation priority order)
+- **Phase 3**: Materiality gate (deterministic pre-patch filter, skip reason tracking for temporal accumulation)
+- **Phase 4**: Bounded context expansion (fetch up to 3 key files, 30K char budget, richer artifact extraction)
+- **Phase 5**: Temporal drift accumulation (bundle small drifts over time, configurable windows and thresholds)
+- Added sections 10-12: Typed Deltas & Evidence-Grounded Patching, Bounded Context Expansion, Temporal Drift Accumulation
+- Updated Early Threshold Routing section with materiality gate (now section 8)
+- Updated EvidenceBundle pattern with typed deltas and assessment model
+- Updated state machine flow with materiality gate, typed deltas, bounded context expansion
+- Updated Example 1 timeline with typed delta generation and evidence-grounded patching
+- Updated FAQ anti-hallucination answer with evidence-grounding layers
+
+**Previous Updates (v2.0)**:
 - Added orthogonal coverage detection explanation
 - Updated state machine flow with early threshold routing and clustering
 - Added Evidence-Based Detection section (EvidenceBundle pattern)
