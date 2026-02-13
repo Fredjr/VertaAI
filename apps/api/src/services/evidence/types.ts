@@ -2,6 +2,8 @@
 // Implements deterministic evidence collection for VertaAI transformation
 // Based on COMPREHENSIVE_IMPLEMENTATION_PLAN.md Phase 1
 
+import type { TypedDelta } from '../baseline/types.js';
+
 /**
  * Source-specific evidence structures for different signal types
  */
@@ -136,6 +138,9 @@ export interface Assessment {
     systems: string[];
   };
   riskFactors?: string[];
+
+  /** Structured representation of drift deltas used for this assessment */
+  typedDeltas?: TypedDelta[];
 }
 
 /**

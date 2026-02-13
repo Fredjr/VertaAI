@@ -83,6 +83,45 @@ export interface BaselineArtifacts {
 }
 
 /**
+ * Structured representation of a single detected change between source and doc
+ */
+export interface TypedDelta {
+  /** High-level artifact category this delta refers to */
+  artifactType:
+    | 'command'
+    | 'configKey'
+    | 'endpoint'
+    | 'tool'
+    | 'step'
+    | 'decision'
+    | 'team'
+    | 'owner'
+    | 'path'
+    | 'channel'
+    | 'platform'
+    | 'version'
+    | 'dependency'
+    | 'scenario'
+    | 'feature'
+    | 'error';
+
+  /** How the artifact changed between source and documentation */
+  action: 'added' | 'removed' | 'changed' | 'missing_in_doc';
+
+  /** Value observed in the source signal (PR, incident, alert, etc.) */
+  sourceValue: string;
+
+  /** Value observed in the documentation, if any */
+  docValue?: string;
+
+  /** Optional logical section or region in the doc this delta maps to */
+  section?: string;
+
+  /** Heuristic confidence (0.0 - 1.0) for this specific delta */
+  confidence: number;
+}
+
+/**
  * Result of drift detection for a specific drift type
  */
 export interface DriftDetectionResult {
@@ -100,6 +139,12 @@ export interface DriftDetectionResult {
   
   /** New content (not found in doc) */
   newContent: string[];
+
+  /**
+   * Structured representation of detected changes for this drift type
+   * (parallel to conflicts/newContent for machine consumption)
+   */
+  typedDeltas?: TypedDelta[];
 }
 
 /**
@@ -114,6 +159,9 @@ export interface CoverageGapResult {
   
   /** List of coverage gaps */
   gaps: string[];
+
+  /** Structured representation of coverage-related changes */
+  typedDeltas?: TypedDelta[];
 }
 
 /**
@@ -143,6 +191,9 @@ export interface ComparisonResult {
   
   /** Coverage gaps (new scenarios/features/errors) */
   coverageGaps: string[];
+
+  /** All typed deltas across drift and coverage types */
+  typedDeltas?: TypedDelta[];
   
   /** Recommendation for patch generation */
   recommendation: 'replace_steps' | 'add_section' | 'update_ownership' | 'add_note';

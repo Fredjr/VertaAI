@@ -42,6 +42,13 @@ export const FEATURE_FLAGS = {
 
   // Cross-cutting features
   ENABLE_MULTI_DOC_WRITEBACK: false,    // Disabled - single doc focus
+
+  // Evidence & drift intelligence features (Phases 1-5)
+  ENABLE_TYPED_DELTAS: false,           // Phase 1: Structured deltas from comparison
+  ENABLE_EVIDENCE_TO_LLM: false,        // Phase 2: Evidence-grounded LLM prompts
+  ENABLE_MATERIALITY_GATE: false,       // Phase 3: Materiality-based routing
+  ENABLE_CONTEXT_EXPANSION: false,      // Phase 4: Bounded context expansion
+  ENABLE_TEMPORAL_ACCUMULATION: false,  // Phase 5: Temporal drift bundling
 } as const;
 
 export type FeatureFlag = keyof typeof FEATURE_FLAGS;

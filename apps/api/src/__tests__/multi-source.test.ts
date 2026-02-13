@@ -176,20 +176,24 @@ describe('Feature Flags', () => {
 
   describe('isFeatureEnabled', () => {
     it('should return default value when no override', () => {
-      // Phase 1 flags are enabled by default
-      expect(isFeatureEnabled('ENABLE_README_ADAPTER')).toBe(true);
-      expect(isFeatureEnabled('ENABLE_CODEOWNERS_DETECTION')).toBe(true);
-
-      // Phase 2 & 3 flags are now enabled by default
-      expect(isFeatureEnabled('ENABLE_SWAGGER_ADAPTER')).toBe(true);
-      expect(isFeatureEnabled('ENABLE_BACKSTAGE_ADAPTER')).toBe(true);
-      expect(isFeatureEnabled('ENABLE_PAGERDUTY_WEBHOOK')).toBe(true);
-      expect(isFeatureEnabled('ENABLE_PROCESS_DRIFT')).toBe(true);
-      expect(isFeatureEnabled('ENABLE_ONCALL_OWNERSHIP')).toBe(true);
-
-      // Phase 4 flags are now enabled
-      expect(isFeatureEnabled('ENABLE_SLACK_CLUSTERING')).toBe(true);
-      expect(isFeatureEnabled('ENABLE_COVERAGE_DRIFT')).toBe(true);
+	      // Starter mode defaults (FIX F8): only core GitHub PR  Confluence loop
+	      // is enabled by default. Most multi-source features are gated.
+	      expect(isFeatureEnabled('ENABLE_README_ADAPTER')).toBe(false);
+	      expect(isFeatureEnabled('ENABLE_CODEOWNERS_DETECTION')).toBe(true);
+	      expect(isFeatureEnabled('ENABLE_DOC_CATEGORIES')).toBe(true);
+	      expect(isFeatureEnabled('ENABLE_ADAPTER_REGISTRY')).toBe(true);
+	
+	      // Incident- and API-driven features are disabled by default in starter mode
+	      expect(isFeatureEnabled('ENABLE_SWAGGER_ADAPTER')).toBe(false);
+	      expect(isFeatureEnabled('ENABLE_BACKSTAGE_ADAPTER')).toBe(false);
+	      expect(isFeatureEnabled('ENABLE_PAGERDUTY_WEBHOOK')).toBe(false);
+	      expect(isFeatureEnabled('ENABLE_PROCESS_DRIFT')).toBe(true);
+	      expect(isFeatureEnabled('ENABLE_ONCALL_OWNERSHIP')).toBe(false);
+	
+	      // Knowledge-gap and scheduled analysis features are also gated
+	      expect(isFeatureEnabled('ENABLE_SLACK_CLUSTERING')).toBe(false);
+	      expect(isFeatureEnabled('ENABLE_COVERAGE_DRIFT')).toBe(false);
+	      expect(isFeatureEnabled('ENABLE_SCHEDULED_ANALYSIS')).toBe(false);
     });
 
     it('should respect environment variable override', () => {
@@ -217,9 +221,9 @@ describe('Feature Flags', () => {
         'ENABLE_SLACK_CLUSTERING',
       ]);
 
-      expect(flags.ENABLE_README_ADAPTER).toBe(true);
-      expect(flags.ENABLE_SWAGGER_ADAPTER).toBe(true);
-      expect(flags.ENABLE_SLACK_CLUSTERING).toBe(true); // Phase 4 now enabled
+	      expect(flags.ENABLE_README_ADAPTER).toBe(false);
+	      expect(flags.ENABLE_SWAGGER_ADAPTER).toBe(false);
+	      expect(flags.ENABLE_SLACK_CLUSTERING).toBe(false);
     });
   });
 

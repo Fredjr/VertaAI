@@ -11,6 +11,7 @@ import type {
   ComparisonResult,
   DriftDetectionResult,
   CoverageGapResult,
+  TypedDelta,
 } from './types.js';
 
 /**
@@ -42,10 +43,19 @@ export function compareArtifacts(args: CompareArtifactsArgs): ComparisonResult {
   });
   
   const primaryDrift = driftTypes[0];
-  
+
   // Determine recommendation based on drift type and coverage
   const recommendation = determineRecommendation(primaryDrift, coverageGaps);
-  
+
+  // Flatten typed deltas from all drift detectors for downstream consumers
+  const allTypedDeltas: TypedDelta[] = [
+    ...(instructionDrift.typedDeltas || []),
+    ...(processDrift.typedDeltas || []),
+    ...(ownershipDrift.typedDeltas || []),
+    ...(environmentDrift.typedDeltas || []),
+    ...(coverageGaps.typedDeltas || []),
+  ];
+
   return {
     driftType: primaryDrift?.type || 'instruction',
     confidence: primaryDrift?.confidence || 0,
@@ -55,6 +65,7 @@ export function compareArtifacts(args: CompareArtifactsArgs): ComparisonResult {
     conflicts: primaryDrift?.conflicts || [],
     newContent: primaryDrift?.newContent || [],
     coverageGaps: coverageGaps.gaps || [],
+    typedDeltas: allTypedDeltas.length ? allTypedDeltas : undefined,
     recommendation,
     details: {
       instruction: instructionDrift,
@@ -75,6 +86,7 @@ export function detectInstructionDrift(
 ): DriftDetectionResult {
   const conflicts: string[] = [];
   const newContent: string[] = [];
+  const typedDeltas: TypedDelta[] = [];
   
   // Compare commands
   const docCommands = new Set((doc.commands || []).map(c => c.toLowerCase()));
@@ -82,6 +94,14 @@ export function detectInstructionDrift(
   for (const cmd of sourceCommands) {
     if (!docCommands.has(cmd.toLowerCase())) {
       newContent.push(`New command: ${cmd}`);
+      typedDeltas.push({
+        artifactType: 'command',
+        action: 'missing_in_doc',
+        sourceValue: cmd,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
   
@@ -91,6 +111,14 @@ export function detectInstructionDrift(
   for (const key of sourceConfigKeys) {
     if (!docConfigKeys.has(key.toLowerCase())) {
       newContent.push(`New config key: ${key}`);
+      typedDeltas.push({
+        artifactType: 'configKey',
+        action: 'missing_in_doc',
+        sourceValue: key,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
   
@@ -100,6 +128,14 @@ export function detectInstructionDrift(
   for (const endpoint of sourceEndpoints) {
     if (!docEndpoints.has(endpoint.toLowerCase())) {
       newContent.push(`New endpoint: ${endpoint}`);
+      typedDeltas.push({
+        artifactType: 'endpoint',
+        action: 'missing_in_doc',
+        sourceValue: endpoint,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
   
@@ -109,11 +145,27 @@ export function detectInstructionDrift(
   for (const tool of sourceTools) {
     if (!docTools.has(tool.toLowerCase())) {
       newContent.push(`New tool: ${tool}`);
+      typedDeltas.push({
+        artifactType: 'tool',
+        action: 'missing_in_doc',
+        sourceValue: tool,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
   
   const evidenceCount = conflicts.length + newContent.length;
   const confidence = evidenceCount >= 3 ? 0.9 : evidenceCount >= 1 ? 0.7 : 0.5;
+
+  // Attach per-delta confidence so downstream consumers can
+  // reason about individual changes without recomputing.
+  if (typedDeltas.length > 0) {
+    for (const delta of typedDeltas) {
+      delta.confidence = confidence;
+    }
+  }
   
   return {
     hasDrift: evidenceCount > 0,
@@ -121,6 +173,7 @@ export function detectInstructionDrift(
     evidenceCount,
     conflicts,
     newContent,
+    typedDeltas: typedDeltas.length ? typedDeltas : undefined,
   };
 }
 
@@ -133,6 +186,7 @@ export function detectProcessDrift(
 ): DriftDetectionResult {
   const conflicts: string[] = [];
   const newContent: string[] = [];
+  const typedDeltas: TypedDelta[] = [];
   
   // Compare steps
   const docSteps = new Set((doc.steps || []).map(s => s.toLowerCase()));
@@ -140,6 +194,14 @@ export function detectProcessDrift(
   for (const step of sourceSteps) {
     if (!docSteps.has(step.toLowerCase())) {
       newContent.push(`New step: ${step.substring(0, 100)}`);
+      typedDeltas.push({
+        artifactType: 'step',
+        action: 'missing_in_doc',
+        sourceValue: step,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
   
@@ -149,11 +211,25 @@ export function detectProcessDrift(
   for (const decision of sourceDecisions) {
     if (!docDecisions.has(decision.toLowerCase())) {
       newContent.push(`New decision point: ${decision.substring(0, 100)}`);
+      typedDeltas.push({
+        artifactType: 'decision',
+        action: 'missing_in_doc',
+        sourceValue: decision,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
   
   const evidenceCount = conflicts.length + newContent.length;
   const confidence = evidenceCount >= 2 ? 0.85 : evidenceCount >= 1 ? 0.65 : 0.5;
+
+  if (typedDeltas.length > 0) {
+    for (const delta of typedDeltas) {
+      delta.confidence = confidence;
+    }
+  }
 
   return {
     hasDrift: evidenceCount > 0,
@@ -161,6 +237,7 @@ export function detectProcessDrift(
     evidenceCount,
     conflicts,
     newContent,
+    typedDeltas: typedDeltas.length ? typedDeltas : undefined,
   };
 }
 
@@ -173,6 +250,7 @@ export function detectOwnershipDrift(
 ): DriftDetectionResult {
   const conflicts: string[] = [];
   const newContent: string[] = [];
+  const typedDeltas: TypedDelta[] = [];
 
   // Compare teams
   const docTeams = new Set((doc.teams || []).filter(t => typeof t === 'string').map(t => t.toLowerCase()));
@@ -180,6 +258,14 @@ export function detectOwnershipDrift(
   for (const team of sourceTeams) {
     if (!docTeams.has(team.toLowerCase())) {
       newContent.push(`New team: ${team}`);
+      typedDeltas.push({
+        artifactType: 'team',
+        action: 'missing_in_doc',
+        sourceValue: team,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
 
@@ -189,6 +275,14 @@ export function detectOwnershipDrift(
   for (const owner of sourceOwners) {
     if (!docOwners.has(owner.toLowerCase())) {
       newContent.push(`New owner: ${owner}`);
+      typedDeltas.push({
+        artifactType: 'owner',
+        action: 'missing_in_doc',
+        sourceValue: owner,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
 
@@ -198,6 +292,14 @@ export function detectOwnershipDrift(
   for (const path of sourcePaths) {
     if (!docPaths.has(path.toLowerCase())) {
       newContent.push(`New path: ${path}`);
+      typedDeltas.push({
+        artifactType: 'path',
+        action: 'missing_in_doc',
+        sourceValue: path,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
 
@@ -207,11 +309,25 @@ export function detectOwnershipDrift(
   for (const channel of sourceChannels) {
     if (!docChannels.has(channel.toLowerCase())) {
       newContent.push(`New channel: ${channel}`);
+      typedDeltas.push({
+        artifactType: 'channel',
+        action: 'missing_in_doc',
+        sourceValue: channel,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
 
   const evidenceCount = conflicts.length + newContent.length;
   const confidence = evidenceCount >= 2 ? 0.9 : evidenceCount >= 1 ? 0.7 : 0.5;
+
+  if (typedDeltas.length > 0) {
+    for (const delta of typedDeltas) {
+      delta.confidence = confidence;
+    }
+  }
 
   return {
     hasDrift: evidenceCount > 0,
@@ -219,6 +335,7 @@ export function detectOwnershipDrift(
     evidenceCount,
     conflicts,
     newContent,
+    typedDeltas: typedDeltas.length ? typedDeltas : undefined,
   };
 }
 
@@ -231,6 +348,7 @@ export function detectEnvironmentDrift(
 ): DriftDetectionResult {
   const conflicts: string[] = [];
   const newContent: string[] = [];
+  const typedDeltas: TypedDelta[] = [];
 
   // Compare platforms
   const docPlatforms = new Set((doc.platforms || []).map(p => p.toLowerCase()));
@@ -238,6 +356,14 @@ export function detectEnvironmentDrift(
   for (const platform of sourcePlatforms) {
     if (!docPlatforms.has(platform.toLowerCase())) {
       newContent.push(`New platform: ${platform}`);
+      typedDeltas.push({
+        artifactType: 'platform',
+        action: 'missing_in_doc',
+        sourceValue: platform,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
 
@@ -247,6 +373,14 @@ export function detectEnvironmentDrift(
   for (const version of sourceVersions) {
     if (!docVersions.has(version.toLowerCase())) {
       newContent.push(`New version: ${version}`);
+      typedDeltas.push({
+        artifactType: 'version',
+        action: 'missing_in_doc',
+        sourceValue: version,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
 
@@ -256,11 +390,25 @@ export function detectEnvironmentDrift(
   for (const dep of sourceDeps) {
     if (!docDeps.has(dep.toLowerCase())) {
       newContent.push(`New dependency: ${dep}`);
+      typedDeltas.push({
+        artifactType: 'dependency',
+        action: 'missing_in_doc',
+        sourceValue: dep,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
 
   const evidenceCount = conflicts.length + newContent.length;
   const confidence = evidenceCount >= 2 ? 0.85 : evidenceCount >= 1 ? 0.65 : 0.5;
+
+  if (typedDeltas.length > 0) {
+    for (const delta of typedDeltas) {
+      delta.confidence = confidence;
+    }
+  }
 
   return {
     hasDrift: evidenceCount > 0,
@@ -268,6 +416,7 @@ export function detectEnvironmentDrift(
     evidenceCount,
     conflicts,
     newContent,
+    typedDeltas: typedDeltas.length ? typedDeltas : undefined,
   };
 }
 
@@ -280,6 +429,7 @@ export function detectCoverageGaps(
   doc: BaselineArtifacts
 ): CoverageGapResult {
   const gaps: string[] = [];
+  const typedDeltas: TypedDelta[] = [];
 
   // Check for new scenarios
   const docScenarios = new Set((doc.scenarios || []).map(s => s.toLowerCase()));
@@ -287,6 +437,14 @@ export function detectCoverageGaps(
   for (const scenario of sourceScenarios) {
     if (!docScenarios.has(scenario.toLowerCase())) {
       gaps.push(`New scenario: ${scenario.substring(0, 100)}`);
+      typedDeltas.push({
+        artifactType: 'scenario',
+        action: 'missing_in_doc',
+        sourceValue: scenario,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
 
@@ -296,6 +454,14 @@ export function detectCoverageGaps(
   for (const feature of sourceFeatures) {
     if (!docFeatures.has(feature.toLowerCase())) {
       gaps.push(`New feature: ${feature.substring(0, 100)}`);
+      typedDeltas.push({
+        artifactType: 'feature',
+        action: 'missing_in_doc',
+        sourceValue: feature,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
     }
   }
 
@@ -305,6 +471,21 @@ export function detectCoverageGaps(
   for (const error of sourceErrors) {
     if (!docErrors.has(error.toLowerCase())) {
       gaps.push(`New error: ${error.substring(0, 100)}`);
+      typedDeltas.push({
+        artifactType: 'error',
+        action: 'missing_in_doc',
+        sourceValue: error,
+        docValue: undefined,
+        section: undefined,
+        confidence: 0,
+      });
+    }
+  }
+  
+  const confidence = gaps.length >= 3 ? 0.85 : gaps.length >= 1 ? 0.7 : 0.5;
+  if (typedDeltas.length > 0) {
+    for (const delta of typedDeltas) {
+      delta.confidence = confidence;
     }
   }
 
@@ -312,6 +493,7 @@ export function detectCoverageGaps(
     hasGap: gaps.length > 0,
     gapCount: gaps.length,
     gaps,
+    typedDeltas: typedDeltas.length ? typedDeltas : undefined,
   };
 }
 

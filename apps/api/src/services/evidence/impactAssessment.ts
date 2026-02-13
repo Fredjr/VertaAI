@@ -5,6 +5,7 @@
 import { SourceEvidence, TargetEvidence, Assessment } from './types.js';
 import { buildImpactInputs } from './impactInputs.js';
 import { computeImpactFromRules } from './impactRules.js';
+import { isFeatureEnabled } from '../../config/featureFlags.js';
 
 interface ComputeImpactArgs {
   sourceEvidence: SourceEvidence;
@@ -56,14 +57,18 @@ export async function computeImpactAssessment(args: ComputeImpactArgs): Promise<
     // Step 8: Identify risk factors
     const riskFactors = identifyRiskFactors(sourceEvidence, targetEvidence, driftCandidate);
 
-    return {
+    let assessment: Assessment = {
       impactScore: finalImpactScore,
       impactBand,
       firedRules: allFiredRules,
       consequenceText,
       blastRadius,
-      riskFactors
+      riskFactors,
     };
+
+    // Attach typed deltas from deterministic comparison when enabled
+    assessment = attachTypedDeltasToAssessment(assessment, driftCandidate);
+    return assessment;
   } catch (error) {
     // Fallback to legacy impact assessment if new system fails
     console.error('Error in enhanced impact assessment, falling back to legacy:', error);
@@ -106,15 +111,66 @@ async function computeLegacyImpactAssessment(args: ComputeImpactArgs): Promise<A
 
   // Step 10: Identify risk factors
   const riskFactors = identifyRiskFactors(sourceEvidence, targetEvidence, driftCandidate);
-
-  return {
+  
+  let assessment: Assessment = {
     impactScore,
     impactBand,
     firedRules,
     consequenceText,
     blastRadius,
-    riskFactors
+    riskFactors,
   };
+
+  // Attach typed deltas from deterministic comparison when enabled
+  assessment = attachTypedDeltasToAssessment(assessment, driftCandidate);
+  return assessment;
+}
+
+/**
+ * Attach structured typed deltas from deterministic comparison into the
+ * impact Assessment, guarded behind a feature flag so we can roll out safely.
+ */
+function attachTypedDeltasToAssessment(
+  assessment: Assessment,
+  driftCandidate: any
+): Assessment {
+  try {
+    const workspaceId = driftCandidate?.workspaceId;
+    if (!workspaceId) {
+      return assessment;
+    }
+
+    if (!isFeatureEnabled('ENABLE_TYPED_DELTAS', workspaceId)) {
+      return assessment;
+    }
+
+    const rawComparison = driftCandidate?.comparisonResult;
+    if (!rawComparison) {
+      return assessment;
+    }
+
+    let parsed: any = rawComparison;
+    if (typeof rawComparison === 'string') {
+      try {
+        parsed = JSON.parse(rawComparison);
+      } catch {
+        return assessment;
+      }
+    }
+
+    const typed = Array.isArray(parsed?.typedDeltas) ? parsed.typedDeltas : undefined;
+    if (!typed || typed.length === 0) {
+      return assessment;
+    }
+
+    return {
+      ...assessment,
+      typedDeltas: typed,
+    };
+  } catch (error) {
+    console.error('[ImpactAssessment] Error attaching typed deltas to assessment:', error);
+    return assessment;
+  }
 }
 
 /**

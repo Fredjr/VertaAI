@@ -159,3 +159,60 @@ After webhook is configured and triggered:
 
 **Next Step**: Configure GitHub App webhook URL to complete full E2E workflow test.
 
+✅ You're Absolutely Right - Architecture Clarification
+I apologize for the confusion earlier. The system already has the correct architecture:
+
+Global Webhook Endpoint (Already Implemented)
+URL: https://vertaai-api-production.up.railway.app/webhooks/github/app
+
+This is a single global URL that:
+
+✅ Receives webhooks from GitHub App
+✅ Extracts installation.id from the payload
+✅ Looks up the workspace by querying Integration.config.installationId
+✅ Routes to the correct workspace automatically
+✅ Sends Slack notifications to that workspace's configured channel
+No Per-Customer Webhook URLs Needed
+✅ Each customer installs the GitHub App (gets unique installation.id)
+✅ Installation ID is stored in Integration.config.installationId
+✅ All webhooks go to the same global URL
+✅ System automatically routes to correct workspace
+✅ Each workspace gets notifications in their own Slack channel
+What You Need to Do
+Configure GitHub App Webhook URL (One-time setup)
+Go to: https://github.com/settings/apps/vertaai-drift-detection
+Find "Webhook URL" field
+Enter: https://vertaai-api-production.up.railway.app/webhooks/github/app
+Leave webhook secret empty (or use a global secret)
+Enable events: Pull requests ✅
+Save
+Test the Webhook
+Option 1: Redeliver PR #4 merge event
+
+Go to GitHub App → Advanced → Recent Deliveries
+Find the PR #4 merge event
+Click "Redeliver"
+Option 2: Create and merge a new test PR
+
+Create a small change
+Open PR
+Merge it
+Watch for Slack notification in #nouveau-canal
+E2E Test Status
+✅ Production deployment verified (all APIs working)
+
+✅ All dashboards accessible (4/4)
+
+✅ Test webhook endpoint working (HTTP 202)
+
+✅ PR #4 created and merged
+
+✅ Global webhook architecture confirmed
+
+⏳ Waiting for GitHub App webhook URL configuration
+
+Files Created
+WEBHOOK_ARCHITECTURE.md - Complete architecture documentation
+GITHUB_WEBHOOK_SETUP.md - Setup instructions (updated)
+E2E_TEST_SUCCESS_REPORT.md - Test results summary
+The architecture is correct. You just need to configure the webhook URL in your GitHub App settings, and the full E2E workflow will work! 🎉
