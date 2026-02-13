@@ -2006,6 +2006,66 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
     }
   }
 
+  // PHASE 3: Materiality Gate - Skip low-value patches
+  if (evidenceBundleResult?.success && evidenceBundleResult.bundle) {
+    const { isFeatureEnabled } = await import('../../config/featureFlags.js');
+    if (isFeatureEnabled('ENABLE_MATERIALITY_GATE', drift.workspaceId)) {
+      const { computeMaterialityScore } = await import('../evidence/materiality.js');
+      const { getCachedWorkspacePrefs } = await import('../../config/featureFlags.js');
+
+      // Get materiality threshold from workspace preferences (default 0.3)
+      const prefs = getCachedWorkspacePrefs(drift.workspaceId);
+      const threshold = prefs?.materialityThreshold ?? 0.3;
+
+      // Compute materiality score
+      const materialityResult = computeMaterialityScore(
+        evidenceBundleResult.bundle.assessment,
+        evidenceBundleResult.bundle.assessment.typedDeltas,
+        drift.confidence || 0.5,
+        { threshold, weights: { impactBand: 0.4, confidence: 0.3, deltaCount: 0.2, riskFactors: 0.1 } }
+      );
+
+      console.log(`[Transitions] Materiality score: ${materialityResult.score.toFixed(2)} (threshold: ${threshold})`);
+      console.log(`[Transitions] ${materialityResult.reason}`);
+
+      // Skip if below threshold
+      if (!materialityResult.shouldPatch) {
+        console.log(`[Transitions] Skipping patch generation due to low materiality`);
+
+        // Store materiality decision in findings
+        await prisma.baselineFindings.updateMany({
+          where: {
+            workspaceId: drift.workspaceId,
+            driftCandidateId: drift.id,
+          },
+          data: {
+            materialityScore: materialityResult.score,
+            materialityReason: materialityResult.reason,
+            materialityDecision: 'skipped',
+          },
+        });
+
+        // Transition to SKIPPED_LOW_MATERIALITY terminal state
+        return { state: DriftState.SKIPPED_LOW_MATERIALITY, enqueueNext: false };
+      } else {
+        console.log(`[Transitions] Proceeding with patch generation (material drift)`);
+
+        // Store materiality decision in findings
+        await prisma.baselineFindings.updateMany({
+          where: {
+            workspaceId: drift.workspaceId,
+            driftCandidateId: drift.id,
+          },
+          data: {
+            materialityScore: materialityResult.score,
+            materialityReason: materialityResult.reason,
+            materialityDecision: 'proceed',
+          },
+        });
+      }
+    }
+  }
+
   // Call Agent C: Patch Planner
   const plannerResult = await runPatchPlanner({
     docId: primaryDoc.doc_id || primaryDoc.docId || 'unknown',

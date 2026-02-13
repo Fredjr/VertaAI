@@ -41,6 +41,10 @@ interface WorkflowPreferences {
 	  expandedContextMode: boolean;
 	  // Track cumulative drift over time: wired to ENABLE_TEMPORAL_ACCUMULATION
 	  trackCumulativeDrift: boolean;
+
+	  // PHASE 3: Materiality threshold (0-1 scale, default 0.3)
+	  // Lower = more patches, Higher = fewer patches
+	  materialityThreshold: number;
 	}
 
 /**
@@ -92,6 +96,9 @@ router.get('/:workspaceId/settings', async (req: Request, res: Response) => {
 	      skipLowValuePatches: storedPrefs.skipLowValuePatches ?? false,
 	      expandedContextMode: storedPrefs.expandedContextMode ?? false,
 	      trackCumulativeDrift: storedPrefs.trackCumulativeDrift ?? false,
+
+	      // PHASE 3: Materiality threshold (default 0.3 = skip patches with score < 0.3)
+	      materialityThreshold: storedPrefs.materialityThreshold ?? 0.3,
 	    };
 
     return res.json({
