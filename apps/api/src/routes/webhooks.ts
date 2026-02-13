@@ -154,11 +154,17 @@ router.post('/github/app', async (req: Request, res: Response) => {
 
   if (secret) {
     const payload = (req as any).rawBody || JSON.stringify(req.body);
+    console.log('[Webhook] [APP] Signature verification:');
+    console.log('  - Has rawBody:', !!(req as any).rawBody);
+    console.log('  - Payload length:', payload.length);
+    console.log('  - Signature:', signature?.substring(0, 20) + '...');
+    console.log('  - Secret length:', secret.length);
+
     if (!verifyWebhookSignature(payload, signature, secret)) {
       console.error('[Webhook] [APP] Invalid signature');
       return res.status(401).json({ error: 'Invalid signature' });
     }
-    console.log('[Webhook] [APP] Signature verified successfully');
+    console.log('[Webhook] [APP] Signature verified successfully ✅');
   } else {
     console.warn('[Webhook] [APP] No webhook secret configured - skipping signature verification');
   }
