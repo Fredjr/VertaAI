@@ -210,7 +210,17 @@ export async function executeTransition(
  * Point 1: Eligibility Rules by Source - noise control knob
  */
 async function handleIngested(drift: any): Promise<TransitionResult> {
-  const signal = drift.signalEvent;
+  // CRITICAL: Refetch SignalEvent to get latest data (e.g., merged status updated by webhook)
+  const freshSignal = await prisma.signalEvent.findUnique({
+    where: {
+      workspaceId_id: {
+        workspaceId: drift.workspaceId,
+        id: drift.signalEventId,
+      }
+    }
+  });
+
+  const signal = freshSignal || drift.signalEvent;
   const sourceType = signal?.sourceType || drift.sourceType;
 
   // Import eligibility rules dynamically
