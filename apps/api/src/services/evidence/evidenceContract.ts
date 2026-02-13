@@ -11,6 +11,7 @@
  */
 
 import type { EvidenceBundle, TypedDelta } from './types.js';
+import type { ExpandedFileContext } from '../context/expansion.js';
 
 /**
  * LLM-facing evidence contract (v1.0)
@@ -18,7 +19,7 @@ import type { EvidenceBundle, TypedDelta } from './types.js';
  */
 export interface EvidenceContract {
   version: '1.0';
-  
+
   signal: {
     sourceType: string;
     workspaceId: string;
@@ -43,6 +44,19 @@ export interface EvidenceContract {
       teams: string[];
       systems: string[];
     };
+  };
+
+  // PHASE 4: Expanded context from changed files
+  expandedContext?: {
+    files: Array<{
+      filename: string;
+      content: string;
+      additions: number;
+      deletions: number;
+      language?: string;
+    }>;
+    totalFiles: number;
+    skippedFiles: string[];
   };
 }
 
@@ -128,11 +142,38 @@ export function mapEvidenceBundleToContract(
 }
 
 /**
+ * Attach expanded context to evidence contract (Phase 4)
+ */
+export function attachExpandedContext(
+  contract: EvidenceContract,
+  expandedFiles: ExpandedFileContext[]
+): EvidenceContract {
+  if (expandedFiles.length === 0) {
+    return contract;
+  }
+
+  return {
+    ...contract,
+    expandedContext: {
+      files: expandedFiles.map(f => ({
+        filename: f.filename,
+        content: f.content,
+        additions: f.additions,
+        deletions: f.deletions,
+        language: f.language,
+      })),
+      totalFiles: expandedFiles.length,
+      skippedFiles: [], // Will be populated by caller if needed
+    },
+  };
+}
+
+/**
  * Extract relevant section names from doc claims
  */
 function extractRelevantSections(bundle: EvidenceBundle): string[] {
   const sections = new Set<string>();
-  
+
   for (const claim of bundle.targetEvidence.claims || []) {
     if (claim.location.section) {
       sections.add(claim.location.section);

@@ -184,7 +184,24 @@ export async function runPatchGenerator(input: PatchGeneratorInput): Promise<Cla
       doc_context: input.evidence.docContext,
       assessment: input.evidence.assessment,
     };
-    console.log(`[PatchGenerator] Using evidence contract with ${input.evidence.typedDeltas.length} typed deltas`);
+
+    // PHASE 4: Include expanded context if available
+    if (input.evidence.expandedContext) {
+      promptData.evidence_contract.expanded_context = {
+        files: input.evidence.expandedContext.files.map(f => ({
+          filename: f.filename,
+          content: f.content,
+          additions: f.additions,
+          deletions: f.deletions,
+          language: f.language,
+        })),
+        total_files: input.evidence.expandedContext.totalFiles,
+        skipped_files: input.evidence.expandedContext.skippedFiles,
+      };
+      console.log(`[PatchGenerator] Using evidence contract with ${input.evidence.typedDeltas.length} typed deltas + ${input.evidence.expandedContext.totalFiles} expanded files`);
+    } else {
+      console.log(`[PatchGenerator] Using evidence contract with ${input.evidence.typedDeltas.length} typed deltas`);
+    }
   } else {
     // Legacy: Add baseline comparison results if available
     if (input.baselineCheck) {

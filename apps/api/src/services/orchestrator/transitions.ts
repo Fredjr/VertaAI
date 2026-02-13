@@ -2006,6 +2006,69 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
     }
   }
 
+  // PHASE 4: Bounded Context Expansion - Fetch full content of key changed files
+  if (evidenceContract && drift.sourceType === 'github_pr') {
+    const { isFeatureEnabled } = await import('../../config/featureFlags.js');
+    if (isFeatureEnabled('ENABLE_CONTEXT_EXPANSION', drift.workspaceId)) {
+      try {
+        const { selectFilesForExpansion, fetchExpandedContext } = await import('../context/expansion.js');
+        const { attachExpandedContext } = await import('../evidence/evidenceContract.js');
+        const { getGitHubClient } = await import('../github-client.js');
+
+        // Get changed files from extracted data
+        const changedFiles = extracted.changedFiles || [];
+
+        if (changedFiles.length > 0) {
+          // Select top files for expansion (max 3, prioritize by change volume)
+          const selectedFiles = selectFilesForExpansion(changedFiles);
+
+          if (selectedFiles.length > 0) {
+            console.log(`[Transitions] Phase 4: Expanding context for ${selectedFiles.length} files: ${selectedFiles.join(', ')}`);
+
+            // Get GitHub client for this workspace
+            const octokit = await getGitHubClient(drift.workspaceId, prData.installation?.id);
+
+            if (octokit) {
+              // Parse repo owner/name from repo field
+              const [owner, repo] = (drift.repo || '').split('/');
+
+              if (owner && repo) {
+                // Fetch expanded context from head branch (merged state)
+                const expansionResult = await fetchExpandedContext(
+                  octokit,
+                  owner,
+                  repo,
+                  prData.head?.ref || extracted.headBranch || 'main',
+                  selectedFiles,
+                  changedFiles
+                );
+
+                if (expansionResult.success && expansionResult.expandedFiles.length > 0) {
+                  // Attach expanded context to evidence contract
+                  evidenceContract = attachExpandedContext(evidenceContract, expansionResult.expandedFiles);
+                  console.log(`[Transitions] Phase 4: Expanded context attached (${expansionResult.expandedFiles.length} files, ${expansionResult.skippedFiles.length} skipped)`);
+                } else {
+                  console.log(`[Transitions] Phase 4: No files expanded (${expansionResult.skippedFiles.length} skipped)`);
+                }
+              } else {
+                console.warn(`[Transitions] Phase 4: Could not parse repo owner/name from: ${drift.repo}`);
+              }
+            } else {
+              console.warn(`[Transitions] Phase 4: GitHub client not available for workspace ${drift.workspaceId}`);
+            }
+          } else {
+            console.log(`[Transitions] Phase 4: No files selected for expansion (all filtered out)`);
+          }
+        } else {
+          console.log(`[Transitions] Phase 4: No changed files available for expansion`);
+        }
+      } catch (error: any) {
+        console.error(`[Transitions] Phase 4: Error during context expansion:`, error.message);
+        // Continue without expanded context - non-blocking error
+      }
+    }
+  }
+
   // PHASE 3: Materiality Gate - Skip low-value patches
   if (evidenceBundleResult?.success && evidenceBundleResult.bundle) {
     const { isFeatureEnabled } = await import('../../config/featureFlags.js');
