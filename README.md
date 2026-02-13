@@ -19,6 +19,7 @@
 - **🧹 Context-Aware Noise Filtering**: 4-layer filtering system that reduces false positives while maintaining high accuracy
 - **⚡ Early Threshold Routing**: Filters low-confidence drifts before patch generation, reducing LLM calls by 30-40%
 - **📉 Complete Observability**: Full audit trail with PlanRun tracking, EvidenceBundle pattern, and structured logging
+- **📊 Analytics Service**: Track user metrics, monitor system performance, and export data in multiple formats
 - **🚀 Railway Deployment**: Cloud-native deployment with automatic scaling and health checks
 
 ## 🎯 Cluster-First Drift Triage
