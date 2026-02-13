@@ -23,12 +23,25 @@ const DEFAULT_INPUT_SOURCES = ['github_pr', 'pagerduty_incident', 'slack_cluster
 const DEFAULT_OUTPUT_TARGETS = ['confluence', 'notion', 'github_readme', 'github_swagger', 'backstage', 'github_code_comments', 'gitbook'];
 
 // Type definitions for workflow preferences
+// These are user-facing workspace settings that map onto internal
+// feature flags and routing behavior. Keep names product-language,
+// not implementation-detail flag names.
 interface WorkflowPreferences {
-  enabledDriftTypes: string[];
-  enabledInputSources: string[];
-  enabledOutputTargets: string[];
-  outputTargetPriority: string[];
-}
+	  enabledDriftTypes: string[];
+	  enabledInputSources: string[];
+	  enabledOutputTargets: string[];
+	  outputTargetPriority: string[];
+
+	  // UX toggles for advanced behavior – backed by internal flags
+	  // Evidence-grounded patching: wired to ENABLE_TYPED_DELTAS + ENABLE_EVIDENCE_TO_LLM
+	  evidenceGroundedPatching: boolean;
+	  // Skip low-value patches: wired to ENABLE_MATERIALITY_GATE
+	  skipLowValuePatches: boolean;
+	  // Expanded context mode (slower, more accurate): wired to ENABLE_CONTEXT_EXPANSION
+	  expandedContextMode: boolean;
+	  // Track cumulative drift over time: wired to ENABLE_TEMPORAL_ACCUMULATION
+	  trackCumulativeDrift: boolean;
+	}
 
 /**
  * GET /api/workspaces/:workspaceId/settings
@@ -66,14 +79,20 @@ router.get('/:workspaceId/settings', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Workspace not found' });
     }
 
-    // Parse workflow preferences with defaults
-    const storedPrefs = (workspace.workflowPreferences || {}) as Partial<WorkflowPreferences>;
-    const workflowPreferences: WorkflowPreferences = {
-      enabledDriftTypes: storedPrefs.enabledDriftTypes || DEFAULT_DRIFT_TYPES,
-      enabledInputSources: storedPrefs.enabledInputSources || DEFAULT_INPUT_SOURCES,
-      enabledOutputTargets: storedPrefs.enabledOutputTargets || DEFAULT_OUTPUT_TARGETS,
-      outputTargetPriority: storedPrefs.outputTargetPriority || DEFAULT_OUTPUT_TARGETS,
-    };
+	    // Parse workflow preferences with defaults
+	    const storedPrefs = (workspace.workflowPreferences || {}) as Partial<WorkflowPreferences>;
+	    const workflowPreferences: WorkflowPreferences = {
+	      enabledDriftTypes: storedPrefs.enabledDriftTypes || DEFAULT_DRIFT_TYPES,
+	      enabledInputSources: storedPrefs.enabledInputSources || DEFAULT_INPUT_SOURCES,
+	      enabledOutputTargets: storedPrefs.enabledOutputTargets || DEFAULT_OUTPUT_TARGETS,
+	      outputTargetPriority: storedPrefs.outputTargetPriority || DEFAULT_OUTPUT_TARGETS,
+
+	      // UX toggles: default to conservative behavior (off) unless explicitly enabled
+	      evidenceGroundedPatching: storedPrefs.evidenceGroundedPatching ?? false,
+	      skipLowValuePatches: storedPrefs.skipLowValuePatches ?? false,
+	      expandedContextMode: storedPrefs.expandedContextMode ?? false,
+	      trackCumulativeDrift: storedPrefs.trackCumulativeDrift ?? false,
+	    };
 
     return res.json({
       workspace: {

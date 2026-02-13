@@ -54,13 +54,70 @@ export const FEATURE_FLAGS = {
 export type FeatureFlag = keyof typeof FEATURE_FLAGS;
 
 /**
+ * Mapping from user-friendly workspace toggles to technical feature flags
+ * This allows the UI to expose product-language settings while keeping
+ * implementation details hidden.
+ */
+const UX_TOGGLE_TO_FLAGS: Record<string, FeatureFlag[]> = {
+  evidenceGroundedPatching: ['ENABLE_TYPED_DELTAS', 'ENABLE_EVIDENCE_TO_LLM'],
+  skipLowValuePatches: ['ENABLE_MATERIALITY_GATE'],
+  expandedContextMode: ['ENABLE_CONTEXT_EXPANSION'],
+  trackCumulativeDrift: ['ENABLE_TEMPORAL_ACCUMULATION'],
+};
+
+/**
+ * In-memory cache for workspace preferences to avoid repeated DB queries
+ * Cache is invalidated after 60 seconds
+ */
+interface WorkspacePrefsCache {
+  prefs: any;
+  timestamp: number;
+}
+const workspacePrefsCache = new Map<string, WorkspacePrefsCache>();
+const CACHE_TTL_MS = 60000; // 60 seconds
+
+/**
+ * Get workspace preferences from cache or database
+ * This is a synchronous function that uses cached data to avoid blocking
+ */
+function getCachedWorkspacePrefs(workspaceId: string): any | null {
+  const cached = workspacePrefsCache.get(workspaceId);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.prefs;
+  }
+  return null;
+}
+
+/**
+ * Preload workspace preferences into cache (call this from async contexts)
+ * This should be called when workspace data is already being fetched
+ */
+export function cacheWorkspacePrefs(workspaceId: string, prefs: any): void {
+  workspacePrefsCache.set(workspaceId, {
+    prefs,
+    timestamp: Date.now(),
+  });
+}
+
+/**
+ * Clear workspace preferences cache (useful for testing)
+ */
+export function clearWorkspacePrefsCache(workspaceId?: string): void {
+  if (workspaceId) {
+    workspacePrefsCache.delete(workspaceId);
+  } else {
+    workspacePrefsCache.clear();
+  }
+}
+
+/**
  * Check if a feature flag is enabled
- * 
+ *
  * Priority:
  * 1. Environment variable override (FF_<FLAG_NAME>=true|false)
- * 2. Workspace-specific override (future: stored in Workspace.settings)
+ * 2. Workspace-specific override (from workflowPreferences JSON field)
  * 3. Default value from FEATURE_FLAGS
- * 
+ *
  * @param flag - The feature flag to check
  * @param workspaceId - Optional workspace ID for workspace-specific overrides
  * @returns boolean - Whether the feature is enabled
@@ -73,15 +130,17 @@ export function isFeatureEnabled(flag: FeatureFlag, workspaceId?: string): boole
     return envValue.toLowerCase() === 'true';
   }
 
-  // 2. Future: Check workspace-specific override
-  // This would query Workspace.settings for feature overrides
-  // For now, skip this check
+  // 2. Check workspace-specific override via UX toggles
   if (workspaceId) {
-    // TODO: Implement workspace-specific feature flag overrides
-    // const workspace = await prisma.workspace.findUnique({ ... });
-    // if (workspace?.settings?.featureFlags?.[flag] !== undefined) {
-    //   return workspace.settings.featureFlags[flag];
-    // }
+    const prefs = getCachedWorkspacePrefs(workspaceId);
+    if (prefs) {
+      // Check if any UX toggle enables this flag
+      for (const [toggleName, flags] of Object.entries(UX_TOGGLE_TO_FLAGS)) {
+        if (flags.includes(flag) && prefs[toggleName] === true) {
+          return true;
+        }
+      }
+    }
   }
 
   // 3. Return default value

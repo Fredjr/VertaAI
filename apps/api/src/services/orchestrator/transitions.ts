@@ -485,8 +485,15 @@ async function handleSignalsCorrelated(drift: any): Promise<TransitionResult> {
       allowSearchSuggestMapping: true,
       minConfidenceForSuggest: true,
       allowedConfluenceSpaces: true,
+      workflowPreferences: true,
     },
   });
+
+  // Cache workspace preferences for feature flag checks
+  if (workspace?.workflowPreferences) {
+    const { cacheWorkspacePrefs } = await import('../../config/featureFlags.js');
+    cacheWorkspacePrefs(drift.workspaceId, workspace.workflowPreferences);
+  }
 
   const resolutionResult = await resolveDocsForDrift({
     workspaceId: drift.workspaceId,
@@ -664,8 +671,15 @@ async function handleDriftClassified_OLD_DEPRECATED(drift: any): Promise<Transit
       allowSearchSuggestMapping: true,
       minConfidenceForSuggest: true,
       allowedConfluenceSpaces: true,
+      workflowPreferences: true,
     },
   });
+
+  // Cache workspace preferences for feature flag checks
+  if (workspace?.workflowPreferences) {
+    const { cacheWorkspacePrefs } = await import('../../config/featureFlags.js');
+    cacheWorkspacePrefs(drift.workspaceId, workspace.workflowPreferences);
+  }
 
   const resolutionResult = await resolveDocsForDrift({
     workspaceId: drift.workspaceId,
