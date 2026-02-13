@@ -60,6 +60,7 @@ model Workspace {
   approvals             Approval[]
   slackQuestionClusters SlackQuestionCluster[]
   driftSuppressions     DriftSuppression[] // NEW: Phase 1 suppression system
+  driftHistories        DriftHistory[] // NEW: Phase 5 temporal drift accumulation
   coverageSnapshots     CoverageSnapshot[] // NEW: Phase 3 Week 6 coverage monitoring
   auditTrails           AuditTrail[] // NEW: Phase 4 Week 8 comprehensive audit trail
 
@@ -370,6 +371,52 @@ model DriftSuppression {
   @@index([workspaceId, fingerprint])
   @@index([workspaceId, expiresAt])
   @@map("drift_suppressions")
+}
+
+// NEW: Drift History Model (Phase 5 - Temporal drift accumulation)
+// Tracks cumulative drift per document over time windows
+model DriftHistory {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+
+  // Document tracking
+  docSystem String @map("doc_system") // 'confluence', 'notion', 'github', etc.
+  docId     String @map("doc_id")
+  docTitle  String @map("doc_title")
+
+  // Time window tracking
+  windowStart DateTime @map("window_start") // Start of accumulation window
+  windowEnd   DateTime @map("window_end")   // End of accumulation window (null = active)
+
+  // Accumulation metrics
+  driftCount          Int      @default(0) @map("drift_count")           // Number of drifts in this window
+  skippedDriftCount   Int      @default(0) @map("skipped_drift_count")   // Number of low-materiality drifts skipped
+  totalMateriality    Float    @default(0) @map("total_materiality")     // Sum of materiality scores
+  averageMateriality  Float    @default(0) @map("average_materiality")   // Average materiality score
+
+  // Drift type breakdown (JSON array of {driftType, count})
+  driftTypeBreakdown Json @default("[]") @map("drift_type_breakdown")
+
+  // Accumulated drift IDs for bundling
+  accumulatedDriftIds String[] @map("accumulated_drift_ids")
+
+  // Bundling status
+  status          String    @default("accumulating") // 'accumulating', 'bundled', 'expired'
+  bundledAt       DateTime? @map("bundled_at")       // When drifts were bundled
+  bundledDriftId  String?   @map("bundled_drift_id") // ID of the bundled drift candidate
+  bundleTrigger   String?   @map("bundle_trigger")   // 'threshold_reached', 'manual', 'window_expired'
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@unique([workspaceId, docSystem, docId, windowStart], name: "unique_doc_window")
+  @@index([workspaceId, docSystem, docId, status])
+  @@index([workspaceId, status, windowEnd])
+  @@map("drift_histories")
 }
 
 // Approvals (append-only audit log for human actions)

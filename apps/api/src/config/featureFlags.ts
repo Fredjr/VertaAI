@@ -48,7 +48,7 @@ export const FEATURE_FLAGS = {
   ENABLE_EVIDENCE_TO_LLM: false,        // Phase 2: Evidence-grounded LLM prompts
   ENABLE_MATERIALITY_GATE: false,       // Phase 3: Materiality-based routing
   ENABLE_CONTEXT_EXPANSION: false,      // Phase 4: Bounded context expansion
-  ENABLE_TEMPORAL_ACCUMULATION: false,  // Phase 5: Temporal drift bundling
+  ENABLE_TEMPORAL_ACCUMULATION: false,  // Phase 5: Temporal drift accumulation
 } as const;
 
 export type FeatureFlag = keyof typeof FEATURE_FLAGS;

@@ -2111,6 +2111,64 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
           },
         });
 
+        // PHASE 5: Temporal Drift Accumulation - Record skipped drift for potential bundling
+        if (isFeatureEnabled('ENABLE_TEMPORAL_ACCUMULATION', drift.workspaceId)) {
+          try {
+            const {
+              getOrCreateDriftHistory,
+              recordDrift,
+              checkBundlingThreshold,
+              bundleDrifts,
+            } = await import('../temporal/accumulation.js');
+
+            // Get or create drift history for this document
+            const driftHistory = await getOrCreateDriftHistory(
+              drift.workspaceId,
+              primaryDoc.doc_system || 'confluence',
+              primaryDoc.doc_id || primaryDoc.docId || 'unknown',
+              primaryDoc.title || llmPayload?.docTitle || 'Unknown Document'
+            );
+
+            // Record this skipped drift
+            const updatedHistory = await recordDrift(
+              drift.workspaceId,
+              driftHistory.id,
+              drift.id,
+              drift.driftType || 'unknown',
+              materialityResult.score,
+              true // wasSkipped = true
+            );
+
+            console.log(
+              `[Transitions] Phase 5: Recorded skipped drift in history ${driftHistory.id} ` +
+              `(total: ${updatedHistory.driftCount + updatedHistory.skippedDriftCount}, ` +
+              `materiality: ${updatedHistory.totalMateriality.toFixed(2)})`
+            );
+
+            // Check if bundling threshold reached
+            const bundlingCheck = await checkBundlingThreshold(drift.workspaceId, driftHistory.id);
+
+            if (bundlingCheck.shouldBundle) {
+              console.log(
+                `[Transitions] Phase 5: Bundling threshold reached (trigger: ${bundlingCheck.trigger}), ` +
+                `creating bundled drift candidate`
+              );
+
+              // Bundle accumulated drifts into a single comprehensive drift
+              const bundledDriftId = await bundleDrifts(
+                drift.workspaceId,
+                driftHistory.id,
+                bundlingCheck.trigger!
+              );
+
+              console.log(`[Transitions] Phase 5: Created bundled drift ${bundledDriftId}, will process in next cycle`);
+            }
+          } catch (error: any) {
+            console.error(`[Transitions] Phase 5: Error during temporal accumulation:`, error.message);
+            // Continue - non-blocking error
+          }
+        }
+
         // Transition to SKIPPED_LOW_MATERIALITY terminal state
         return { state: DriftState.SKIPPED_LOW_MATERIALITY, enqueueNext: false };
       } else {
