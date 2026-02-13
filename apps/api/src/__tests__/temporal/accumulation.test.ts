@@ -328,7 +328,7 @@ describe('Temporal Drift Accumulation', () => {
           workspaceId,
           state: 'BASELINE_CHECKED',
           evidenceSummary: expect.stringContaining('Bundled drift from 3 accumulated changes'),
-          metadata: expect.objectContaining({
+          comparisonResult: expect.objectContaining({
             bundled: true,
             bundledFrom: ['drift-1', 'drift-2', 'drift-3'],
             bundleTrigger: 'threshold_reached',

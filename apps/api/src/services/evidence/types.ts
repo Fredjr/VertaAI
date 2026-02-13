@@ -2,7 +2,8 @@
 // Implements deterministic evidence collection for VertaAI transformation
 // Based on COMPREHENSIVE_IMPLEMENTATION_PLAN.md Phase 1
 
-import type { TypedDelta } from '../baseline/types.js';
+// Re-export TypedDelta for use in other modules
+export type { TypedDelta } from '../baseline/types.js';
 
 /**
  * Source-specific evidence structures for different signal types

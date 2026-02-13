@@ -65,7 +65,7 @@ export async function getOrCreateDriftHistory(
   });
 
   if (existing) {
-    return existing as DriftHistoryRecord;
+    return existing as unknown as DriftHistoryRecord;
   }
 
   // Create a new accumulation window
@@ -83,7 +83,7 @@ export async function getOrCreateDriftHistory(
     },
   });
 
-  return newHistory as DriftHistoryRecord;
+  return newHistory as unknown as DriftHistoryRecord;
 }
 
 /**
@@ -139,7 +139,7 @@ export async function recordDrift(
     },
   });
 
-  return updated as DriftHistoryRecord;
+  return updated as unknown as DriftHistoryRecord;
 }
 
 /**
@@ -226,6 +226,10 @@ export async function bundleDrifts(
   // Create a bundled drift candidate
   // Use the first drift as the base, but aggregate evidence from all drifts
   const firstDrift = drifts[0];
+  if (!firstDrift) {
+    throw new Error(`No first drift found in accumulated drifts`);
+  }
+
   const allTypedDeltas: TypedDelta[] = [];
   const allEvidenceSummaries: string[] = [];
 
@@ -259,8 +263,8 @@ export async function bundleDrifts(
       confidence: history.averageMateriality, // Use average materiality as confidence
       state: 'BASELINE_CHECKED', // Start at BASELINE_CHECKED to skip re-analysis
       stateUpdatedAt: new Date(),
-      // Store bundled metadata
-      metadata: {
+      // Store bundled metadata in comparisonResult JSON field
+      comparisonResult: {
         bundled: true,
         bundledFrom: history.accumulatedDriftIds,
         bundleTrigger: trigger,

@@ -1916,11 +1916,12 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
 
   // NEW: Phase 1 - Build EvidenceBundle for deterministic decision making
   // Phase 3 Week 7: Added Redis caching for performance
+  let evidenceBundleResult: any = null; // Declare outside try block for wider scope
   try {
     const { buildEvidenceBundle } = await import('../evidence/builder.js');
     const { cacheEvidence } = await import('../cache/evidenceCache.js');
 
-    const evidenceBundleResult = await buildEvidenceBundle({
+    evidenceBundleResult = await buildEvidenceBundle({
       driftCandidate: drift,
       signalEvent: signal,
       docContext: docContext || finding,

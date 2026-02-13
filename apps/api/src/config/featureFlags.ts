@@ -80,7 +80,7 @@ const CACHE_TTL_MS = 60000; // 60 seconds
  * Get workspace preferences from cache or database
  * This is a synchronous function that uses cached data to avoid blocking
  */
-function getCachedWorkspacePrefs(workspaceId: string): any | null {
+export function getCachedWorkspacePrefs(workspaceId: string): any | null {
   const cached = workspacePrefsCache.get(workspaceId);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return cached.prefs;
