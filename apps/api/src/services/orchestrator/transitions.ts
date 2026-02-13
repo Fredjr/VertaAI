@@ -2032,16 +2032,19 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
       if (!materialityResult.shouldPatch) {
         console.log(`[Transitions] Skipping patch generation due to low materiality`);
 
-        // Store materiality decision in findings
-        await prisma.baselineFindings.updateMany({
-          where: {
-            workspaceId: drift.workspaceId,
-            driftCandidateId: drift.id,
-          },
+        // Store materiality decision in findings (baselineFindings is a JSON field, not a table)
+        const findings = Array.isArray(drift.baselineFindings) ? drift.baselineFindings : [];
+        const updatedFindings = findings.map((f: any) => ({
+          ...f,
+          materialityScore: materialityResult.score,
+          materialityReason: materialityResult.reason,
+          materialityDecision: 'skipped',
+        }));
+
+        await prisma.driftCandidate.update({
+          where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
           data: {
-            materialityScore: materialityResult.score,
-            materialityReason: materialityResult.reason,
-            materialityDecision: 'skipped',
+            baselineFindings: updatedFindings as unknown as Prisma.InputJsonValue,
           },
         });
 
@@ -2050,16 +2053,19 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
       } else {
         console.log(`[Transitions] Proceeding with patch generation (material drift)`);
 
-        // Store materiality decision in findings
-        await prisma.baselineFindings.updateMany({
-          where: {
-            workspaceId: drift.workspaceId,
-            driftCandidateId: drift.id,
-          },
+        // Store materiality decision in findings (baselineFindings is a JSON field, not a table)
+        const findings = Array.isArray(drift.baselineFindings) ? drift.baselineFindings : [];
+        const updatedFindings = findings.map((f: any) => ({
+          ...f,
+          materialityScore: materialityResult.score,
+          materialityReason: materialityResult.reason,
+          materialityDecision: 'proceed',
+        }));
+
+        await prisma.driftCandidate.update({
+          where: { workspaceId_id: { workspaceId: drift.workspaceId, id: drift.id } },
           data: {
-            materialityScore: materialityResult.score,
-            materialityReason: materialityResult.reason,
-            materialityDecision: 'proceed',
+            baselineFindings: updatedFindings as unknown as Prisma.InputJsonValue,
           },
         });
       }
