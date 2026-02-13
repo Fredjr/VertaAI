@@ -1995,6 +1995,17 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
     // Continue with existing flow if there's an error
   }
 
+  // PHASE 2: Map EvidenceBundle to EvidenceContract if feature flag enabled
+  let evidenceContract: any = undefined;
+  if (evidenceBundleResult?.success && evidenceBundleResult.bundle) {
+    const { isFeatureEnabled } = await import('../../config/featureFlags.js');
+    if (isFeatureEnabled('ENABLE_EVIDENCE_TO_LLM', drift.workspaceId)) {
+      const { mapEvidenceBundleToContract } = await import('../evidence/evidenceContract.js');
+      evidenceContract = mapEvidenceBundleToContract(evidenceBundleResult.bundle);
+      console.log(`[Transitions] Evidence contract created with ${evidenceContract.typedDeltas.length} typed deltas for LLM agents`);
+    }
+  }
+
   // Call Agent C: Patch Planner
   const plannerResult = await runPatchPlanner({
     docId: primaryDoc.doc_id || primaryDoc.docId || 'unknown',
@@ -2012,6 +2023,8 @@ async function handleBaselineChecked(drift: any): Promise<TransitionResult> {
     // FIX GAP A: Pass baseline comparison results and evidence pack
     baselineCheck: baselineCheck || undefined,
     evidencePack: evidencePack || undefined,
+    // PHASE 2: Pass evidence contract if available
+    evidence: evidenceContract,
   });
 
   if (!plannerResult.success || !plannerResult.data) {
@@ -2111,6 +2124,25 @@ async function handlePatchPlanned(drift: any): Promise<TransitionResult> {
   const baselineCheck = finding.baselineCheck;
   const evidencePack = finding.evidencePack;
 
+  // PHASE 2: Retrieve evidence contract from findings if available
+  // (It was computed in handleBaselineChecked and stored in findings)
+  let evidenceContractForGenerator: any = undefined;
+  if (finding.evidenceBundle) {
+    const { isFeatureEnabled } = await import('../../config/featureFlags.js');
+    if (isFeatureEnabled('ENABLE_EVIDENCE_TO_LLM', drift.workspaceId)) {
+      try {
+        const parsedBundle = typeof finding.evidenceBundle === 'string'
+          ? JSON.parse(finding.evidenceBundle)
+          : finding.evidenceBundle;
+        const { mapEvidenceBundleToContract } = await import('../evidence/evidenceContract.js');
+        evidenceContractForGenerator = mapEvidenceBundleToContract(parsedBundle);
+        console.log(`[Transitions] Evidence contract retrieved for patch generator with ${evidenceContractForGenerator.typedDeltas.length} typed deltas`);
+      } catch (error: any) {
+        console.error(`[Transitions] Error mapping evidence bundle to contract for generator:`, error);
+      }
+    }
+  }
+
   // Call Agent D: Patch Generator with correct input shape
   const generatorResult = await runPatchGenerator({
     docId: primaryDoc.doc_id || primaryDoc.docId || 'unknown',
@@ -2130,6 +2162,8 @@ async function handlePatchPlanned(drift: any): Promise<TransitionResult> {
     // FIX GAP A: Pass baseline comparison results and evidence pack
     baselineCheck: baselineCheck || undefined,
     evidencePack: evidencePack || undefined,
+    // PHASE 2: Pass evidence contract if available
+    evidence: evidenceContractForGenerator,
   });
 
   let unifiedDiff: string;

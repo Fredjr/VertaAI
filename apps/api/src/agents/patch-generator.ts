@@ -1,5 +1,6 @@
 import { callClaude, ClaudeResponse } from '../lib/claude.js';
 import { PatchGeneratorOutputSchema, PatchGeneratorOutput, PatchPlannerOutput } from '@vertaai/shared';
+import type { EvidenceContract } from '../services/evidence/evidenceContract.js';
 
 // System prompt for Agent D: Patch Generator (CORE DIFFERENTIATION)
 const SYSTEM_PROMPT = `You are PatchGenerator. You generate minimal, surgical patches to existing operational documentation.
@@ -104,6 +105,8 @@ export interface PatchGeneratorInput {
       endpoints: string[];
     };
   };
+  // PHASE 2: Structured evidence contract (replaces baselineCheck + evidencePack when enabled)
+  evidence?: EvidenceContract;
 }
 
 /**
@@ -139,7 +142,7 @@ export async function runPatchGenerator(input: PatchGeneratorInput): Promise<Cla
   const safeDiffExcerpt = redactSecrets(input.diffExcerpt.substring(0, 8000));
   const safePrDescription = input.prDescription ? redactSecrets(input.prDescription) : null;
 
-  // FIX GAP A: Include baseline comparison results and evidence pack in prompt
+  // PHASE 2: Build prompt data with evidence contract (preferred) or legacy fields
   const promptData: any = {
     doc: {
       doc_id: input.docId,
@@ -165,26 +168,45 @@ export async function runPatchGenerator(input: PatchGeneratorInput): Promise<Cla
     },
   };
 
-  // Add baseline comparison results if available
-  if (input.baselineCheck) {
-    promptData.baseline_comparison = {
-      drift_type: input.baselineCheck.driftType,
-      has_match: input.baselineCheck.hasMatch,
-      match_count: input.baselineCheck.matchCount,
-      evidence: input.baselineCheck.evidence,
-      comparison_details: input.baselineCheck.comparisonDetails,
+  // PHASE 2: Use evidence contract if available (takes precedence)
+  if (input.evidence) {
+    promptData.evidence_contract = {
+      version: input.evidence.version,
+      signal: input.evidence.signal,
+      typed_deltas: input.evidence.typedDeltas.map(delta => ({
+        artifact_type: delta.artifactType,
+        action: delta.action,
+        source_value: delta.sourceValue,
+        doc_value: delta.docValue,
+        section: delta.section,
+        confidence: delta.confidence,
+      })),
+      doc_context: input.evidence.docContext,
+      assessment: input.evidence.assessment,
     };
-  }
+    console.log(`[PatchGenerator] Using evidence contract with ${input.evidence.typedDeltas.length} typed deltas`);
+  } else {
+    // Legacy: Add baseline comparison results if available
+    if (input.baselineCheck) {
+      promptData.baseline_comparison = {
+        drift_type: input.baselineCheck.driftType,
+        has_match: input.baselineCheck.hasMatch,
+        match_count: input.baselineCheck.matchCount,
+        evidence: input.baselineCheck.evidence,
+        comparison_details: input.baselineCheck.comparisonDetails,
+      };
+    }
 
-  // Add structured evidence pack if available
-  if (input.evidencePack) {
-    promptData.evidence_pack = {
-      commands: input.evidencePack.extracted.commands,
-      config_keys: input.evidencePack.extracted.config_keys,
-      endpoints: input.evidencePack.extracted.endpoints,
-      tool_mentions: input.evidencePack.extracted.tool_mentions,
-      keywords: input.evidencePack.extracted.keywords,
-    };
+    // Legacy: Add structured evidence pack if available
+    if (input.evidencePack) {
+      promptData.evidence_pack = {
+        commands: input.evidencePack.extracted.commands,
+        config_keys: input.evidencePack.extracted.config_keys,
+        endpoints: input.evidencePack.extracted.endpoints,
+        tool_mentions: input.evidencePack.extracted.tool_mentions,
+        keywords: input.evidencePack.extracted.keywords,
+      };
+    }
   }
 
   const userPrompt = JSON.stringify(promptData, null, 2);
