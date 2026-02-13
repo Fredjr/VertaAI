@@ -3,7 +3,8 @@
 // Based on COMPREHENSIVE_IMPLEMENTATION_PLAN.md Phase 1
 
 // Re-export TypedDelta for use in other modules
-export type { TypedDelta } from '../baseline/types.js';
+import type { TypedDelta } from '../baseline/types.js';
+export type { TypedDelta };
 
 /**
  * Source-specific evidence structures for different signal types

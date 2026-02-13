@@ -1,9 +1,9 @@
 /**
  * Context Expansion Module (Phase 4)
- * 
+ *
  * Fetches full content of up to 3 key changed files to provide richer context
  * to LLM agents for more accurate patch generation.
- * 
+ *
  * Selection criteria:
  * - Prioritize files with most changes (additions + deletions)
  * - Limit to reasonable file sizes (< 10KB per file)
@@ -11,7 +11,7 @@
  * - Bounded to max 3 files to control LLM token usage
  */
 
-import type { Octokit } from '@octokit/rest';
+import type { Octokit } from 'octokit';
 
 /**
  * Expanded file context
