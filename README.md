@@ -22,6 +22,7 @@
 - **📊 Analytics Service**: Track user metrics, monitor system performance, and export data in multiple formats
 - **🔐 Authentication Service**: Secure user authentication with JWT tokens, session management, and multi-factor authentication support
 - **🗄️ Database Migration Service**: Version-controlled schema migrations with checksum validation, rollback support, and dry-run mode
+- **🔔 Notification Service**: Multi-channel notifications (email, SMS, push, Slack, webhooks) with priority-based routing and user preferences
 - **🚀 Railway Deployment**: Cloud-native deployment with automatic scaling and health checks
 
 ## 🎯 Cluster-First Drift Triage
