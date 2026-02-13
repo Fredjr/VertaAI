@@ -7,11 +7,11 @@ import Navigation from '../../components/Navigation';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 // Drift type display names
+// NOTE: 'coverage' removed - it's now orthogonal (cross-cutting) across all drift types
 const DRIFT_TYPE_LABELS: Record<string, { label: string; description: string; icon: string }> = {
   instruction: { label: 'Instruction Drift', description: 'Commands, configs, URLs changed', icon: '📝' },
   process: { label: 'Process Drift', description: 'Sequence/order of steps changed', icon: '🔄' },
   ownership: { label: 'Ownership Drift', description: 'Team/owner/contact changed', icon: '👤' },
-  coverage: { label: 'Coverage Drift', description: 'Missing scenarios/edge cases', icon: '📊' },
   environment_tooling: { label: 'Environment Drift', description: 'Platform/tooling/infrastructure changed', icon: '🔧' },
 };
 

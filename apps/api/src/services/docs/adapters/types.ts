@@ -43,11 +43,11 @@ export const INPUT_SOURCE_TYPES = [
 export type InputSourceType = typeof INPUT_SOURCE_TYPES[number];
 
 // Drift types supported by the system
+// NOTE: 'coverage' was removed - it's now orthogonal (cross-cutting) across all drift types
 export const DRIFT_TYPES = [
   'instruction',
   'process',
   'ownership',
-  'coverage',
   'environment_tooling',
 ] as const;
 

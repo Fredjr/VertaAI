@@ -2,6 +2,7 @@
 // Phase 3: Control-Plane Architecture
 
 import express, { Request, Response, Router } from 'express';
+import { prisma } from '../lib/db.js';
 import {
   createDriftPlan,
   getDriftPlan,
@@ -76,6 +77,14 @@ router.post('/', async (req: Request, res: Response) => {
     // Validate required fields
     if (!workspaceId || !name || !scopeType || !config) {
       return res.status(400).json({ error: 'Missing required fields: workspaceId, name, scopeType, config' });
+    }
+
+    // Validate workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+    });
+    if (!workspace) {
+      return res.status(404).json({ error: `Workspace not found: ${workspaceId}` });
     }
 
     const plan = await createDriftPlan({

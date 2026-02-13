@@ -26,13 +26,14 @@ export interface DocTargetConfig {
 
 /**
  * Maps each drift type to preferred doc systems
- * 
+ *
  * Design principles:
  * - instruction drift → developer docs (README, Swagger, Code Comments)
  * - process drift → functional docs (Confluence, Notion, GitBook runbooks)
  * - ownership drift → operational + functional (Backstage catalog, team docs)
- * - coverage drift → functional docs (FAQ, knowledge base)
  * - environment_tooling drift → developer + functional (README, infra docs)
+ *
+ * NOTE: 'coverage' removed - it's now orthogonal (cross-cutting) across all drift types
  */
 export const DRIFT_TYPE_TO_DOC_TARGETS: Record<DriftType, DocTargetConfig> = {
   instruction: {
@@ -40,25 +41,19 @@ export const DRIFT_TYPE_TO_DOC_TARGETS: Record<DriftType, DocTargetConfig> = {
     secondary: ['confluence', 'notion', 'gitbook'],
     exclude: ['backstage'],  // Backstage is for service catalog, not instructions
   },
-  
+
   process: {
     primary: ['confluence', 'notion', 'gitbook'],
     secondary: ['github_readme'],
     exclude: ['github_swagger', 'github_code_comments', 'backstage'],
   },
-  
+
   ownership: {
     primary: ['backstage', 'confluence', 'notion'],
     secondary: ['github_readme'],
     exclude: ['github_swagger', 'github_code_comments'],
   },
-  
-  coverage: {
-    primary: ['confluence', 'notion', 'gitbook'],
-    secondary: ['github_readme'],
-    exclude: ['github_swagger', 'github_code_comments', 'backstage'],
-  },
-  
+
   environment_tooling: {
     primary: ['github_readme', 'confluence', 'notion'],
     secondary: ['gitbook'],

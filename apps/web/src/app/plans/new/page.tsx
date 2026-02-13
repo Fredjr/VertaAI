@@ -63,11 +63,11 @@ const INPUT_SOURCE_OPTIONS = [
   { value: 'github_swagger', label: 'Swagger/OpenAPI', icon: '🔌' },
 ];
 
+// NOTE: 'coverage' removed - it's now orthogonal (cross-cutting) across all drift types
 const DRIFT_TYPE_OPTIONS = [
   { value: 'instruction', label: 'Instruction Drift', icon: '📝', description: 'Commands, configs, URLs changed' },
   { value: 'process', label: 'Process Drift', icon: '🔄', description: 'Sequence/order of steps changed' },
   { value: 'ownership', label: 'Ownership Drift', icon: '👤', description: 'Team/owner/contact changed' },
-  { value: 'coverage', label: 'Coverage Drift', icon: '📊', description: 'Missing scenarios/edge cases' },
   { value: 'environment_tooling', label: 'Environment Drift', icon: '🔧', description: 'Platform/tooling changed' },
 ];
 

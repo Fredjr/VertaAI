@@ -59,11 +59,11 @@ const INPUT_SOURCE_LABELS: Record<string, string> = {
   github_swagger: '🔌 Swagger/OpenAPI',
 };
 
+// NOTE: 'coverage' removed - it's now orthogonal (cross-cutting) across all drift types
 const DRIFT_TYPE_LABELS: Record<string, string> = {
   instruction: '📝 Instruction Drift',
   process: '🔄 Process Drift',
   ownership: '👤 Ownership Drift',
-  coverage: '📊 Coverage Drift',
   environment_tooling: '🔧 Environment Drift',
 };
 

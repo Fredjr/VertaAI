@@ -3,15 +3,15 @@
 // Provides access to coverage snapshots, trends, and alerts
 
 import { Router, type IRouter } from 'express';
+import { calculateCoverageMetrics } from '../services/coverage/calculator.js';
 import {
-  calculateCoverageMetrics,
   createCoverageSnapshot,
   getCoverageSnapshots,
   getLatestSnapshot,
   getCoverageTrends,
   getCoverageAlerts,
-  runDailyCoverageSnapshot,
-} from '../services/coverage/index.js';
+} from '../services/coverage/manager.js';
+import { runDailyCoverageSnapshot } from '../services/coverage/jobs.js';
 
 const router: IRouter = Router();
 

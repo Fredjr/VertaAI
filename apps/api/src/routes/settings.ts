@@ -18,7 +18,8 @@ import { isFeatureEnabled } from '../config/featureFlags.js';
 const router: RouterType = Router();
 
 // Default workflow preferences
-const DEFAULT_DRIFT_TYPES = ['instruction', 'process', 'ownership', 'coverage', 'environment_tooling'];
+// NOTE: 'coverage' removed from drift types - it's now orthogonal (cross-cutting) across all drift types
+const DEFAULT_DRIFT_TYPES = ['instruction', 'process', 'ownership', 'environment_tooling'];
 const DEFAULT_INPUT_SOURCES = ['github_pr', 'pagerduty_incident', 'slack_cluster', 'datadog_alert', 'github_iac'];
 const DEFAULT_OUTPUT_TARGETS = ['confluence', 'notion', 'github_readme', 'github_swagger', 'backstage', 'github_code_comments', 'gitbook'];
 
@@ -63,6 +64,7 @@ router.get('/:workspaceId/settings', async (req: Request, res: Response) => {
   }
 
   try {
+    // Validate workspace exists
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
       select: {
@@ -80,7 +82,7 @@ router.get('/:workspaceId/settings', async (req: Request, res: Response) => {
     });
 
     if (!workspace) {
-      return res.status(404).json({ error: 'Workspace not found' });
+      return res.status(404).json({ error: `Workspace not found: ${workspaceId}` });
     }
 
 	    // Parse workflow preferences with defaults
