@@ -35,9 +35,110 @@ function getTokenOctokit(): Octokit | null {
 const router: RouterType = Router();
 
 // ============================================================================
-// NEW: Tenant-Routed GitHub Webhook (Phase 1)
+// IMPORTANT: Route Order Matters!
+// Specific routes (like /github/app) must come BEFORE parameterized routes
+// (like /github/:workspaceId) to avoid incorrect matching
+// ============================================================================
+
+// ============================================================================
+// GitHub App Global Webhook (for multi-tenant app-level webhook)
+// URL: POST /webhooks/github/app
+// Routes webhooks by installation_id to find the correct workspace
+// This is the URL to configure in GitHub App settings for all customers
+// ============================================================================
+router.post('/github/app', async (req: Request, res: Response) => {
+  const signature = req.headers['x-hub-signature-256'] as string;
+  const event = req.headers['x-github-event'] as string;
+  const deliveryId = req.headers['x-github-delivery'] as string;
+
+  console.log(`[Webhook] [APP] Received ${event} event (delivery: ${deliveryId})`);
+
+  // Extract installation_id from payload
+  const installationId = req.body?.installation?.id;
+
+  if (!installationId) {
+    console.error('[Webhook] [APP] No installation_id in payload');
+    // For ping events without installation_id, verify with global secret
+    if (event === 'ping') {
+      console.log('[Webhook] [APP] Ping received at app-level endpoint');
+      return res.json({ message: 'pong', endpoint: 'app' });
+    }
+    return res.status(400).json({ error: 'No installation_id in payload' });
+  }
+
+  console.log(`[Webhook] [APP] Installation ID: ${installationId}`);
+
+  // Find workspace by installation_id
+  const integration = await prisma.integration.findFirst({
+    where: {
+      type: 'github',
+      status: 'connected',
+      config: {
+        path: ['installationId'],
+        equals: installationId,
+      },
+    },
+    select: {
+      workspaceId: true,
+      webhookSecret: true,
+      config: true,
+    },
+  });
+
+  if (!integration) {
+    console.error(`[Webhook] [APP] No workspace found for installation ${installationId}`);
+    return res.status(404).json({
+      error: `No workspace found for installation ${installationId}`,
+      installationId,
+      hint: 'Create a GitHub integration for your workspace with this installation_id'
+    });
+  }
+
+  const workspaceId = integration.workspaceId;
+  console.log(`[Webhook] [APP] Routing to workspace ${workspaceId} for installation ${installationId}`);
+
+  // Verify signature using workspace-specific secret
+  const secret = integration.webhookSecret || (integration.config as any)?.webhookSecret;
+  if (secret) {
+    const payload = (req as any).rawBody || JSON.stringify(req.body);
+    if (!verifyWebhookSignature(payload, signature, secret)) {
+      console.error('[Webhook] [APP] Invalid signature');
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+  } else {
+    // No workspace secret, try global secret for backward compatibility
+    const globalSecret = process.env.GH_WEBHOOK_SECRET;
+    if (globalSecret) {
+      const payload = (req as any).rawBody || JSON.stringify(req.body);
+      if (!legacyVerifySignature(payload, signature, globalSecret)) {
+        console.error('[Webhook] [APP] Invalid signature (global)');
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
+    } else {
+      console.warn('[Webhook] [APP] No webhook secret configured - skipping signature verification');
+    }
+  }
+
+  // Handle ping event
+  if (event === 'ping') {
+    console.log(`[Webhook] [APP] Ping received for workspace ${workspaceId}`);
+    return res.json({ message: 'pong', workspaceId, installationId });
+  }
+
+  // Handle pull_request event
+  if (event === 'pull_request') {
+    return handlePullRequestEventV2(req.body, workspaceId, res);
+  }
+
+  // Ignore other events
+  console.log(`[Webhook] [APP] Ignoring event: ${event}`);
+  return res.json({ message: 'Event ignored' });
+});
+
+// ============================================================================
+// Tenant-Routed GitHub Webhook (for single-tenant webhook URLs)
 // URL: POST /webhooks/github/:workspaceId
-// This is the recommended endpoint for new integrations
+// This endpoint is for workspace-specific webhook URLs (optional)
 // ============================================================================
 router.post('/github/:workspaceId', async (req: Request, res: Response) => {
   const workspaceId = req.params.workspaceId;
@@ -88,95 +189,6 @@ router.post('/github/:workspaceId', async (req: Request, res: Response) => {
 
   // Ignore other events
   console.log(`[Webhook] Ignoring event: ${event}`);
-  return res.json({ message: 'Event ignored' });
-});
-
-// ============================================================================
-// NEW: GitHub App Global Webhook (for app-level webhook configuration)
-// URL: POST /webhooks/github/app
-// Routes webhooks by installation_id to find the correct workspace
-// This is the URL to configure in GitHub App settings
-// ============================================================================
-router.post('/github/app', async (req: Request, res: Response) => {
-  const signature = req.headers['x-hub-signature-256'] as string;
-  const event = req.headers['x-github-event'] as string;
-  const deliveryId = req.headers['x-github-delivery'] as string;
-
-  console.log(`[Webhook] [APP] Received ${event} event (delivery: ${deliveryId})`);
-
-  // Extract installation_id from payload
-  const installationId = req.body?.installation?.id;
-
-  if (!installationId) {
-    console.error('[Webhook] [APP] No installation_id in payload');
-    // For ping events without installation_id, verify with global secret
-    if (event === 'ping') {
-      console.log('[Webhook] [APP] Ping received at app-level endpoint');
-      return res.json({ message: 'pong', endpoint: 'app' });
-    }
-    return res.status(400).json({ error: 'No installation_id in payload' });
-  }
-
-  // Find workspace by installation_id
-  const integration = await prisma.integration.findFirst({
-    where: {
-      type: 'github',
-      status: 'connected',
-      config: {
-        path: ['installationId'],
-        equals: installationId,
-      },
-    },
-    select: {
-      workspaceId: true,
-      webhookSecret: true,
-      config: true,
-    },
-  });
-
-  if (!integration) {
-    console.error(`[Webhook] [APP] No workspace found for installation ${installationId}`);
-    return res.status(404).json({ error: `No workspace found for installation ${installationId}` });
-  }
-
-  const workspaceId = integration.workspaceId;
-  console.log(`[Webhook] [APP] Routing to workspace ${workspaceId} for installation ${installationId}`);
-
-  // Verify signature using workspace-specific secret
-  const secret = integration.webhookSecret || (integration.config as any)?.webhookSecret;
-  if (secret) {
-    const payload = (req as any).rawBody || JSON.stringify(req.body);
-    if (!verifyWebhookSignature(payload, signature, secret)) {
-      console.error('[Webhook] [APP] Invalid signature');
-      return res.status(401).json({ error: 'Invalid signature' });
-    }
-  } else {
-    // No workspace secret, try global secret for backward compatibility
-    const globalSecret = process.env.GH_WEBHOOK_SECRET;
-    if (globalSecret) {
-      const payload = (req as any).rawBody || JSON.stringify(req.body);
-      if (!legacyVerifySignature(payload, signature, globalSecret)) {
-        console.error('[Webhook] [APP] Invalid signature (global)');
-        return res.status(401).json({ error: 'Invalid signature' });
-      }
-    } else {
-      console.warn('[Webhook] [APP] No webhook secret configured - skipping signature verification');
-    }
-  }
-
-  // Handle ping event
-  if (event === 'ping') {
-    console.log(`[Webhook] [APP] Ping received for workspace ${workspaceId}`);
-    return res.json({ message: 'pong', workspaceId, installationId });
-  }
-
-  // Handle pull_request event
-  if (event === 'pull_request') {
-    return handlePullRequestEventV2(req.body, workspaceId, res);
-  }
-
-  // Ignore other events
-  console.log(`[Webhook] [APP] Ignoring event: ${event}`);
   return res.json({ message: 'Event ignored' });
 });
 
