@@ -86,9 +86,9 @@ export const DOC_SYSTEM_SECTION_PATTERNS: Record<DocSystem, SectionPattern[]> = 
     { heading: 'Contributing', priority: 7, driftTypes: ['process'] },
     { heading: 'Team', priority: 8, driftTypes: ['ownership'] },
     { heading: 'Maintainers', priority: 9, driftTypes: ['ownership'] },
-    { heading: 'FAQ', priority: 10, driftTypes: ['coverage'] },
+    { heading: 'FAQ', priority: 10, driftTypes: ['instruction', 'process'] }, // FAQ can contain instructions or process info
   ],
-  
+
   confluence: [
     { heading: 'Runbook', priority: 1, driftTypes: ['process'] },
     { heading: 'Incident Response', priority: 2, driftTypes: ['process'] },
@@ -96,16 +96,16 @@ export const DOC_SYSTEM_SECTION_PATTERNS: Record<DocSystem, SectionPattern[]> = 
     { heading: 'Configuration', priority: 4, driftTypes: ['instruction', 'environment_tooling'] },
     { heading: 'Team', priority: 5, driftTypes: ['ownership'] },
     { heading: 'On-Call', priority: 6, driftTypes: ['ownership', 'process'] },
-    { heading: 'FAQ', priority: 7, driftTypes: ['coverage'] },
-    { heading: 'Troubleshooting', priority: 8, driftTypes: ['coverage', 'process'] },
+    { heading: 'FAQ', priority: 7, driftTypes: ['instruction', 'process'] },
+    { heading: 'Troubleshooting', priority: 8, driftTypes: ['instruction', 'process'] },
   ],
-  
+
   notion: [
     { heading: 'Runbook', priority: 1, driftTypes: ['process'] },
     { heading: 'Incident Response', priority: 2, driftTypes: ['process'] },
     { heading: 'Deployment', priority: 3, driftTypes: ['process', 'environment_tooling'] },
     { heading: 'Team', priority: 4, driftTypes: ['ownership'] },
-    { heading: 'FAQ', priority: 5, driftTypes: ['coverage'] },
+    { heading: 'FAQ', priority: 5, driftTypes: ['instruction', 'process'] },
   ],
   
   github_swagger: [
@@ -131,7 +131,7 @@ export const DOC_SYSTEM_SECTION_PATTERNS: Record<DocSystem, SectionPattern[]> = 
     { heading: 'Guide', priority: 2, driftTypes: ['instruction', 'process'] },
     { heading: 'Configuration', priority: 3, driftTypes: ['instruction', 'environment_tooling'] },
     { heading: 'Team', priority: 4, driftTypes: ['ownership'] },
-    { heading: 'FAQ', priority: 5, driftTypes: ['coverage'] },
+    { heading: 'FAQ', priority: 5, driftTypes: ['instruction', 'process'] },
   ],
 };
 

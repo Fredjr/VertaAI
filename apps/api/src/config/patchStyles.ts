@@ -46,11 +46,10 @@ export const DOC_SYSTEM_PATCH_STYLES: Record<DocSystem, PatchStyleConfig> = {
       instruction: 'update_section',
       process: 'reorder_steps',
       ownership: 'update_section',
-      coverage: 'add_note',
       environment_tooling: 'update_section',
     },
   },
-  
+
   notion: {
     allowedStyles: ['update_section', 'add_note', 'reorder_steps'],
     defaultStyle: 'update_section',
@@ -58,11 +57,10 @@ export const DOC_SYSTEM_PATCH_STYLES: Record<DocSystem, PatchStyleConfig> = {
       instruction: 'update_section',
       process: 'reorder_steps',
       ownership: 'update_section',
-      coverage: 'add_note',
       environment_tooling: 'update_section',
     },
   },
-  
+
   github_readme: {
     allowedStyles: ['update_section', 'create_pr'],
     defaultStyle: 'create_pr',
@@ -70,11 +68,10 @@ export const DOC_SYSTEM_PATCH_STYLES: Record<DocSystem, PatchStyleConfig> = {
       instruction: 'update_section',
       process: 'update_section',
       ownership: 'update_section',
-      coverage: 'update_section',
       environment_tooling: 'update_section',
     },
   },
-  
+
   github_swagger: {
     allowedStyles: ['update_description', 'update_param', 'update_path', 'add_example', 'create_pr'],
     defaultStyle: 'update_description',
@@ -82,11 +79,10 @@ export const DOC_SYSTEM_PATCH_STYLES: Record<DocSystem, PatchStyleConfig> = {
       instruction: 'update_description',
       process: 'update_description',
       ownership: 'update_description',
-      coverage: 'add_example',
       environment_tooling: 'update_path',
     },
   },
-  
+
   backstage: {
     allowedStyles: ['update_owner', 'update_description', 'create_pr'],
     defaultStyle: 'update_description',
@@ -94,11 +90,10 @@ export const DOC_SYSTEM_PATCH_STYLES: Record<DocSystem, PatchStyleConfig> = {
       instruction: 'update_description',
       process: 'update_description',
       ownership: 'update_owner',
-      coverage: 'update_description',
       environment_tooling: 'update_description',
     },
   },
-  
+
   github_code_comments: {
     allowedStyles: ['update_jsdoc', 'update_param', 'add_example', 'create_pr'],
     defaultStyle: 'update_jsdoc',
@@ -106,11 +101,10 @@ export const DOC_SYSTEM_PATCH_STYLES: Record<DocSystem, PatchStyleConfig> = {
       instruction: 'update_param',
       process: 'update_jsdoc',
       ownership: 'update_jsdoc',
-      coverage: 'add_example',
       environment_tooling: 'update_param',
     },
   },
-  
+
   gitbook: {
     allowedStyles: ['update_section', 'add_note', 'reorder_steps', 'create_pr'],
     defaultStyle: 'update_section',
@@ -118,7 +112,6 @@ export const DOC_SYSTEM_PATCH_STYLES: Record<DocSystem, PatchStyleConfig> = {
       instruction: 'update_section',
       process: 'reorder_steps',
       ownership: 'update_section',
-      coverage: 'add_note',
       environment_tooling: 'update_section',
     },
   },
