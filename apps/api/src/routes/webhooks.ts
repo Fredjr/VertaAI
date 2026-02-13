@@ -54,18 +54,65 @@ router.post('/github/app', async (req: Request, res: Response) => {
   console.log(`[Webhook] [APP] Received ${event} event (delivery: ${deliveryId})`);
 
   // Extract installation_id from payload
-  const installationId = req.body?.installation?.id;
+  // GitHub sends installation in different places depending on event type
+  let installationId = req.body?.installation?.id;
+
+  // For some events, installation might be at the root level
+  if (!installationId && req.body?.installation_id) {
+    installationId = req.body.installation_id;
+  }
+
+  // For repository events, check the repository.owner
+  if (!installationId && req.body?.repository?.owner?.id) {
+    // This is a fallback - we'll need to look up by repo owner
+    console.log('[Webhook] [APP] No installation object, checking repository owner');
+  }
 
   if (!installationId) {
     console.error('[Webhook] [APP] No installation_id in payload');
     console.error('[Webhook] [APP] Payload keys:', Object.keys(req.body || {}));
-    console.error('[Webhook] [APP] Installation object:', JSON.stringify(req.body?.installation || null));
+    console.error('[Webhook] [APP] Repository:', req.body?.repository?.full_name);
+    console.error('[Webhook] [APP] Sender:', req.body?.sender?.login);
+
     // For ping events without installation_id, verify with global secret
     if (event === 'ping') {
       console.log('[Webhook] [APP] Ping received at app-level endpoint');
       return res.json({ message: 'pong', endpoint: 'app' });
     }
-    return res.status(400).json({ error: 'No installation_id in payload' });
+
+    // Try to find workspace by repository name as fallback
+    if (req.body?.repository?.full_name) {
+      const repoFullName = req.body.repository.full_name;
+      console.log(`[Webhook] [APP] Attempting to find workspace by repository: ${repoFullName}`);
+
+      const integration = await prisma.integration.findFirst({
+        where: {
+          type: 'github',
+          status: 'connected',
+          config: {
+            path: ['owner'],
+            string_contains: repoFullName.split('/')[0],
+          },
+        },
+        select: {
+          workspaceId: true,
+          webhookSecret: true,
+          config: true,
+        },
+      });
+
+      if (integration) {
+        console.log(`[Webhook] [APP] Found workspace by repository: ${integration.workspaceId}`);
+        // Extract installation_id from the integration config
+        installationId = (integration.config as any)?.installationId;
+        console.log(`[Webhook] [APP] Using installation_id from integration: ${installationId}`);
+        // Continue processing below with this workspace
+      } else {
+        return res.status(400).json({ error: 'No installation_id in payload and could not determine workspace' });
+      }
+    } else {
+      return res.status(400).json({ error: 'No installation_id in payload and no repository info' });
+    }
   }
 
   console.log(`[Webhook] [APP] Installation ID: ${installationId}`);
