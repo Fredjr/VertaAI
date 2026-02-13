@@ -305,13 +305,19 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
 
   console.log(`[Webhook] [V2] PR #${prInfo.prNumber} ${prInfo.action} in ${prInfo.repoFullName}`);
 
-  // Only process merged PRs for drift detection
-  if (prInfo.action !== 'closed' || !prInfo.merged) {
+  // Process merged PRs, opened PRs, and synchronize events (new commits)
+  const shouldProcess =
+    (prInfo.action === 'closed' && prInfo.merged) ||  // Merged PR
+    prInfo.action === 'opened' ||                      // New PR opened
+    prInfo.action === 'synchronize';                   // New commits pushed to PR
+
+  if (!shouldProcess) {
     console.log(`[Webhook] Ignoring PR action: ${prInfo.action}, merged: ${prInfo.merged}`);
-    return res.json({ message: 'PR not merged, ignoring' });
+    return res.json({ message: 'PR action not relevant for drift detection' });
   }
 
-  console.log(`[Webhook] [V2] Processing merged PR #${prInfo.prNumber}: ${prInfo.prTitle}`);
+  const eventType = prInfo.merged ? 'merged' : prInfo.action;
+  console.log(`[Webhook] [V2] Processing ${eventType} PR #${prInfo.prNumber}: ${prInfo.prTitle}`);
 
   try {
     // Generate a unique signal event ID
