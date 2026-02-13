@@ -3,15 +3,16 @@
 // Provides access to coverage snapshots, trends, and alerts
 
 import { Router, type IRouter } from 'express';
-import { calculateCoverageMetrics } from '../services/coverage/calculator.js';
+// Use barrel export from coverage service index
 import {
+  calculateCoverageMetrics,
   createCoverageSnapshot,
   getCoverageSnapshots,
   getLatestSnapshot,
   getCoverageTrends,
   getCoverageAlerts,
-} from '../services/coverage/manager.js';
-import { runDailyCoverageSnapshot } from '../services/coverage/jobs.js';
+  runDailyCoverageSnapshot,
+} from '../services/coverage/index.js';
 
 const router: IRouter = Router();
 
