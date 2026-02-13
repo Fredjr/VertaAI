@@ -20,6 +20,7 @@
 - **⚡ Early Threshold Routing**: Filters low-confidence drifts before patch generation, reducing LLM calls by 30-40%
 - **📉 Complete Observability**: Full audit trail with PlanRun tracking, EvidenceBundle pattern, and structured logging
 - **📊 Analytics Service**: Track user metrics, monitor system performance, and export data in multiple formats
+- **📈 Analytics Dashboard**: Real-time drift detection metrics, documentation health scores, and customizable widgets with export capabilities
 - **🔐 Authentication Service**: Secure user authentication with JWT tokens, session management, and multi-factor authentication support
 - **🗄️ Database Migration Service**: Version-controlled schema migrations with checksum validation, rollback support, and dry-run mode
 - **🔔 Notification Service**: Multi-channel notifications (email, SMS, push, Slack, webhooks) with priority-based routing and user preferences
