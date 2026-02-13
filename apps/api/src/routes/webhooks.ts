@@ -367,7 +367,12 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
 
         // Reset state to INGESTED so it can be processed again
         await prisma.driftCandidate.update({
-          where: { id: existingDrift.id },
+          where: {
+            workspaceId_id: {
+              workspaceId,
+              id: existingDrift.id,
+            }
+          },
           data: { state: 'INGESTED' }
         });
 
