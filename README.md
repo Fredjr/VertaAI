@@ -14,11 +14,12 @@
 - **📈 Temporal Drift Accumulation**: Tracks cumulative drift per document over time, bundling multiple small drifts into comprehensive updates when a threshold is reached
 - **🤖 Automated Patching**: Generates and applies documentation updates with interactive approval workflow
 - **💬 Slack Integration**: Rich interactive messages with bulk actions (Approve All, Reject All, Review Individually)
-- **📝 Confluence Integration**: Automatic documentation updates with version control
+- **📝 Multi-Platform Documentation**: Supports Confluence, Notion, GitHub README, GitBook, and Backstage
 - **🎛️ DriftPlan Control-Plane**: Fine-grained control over routing, budgets, and noise filtering
 - **🧹 Context-Aware Noise Filtering**: 4-layer filtering system that reduces false positives while maintaining high accuracy
 - **⚡ Early Threshold Routing**: Filters low-confidence drifts before patch generation, reducing LLM calls by 30-40%
 - **📉 Complete Observability**: Full audit trail with PlanRun tracking, EvidenceBundle pattern, and structured logging
+- **🚀 Railway Deployment**: Cloud-native deployment with automatic scaling and health checks
 
 ## 🎯 Cluster-First Drift Triage
 
@@ -559,11 +560,70 @@ cd apps/api && pnpm dev
 cd apps/web && pnpm dev
 ```
 
+## 🚀 Deployment
+
+### Railway Deployment (Production)
+
+VertaAI is deployed on Railway with automatic deployments from the main branch.
+
+**Prerequisites**:
+- Railway account connected to GitHub
+- PostgreSQL database provisioned
+- Redis instance provisioned
+- Environment variables configured
+
+**Deployment Steps**:
+
+1. **Configure Environment Variables** in Railway dashboard:
+   ```
+   DATABASE_URL=postgresql://...
+   REDIS_URL=redis://...
+   GITHUB_WEBHOOK_SECRET=...
+   CONFLUENCE_API_TOKEN=...
+   SLACK_BOT_TOKEN=...
+   PAGERDUTY_API_KEY=...
+   ```
+
+2. **Deploy**:
+   - Push to `main` branch triggers automatic deployment
+   - Railway builds Docker image
+   - Runs database migrations
+   - Deploys with health checks
+   - Build time: ~3-5 minutes
+
+3. **Verify Deployment**:
+   ```bash
+   curl https://your-app.railway.app/health
+   # Expected: {"status":"ok","timestamp":"..."}
+   ```
+
+4. **Monitor**:
+   - Railway logs: Real-time application logs
+   - DataDog dashboard: APM and metrics
+   - PagerDuty: Incident alerts
+
+**Rollback**:
+- One-click rollback in Railway dashboard
+- Or redeploy previous commit: `git revert HEAD && git push`
+
+### Local Development
+
+See installation instructions above for local development setup.
+
 ## 🧪 Testing
 
 ```bash
-# Run tests
+# Run all tests (73 tests across Phase 1-5)
 cd apps/api && pnpm test
+
+# Run specific test suites
+pnpm test -- src/__tests__/baseline/      # Typed deltas (2 tests)
+pnpm test -- src/__tests__/evidence/      # Evidence contract (7 tests)
+pnpm test -- src/__tests__/context/       # Context expansion (11 tests)
+pnpm test -- src/__tests__/temporal/      # Temporal accumulation (9 tests)
+
+# Run with coverage
+pnpm test:coverage
 
 # Run type checking
 cd apps/api && npx tsc --noEmit
