@@ -146,26 +146,21 @@ router.post('/github/app', async (req: Request, res: Response) => {
   const workspaceId = integration.workspaceId;
   console.log(`[Webhook] [APP] Routing to workspace ${workspaceId} for installation ${installationId}`);
 
-  // Verify signature using workspace-specific secret
-  const secret = integration.webhookSecret || (integration.config as any)?.webhookSecret;
+  // Verify signature using workspace-specific secret or GitHub App secret
+  const secret = integration.webhookSecret ||
+                 (integration.config as any)?.webhookSecret ||
+                 process.env.GITHUB_WEBHOOK_SECRET ||
+                 process.env.GH_WEBHOOK_SECRET;
+
   if (secret) {
     const payload = (req as any).rawBody || JSON.stringify(req.body);
     if (!verifyWebhookSignature(payload, signature, secret)) {
       console.error('[Webhook] [APP] Invalid signature');
       return res.status(401).json({ error: 'Invalid signature' });
     }
+    console.log('[Webhook] [APP] Signature verified successfully');
   } else {
-    // No workspace secret, try global secret for backward compatibility
-    const globalSecret = process.env.GH_WEBHOOK_SECRET;
-    if (globalSecret) {
-      const payload = (req as any).rawBody || JSON.stringify(req.body);
-      if (!legacyVerifySignature(payload, signature, globalSecret)) {
-        console.error('[Webhook] [APP] Invalid signature (global)');
-        return res.status(401).json({ error: 'Invalid signature' });
-      }
-    } else {
-      console.warn('[Webhook] [APP] No webhook secret configured - skipping signature verification');
-    }
+    console.warn('[Webhook] [APP] No webhook secret configured - skipping signature verification');
   }
 
   // Handle ping event
