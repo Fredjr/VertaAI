@@ -58,6 +58,8 @@ router.post('/github/app', async (req: Request, res: Response) => {
 
   if (!installationId) {
     console.error('[Webhook] [APP] No installation_id in payload');
+    console.error('[Webhook] [APP] Payload keys:', Object.keys(req.body || {}));
+    console.error('[Webhook] [APP] Installation object:', JSON.stringify(req.body?.installation || null));
     // For ping events without installation_id, verify with global secret
     if (event === 'ping') {
       console.log('[Webhook] [APP] Ping received at app-level endpoint');
