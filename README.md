@@ -20,6 +20,7 @@
 - **⚡ Early Threshold Routing**: Filters low-confidence drifts before patch generation, reducing LLM calls by 30-40%
 - **📉 Complete Observability**: Full audit trail with PlanRun tracking, EvidenceBundle pattern, and structured logging
 - **📊 Analytics Service**: Track user metrics, monitor system performance, and export data in multiple formats
+- **🔐 Authentication Service**: Secure user authentication with JWT tokens, session management, and multi-factor authentication support
 - **🚀 Railway Deployment**: Cloud-native deployment with automatic scaling and health checks
 
 ## 🎯 Cluster-First Drift Triage
