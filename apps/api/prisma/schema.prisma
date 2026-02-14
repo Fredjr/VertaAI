@@ -63,6 +63,7 @@ model Workspace {
   driftHistories        DriftHistory[] // NEW: Phase 5 temporal drift accumulation
   coverageSnapshots     CoverageSnapshot[] // NEW: Phase 3 Week 6 coverage monitoring
   auditTrails           AuditTrail[] // NEW: Phase 4 Week 8 comprehensive audit trail
+  contractPacks         ContractPack[] // NEW: Contract Integrity & Readiness
 
   @@map("workspaces")
 }
@@ -106,8 +107,9 @@ model SignalEvent {
   slackClusterId String? @map("slack_cluster_id")
   messageCount   Int?    @map("message_count")
 
-  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  driftCandidates DriftCandidate[]
+  workspace            Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  driftCandidates      DriftCandidate[]
+  contractResolutions  ContractResolution[] // NEW: Contract Integrity & Readiness
 
   @@id([workspaceId, id])
   @@index([workspaceId, sourceType, occurredAt(sort: Desc)])
@@ -236,10 +238,11 @@ model DriftCandidate {
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  signalEvent    SignalEvent     @relation(fields: [workspaceId, signalEventId], references: [workspaceId, id], onDelete: Cascade)
-  cluster        DriftCluster?   @relation(fields: [workspaceId, clusterId], references: [workspaceId, id], onDelete: SetNull)
-  patchProposals PatchProposal[]
+  workspace         Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  signalEvent       SignalEvent         @relation(fields: [workspaceId, signalEventId], references: [workspaceId, id], onDelete: Cascade)
+  cluster           DriftCluster?       @relation(fields: [workspaceId, clusterId], references: [workspaceId, id], onDelete: SetNull)
+  patchProposals    PatchProposal[]
+  integrityFindings IntegrityFinding[] // NEW: Contract Integrity & Readiness
 
   @@id([workspaceId, id])
   @@unique([workspaceId, fingerprint])
@@ -511,6 +514,132 @@ model AuditEvent {
   @@index([workspaceId, entityType, entityId, createdAt(sort: Desc)])
   @@index([workspaceId, createdAt(sort: Desc)])
   @@map("audit_events")
+}
+
+// ======================================================================
+// CONTRACT INTEGRITY & READINESS (Phase 1: API Contract MVP)
+// Contract validation and artifact snapshot system
+// ======================================================================
+
+// Contract Pack (workspace-level contract configuration)
+model ContractPack {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+  version     String @default("v1")
+  name        String
+  description String?
+
+  // JSON blob for now, can normalize later
+  contracts    Json @default("[]") // Array<Contract>
+  dictionaries Json @default("{}") // Service aliases, glossary
+  extraction   Json @default("{}") // Token limits, truncation
+  safety       Json @default("{}") // Secret patterns, immutable sections
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId])
+  @@map("contract_packs")
+}
+
+// Contract Resolution Result (audit trail)
+model ContractResolution {
+  workspaceId   String @map("workspace_id")
+  id            String @default(uuid())
+  signalEventId String @map("signal_event_id")
+
+  // What contracts were resolved
+  resolvedContracts   Json @default("[]") @map("resolved_contracts") // Array<{contractId, method, confidence, triggeredBy}>
+  unresolvedArtifacts Json @default("[]") @map("unresolved_artifacts") // Array<{file, reason, candidates}>
+  obligations         Json @default("[]") // Array<{type, artifact, suggestedAction}>
+
+  // Resolution metadata
+  resolutionMethod String @map("resolution_method") // 'explicit_mapping' | 'file_pattern' | 'search'
+  resolutionTimeMs Int    @map("resolution_time_ms")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  signalEvent SignalEvent @relation(fields: [workspaceId, signalEventId], references: [workspaceId, id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, signalEventId])
+  @@map("contract_resolutions")
+}
+
+// Artifact Snapshot (versioned artifact extracts)
+model ArtifactSnapshot {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+  contractId  String @map("contract_id")
+
+  // Artifact identity
+  artifactType String @map("artifact_type") // 'openapi' | 'confluence_page' | 'runbook' | etc.
+  artifactRef  Json   @map("artifact_ref") // {system, locator, role}
+
+  // Version tracking
+  version Json @map("version") // {type, value, capturedAt}
+
+  // Structured extract (not raw content)
+  extract       Json   @map("extract") // Type-specific structured data
+  extractSchema String @map("extract_schema") // Schema version for extract
+
+  // Provenance
+  triggeredBy Json @map("triggered_by") // {signalEventId?, prNumber?, scheduledJobId?}
+
+  // Storage optimization
+  ttlDays    Int     @default(30) @map("ttl_days")
+  compressed Boolean @default(false)
+  sizeBytes  Int     @map("size_bytes")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, contractId])
+  @@index([workspaceId, artifactType])
+  @@index([createdAt]) // For TTL cleanup
+  @@map("artifact_snapshots")
+}
+
+// Integrity Finding (deterministic comparison result)
+model IntegrityFinding {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+  contractId  String @map("contract_id")
+  invariantId String @map("invariant_id")
+
+  // Classification (deterministic)
+  driftType String   @map("drift_type") // 'instruction' | 'process' | 'ownership' | 'coverage' | 'environment_tooling'
+  domains   String[] @default([])
+  severity  String // 'low' | 'medium' | 'high' | 'critical'
+
+  // Comparison metadata
+  compared Json @map("compared") // {left: {artifact, snapshotId}, right: {artifact, snapshotId}}
+  evidence Json @default("[]") // Array<{kind, leftValue, rightValue, pointers}>
+
+  // Scores (deterministic)
+  confidence Float
+  impact     Float
+  band       String // 'pass' | 'warn' | 'fail'
+
+  // Routing
+  recommendedAction String @map("recommended_action") // 'no_action' | 'notify' | 'create_patch_candidate' | 'block_merge'
+  ownerRouting      Json   @default("{}") @map("owner_routing") // {method, owners}
+
+  // Link to drift candidate (if remediation triggered)
+  driftCandidateId String? @map("drift_candidate_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  driftCandidate DriftCandidate? @relation(fields: [workspaceId, driftCandidateId], references: [workspaceId, id], onDelete: SetNull)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, contractId])
+  @@index([workspaceId, band])
+  @@index([createdAt])
+  @@map("integrity_findings")
 }
 
 // ======================================================================
