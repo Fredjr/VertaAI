@@ -14,6 +14,11 @@ import { checkEvidenceRequirements, type PRContext as EvidencePRContext } from '
 import { calculateRiskTier } from './riskTier.js';
 import { createGatekeeperCheck } from './githubCheck.js';
 import { detectDomainsFromSource } from '../baseline/patterns.js';
+import { analyzeDeltaSync, type DeltaSyncFinding } from './deltaSync.js';
+import { computeImpactAssessment } from '../evidence/impactAssessment.js';
+import { joinSignals } from '../correlation/signalJoiner.js';
+import { getInstallationOctokit } from '../../lib/github.js';
+import type { SourceEvidence, TargetEvidence } from '../evidence/types.js';
 
 export interface GatekeeperInput {
   // PR metadata
@@ -22,18 +27,21 @@ export interface GatekeeperInput {
   prNumber: number;
   headSha: string;
   installationId: number;
-  
+  workspaceId: string;
+
   // PR content
   author: string;
   title: string;
   body: string;
   labels: string[];
-  
+  baseBranch: string;
+  headBranch: string;
+
   // PR changes
   commits: Array<{ message: string; author: string }>;
   additions: number;
   deletions: number;
-  files: Array<{ filename: string; patch?: string }>;
+  files: Array<{ filename: string; patch?: string; status?: string }>;
 }
 
 export interface GatekeeperResult {
@@ -45,6 +53,10 @@ export interface GatekeeperResult {
   evidenceSatisfied: boolean;
   missingEvidence: string[];
   checkCreated: boolean;
+  deltaSyncFindings: DeltaSyncFinding[];
+  impactScore?: number;
+  impactBand?: 'low' | 'medium' | 'high' | 'critical';
+  correlatedSignals?: number;
 }
 
 /**
@@ -85,21 +97,117 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
   if (evidenceCheck.missing.length > 0) {
     console.log(`[Gatekeeper] Missing evidence:`, evidenceCheck.missing.join(', '));
   }
-  
-  // Step 4: Calculate risk tier
+
+  // Step 4: Run delta sync analysis
+  console.log(`[Gatekeeper] Running delta sync analysis...`);
+  let deltaSyncResult;
+  try {
+    const octokit = await getInstallationOctokit(input.installationId);
+    deltaSyncResult = await analyzeDeltaSync({
+      files: input.files,
+      octokit,
+      owner: input.owner,
+      repo: input.repo,
+      baseBranch: input.baseBranch,
+      headBranch: input.headBranch,
+    });
+    console.log(`[Gatekeeper] Delta sync: ${deltaSyncResult.summary}`);
+  } catch (error) {
+    console.error(`[Gatekeeper] Delta sync failed:`, error);
+    deltaSyncResult = { findings: [], hasHighSignalFindings: false, summary: 'Delta sync analysis failed' };
+  }
+
+  // Step 5: Compute impact assessment
+  console.log(`[Gatekeeper] Computing impact assessment...`);
+  let impactScore = 0;
+  let impactBand: 'low' | 'medium' | 'high' | 'critical' = 'low';
+  try {
+    // Build source evidence from PR
+    const sourceEvidence: SourceEvidence = {
+      sourceType: 'github_pr',
+      sourceId: `${input.owner}/${input.repo}#${input.prNumber}`,
+      timestamp: new Date().toISOString(),
+      artifacts: {
+        prDiff: {
+          filesChanged: input.files.map(f => f.filename),
+          linesAdded: input.additions,
+          linesRemoved: input.deletions,
+          excerpt: `${input.title}\n\n${input.body}`,
+          maxChars: 5000,
+          lineBounded: false,
+        }
+      }
+    };
+
+    // Build minimal target evidence (we don't have a specific doc target yet)
+    const targetEvidence: TargetEvidence = {
+      docSystem: 'github_readme',
+      docId: 'gatekeeper-check',
+      docTitle: 'Gatekeeper Check',
+      surface: 'runbook', // Default to runbook for high-risk domains
+      claims: [],
+    };
+
+    // Compute impact
+    const assessment = await computeImpactAssessment({
+      sourceEvidence,
+      targetEvidence,
+      driftCandidate: {
+        driftType: domains.includes('deployment') || domains.includes('infra') ? 'instruction' : 'process',
+        service: null,
+      },
+    });
+
+    impactScore = assessment.impactScore;
+    impactBand = assessment.impactBand;
+    console.log(`[Gatekeeper] Impact: ${impactBand} (score: ${(impactScore * 100).toFixed(0)}%)`);
+  } catch (error) {
+    console.error(`[Gatekeeper] Impact assessment failed:`, error);
+  }
+
+  // Step 6: Correlate with other signals
+  console.log(`[Gatekeeper] Correlating signals...`);
+  let correlatedSignalsCount = 0;
+  try {
+    // Create a signal ID for this PR
+    const signalId = `github_pr_${input.owner}_${input.repo}_${input.prNumber}`;
+
+    // Try to infer service from file paths
+    const inferredService = inferServiceFromFiles(input.files.map(f => f.filename));
+
+    if (inferredService) {
+      const joinResult = await joinSignals(
+        input.workspaceId,
+        signalId,
+        inferredService,
+        168 // 7 days
+      );
+
+      correlatedSignalsCount = joinResult.correlatedSignals.length;
+      console.log(`[Gatekeeper] Found ${correlatedSignalsCount} correlated signals`);
+      if (joinResult.joinReason) {
+        console.log(`[Gatekeeper] Correlation reason: ${joinResult.joinReason}`);
+      }
+    }
+  } catch (error) {
+    console.error(`[Gatekeeper] Signal correlation failed:`, error);
+  }
+
+  // Step 7: Calculate risk tier with all factors
   const riskTierResult = calculateRiskTier({
     isAgentAuthored: agentDetection.isAgentAuthored,
     agentConfidence: agentDetection.confidence,
     domains,
     evidenceSatisfied: evidenceCheck.satisfied,
     missingEvidence: evidenceCheck.missing,
-    // Note: impactScore and correlatedIncidents can be added later
+    impactScore,
+    correlatedIncidents: correlatedSignalsCount,
   });
-  
+
   console.log(`[Gatekeeper] Risk tier: ${riskTierResult.tier} (score: ${(riskTierResult.score * 100).toFixed(0)}%)`);
   console.log(`[Gatekeeper] Recommendation: ${riskTierResult.recommendation}`);
   
-  // Step 5: Create GitHub Check
+  // Step 8: Create GitHub Check with all findings
   try {
     await createGatekeeperCheck({
       owner: input.owner,
@@ -114,14 +222,17 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
       optionalEvidence: evidenceCheck.optional,
       agentDetected: agentDetection.isAgentAuthored,
       agentConfidence: agentDetection.confidence,
+      deltaSyncFindings: deltaSyncResult.findings,
+      impactBand,
+      correlatedSignalsCount,
     });
-    
+
     console.log(`[Gatekeeper] GitHub Check created successfully`);
   } catch (error) {
     console.error(`[Gatekeeper] Failed to create GitHub Check:`, error);
     throw error;
   }
-  
+
   return {
     riskTier: riskTierResult.tier,
     riskScore: riskTierResult.score,
@@ -131,7 +242,33 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
     evidenceSatisfied: evidenceCheck.satisfied,
     missingEvidence: evidenceCheck.missing,
     checkCreated: true,
+    deltaSyncFindings: deltaSyncResult.findings,
+    impactScore,
+    impactBand,
+    correlatedSignals: correlatedSignalsCount,
   };
+}
+
+/**
+ * Infer service name from file paths
+ */
+function inferServiceFromFiles(filePaths: string[]): string | null {
+  // Try to extract service from common patterns
+  for (const path of filePaths) {
+    // Pattern: services/api/... -> api
+    const serviceMatch = path.match(/services?\/([^/]+)/);
+    if (serviceMatch && serviceMatch[1]) {
+      return serviceMatch[1];
+    }
+
+    // Pattern: apps/api/... -> api
+    const appMatch = path.match(/apps\/([^/]+)/);
+    if (appMatch && appMatch[1]) {
+      return appMatch[1];
+    }
+  }
+
+  return null;
 }
 
 /**

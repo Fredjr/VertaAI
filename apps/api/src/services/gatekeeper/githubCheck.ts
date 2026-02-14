@@ -7,6 +7,7 @@
 
 import { getInstallationOctokit } from '../../lib/github.js';
 import type { RiskTier, RiskFactor } from './riskTier.js';
+import type { DeltaSyncFinding } from './deltaSync.js';
 
 export interface GatekeeperCheckInput {
   owner: string;
@@ -21,6 +22,9 @@ export interface GatekeeperCheckInput {
   optionalEvidence: string[];
   agentDetected: boolean;
   agentConfidence?: number;
+  deltaSyncFindings?: DeltaSyncFinding[];
+  impactBand?: 'low' | 'medium' | 'high' | 'critical';
+  correlatedSignalsCount?: number;
 }
 
 /**
@@ -28,12 +32,13 @@ export interface GatekeeperCheckInput {
  */
 export async function createGatekeeperCheck(input: GatekeeperCheckInput): Promise<void> {
   const octokit = await getInstallationOctokit(input.installationId);
-  
+
   const conclusion = riskTierToConclusion(input.riskTier);
   const title = formatTitle(input.riskTier, input.agentDetected);
   const summary = formatSummary(input);
   const text = formatDetails(input);
-  
+  const annotations = formatAnnotations(input.deltaSyncFindings || []);
+
   await octokit.rest.checks.create({
     owner: input.owner,
     repo: input.repo,
@@ -45,9 +50,10 @@ export async function createGatekeeperCheck(input: GatekeeperCheckInput): Promis
       title,
       summary,
       text,
+      annotations: annotations.length > 0 ? annotations : undefined,
     },
   });
-  
+
   console.log(`[Gatekeeper] Created GitHub Check for ${input.owner}/${input.repo}#${input.headSha.substring(0, 7)} - ${input.riskTier}`);
 }
 
@@ -94,17 +100,34 @@ function formatTitle(tier: RiskTier, agentDetected: boolean): string {
  */
 function formatSummary(input: GatekeeperCheckInput): string {
   const lines: string[] = [];
-  
+
   lines.push(`**Risk Tier:** ${input.riskTier}`);
   lines.push(`**Risk Score:** ${(input.riskScore * 100).toFixed(0)}%`);
-  
+
   if (input.agentDetected && input.agentConfidence !== undefined) {
     lines.push(`**Agent Detection:** ${(input.agentConfidence * 100).toFixed(0)}% confidence`);
   }
-  
+
+  if (input.impactBand) {
+    const emoji = getSeverityEmoji(input.impactBand);
+    lines.push(`**Impact:** ${emoji} ${input.impactBand}`);
+  }
+
+  if (input.correlatedSignalsCount !== undefined && input.correlatedSignalsCount > 0) {
+    lines.push(`**Correlated Signals:** ${input.correlatedSignalsCount} related events found`);
+  }
+
+  if (input.deltaSyncFindings && input.deltaSyncFindings.length > 0) {
+    const criticalCount = input.deltaSyncFindings.filter(f => f.severity === 'critical').length;
+    const highCount = input.deltaSyncFindings.filter(f => f.severity === 'high').length;
+    if (criticalCount > 0 || highCount > 0) {
+      lines.push(`**Delta Sync:** ${criticalCount} critical, ${highCount} high-severity findings`);
+    }
+  }
+
   lines.push('');
   lines.push(`**Recommendation:** ${input.recommendation}`);
-  
+
   return lines.join('\n');
 }
 
@@ -144,7 +167,21 @@ function formatDetails(input: GatekeeperCheckInput): string {
     }
     sections.push('');
   }
-  
+
+  // Delta Sync Findings section
+  if (input.deltaSyncFindings && input.deltaSyncFindings.length > 0) {
+    sections.push('## 🔍 Delta Sync Findings\n');
+    sections.push('Documentation drift detected based on code changes:\n');
+
+    for (const finding of input.deltaSyncFindings) {
+      const emoji = getSeverityEmoji(finding.severity);
+      sections.push(`${emoji} **${finding.title}** (${finding.severity})`);
+      sections.push(`   ${finding.description}`);
+      sections.push(`   Affected files: ${finding.affectedFiles.join(', ')}`);
+      sections.push(`   Suggested docs: ${finding.suggestedDocs.join(', ')}\n`);
+    }
+  }
+
   // Next Steps section
   sections.push('## 📋 Next Steps\n');
   
@@ -184,3 +221,49 @@ function getSeverityEmoji(severity: 'low' | 'medium' | 'high' | 'critical'): str
   }
 }
 
+/**
+ * Format delta sync findings as GitHub Check annotations
+ */
+function formatAnnotations(findings: DeltaSyncFinding[]): Array<{
+  path: string;
+  start_line: number;
+  end_line: number;
+  annotation_level: 'notice' | 'warning' | 'failure';
+  message: string;
+  title: string;
+}> {
+  const annotations: Array<{
+    path: string;
+    start_line: number;
+    end_line: number;
+    annotation_level: 'notice' | 'warning' | 'failure';
+    message: string;
+    title: string;
+  }> = [];
+
+  for (const finding of findings) {
+    // GitHub Check API limits annotations to 50
+    if (annotations.length >= 50) break;
+
+    // Map severity to annotation level
+    const annotation_level: 'notice' | 'warning' | 'failure' =
+      finding.severity === 'critical' ? 'failure' :
+      finding.severity === 'high' ? 'warning' :
+      'notice';
+
+    // Create annotation for the first affected file
+    const affectedFile = finding.affectedFiles[0];
+    if (affectedFile) {
+      annotations.push({
+        path: affectedFile,
+        start_line: 1,
+        end_line: 1,
+        annotation_level,
+        message: `${finding.description}\n\nSuggested docs to update: ${finding.suggestedDocs.join(', ')}`,
+        title: finding.title,
+      });
+    }
+  }
+
+  return annotations;
+}

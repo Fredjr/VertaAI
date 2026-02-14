@@ -481,10 +481,13 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
             prNumber: prInfo.prNumber,
             headSha: payload.pull_request.head.sha,
             installationId: prInfo.installationId,
+            workspaceId,
             author: prInfo.authorLogin,
             title: prInfo.prTitle,
             body: prInfo.prBody || '',
             labels,
+            baseBranch: payload.pull_request.base.ref,
+            headBranch: payload.pull_request.head.ref,
             commits,
             additions,
             deletions,
@@ -492,6 +495,9 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
           });
 
           console.log(`[Webhook] [V2] Gatekeeper result: ${gatekeeperResult.riskTier} (agent: ${gatekeeperResult.agentDetected})`);
+          if (gatekeeperResult.deltaSyncFindings.length > 0) {
+            console.log(`[Webhook] [V2] Delta sync findings: ${gatekeeperResult.deltaSyncFindings.length}`);
+          }
         } catch (error: any) {
           console.error('[Webhook] [V2] Gatekeeper failed:', error.message);
           // Don't fail the webhook if gatekeeper fails
