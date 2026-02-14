@@ -125,23 +125,51 @@ export class ArtifactFetcher {
   }
 
   /**
-   * Fetch all artifacts for a contract
+   * Fetch all artifacts for a contract (with telemetry)
    */
   async fetchContractArtifacts(
     contractId: string,
     artifacts: ArtifactRef[],
     triggeredBy: { signalEventId?: string; prNumber?: number }
   ): Promise<ArtifactSnapshot[]> {
-    const snapshots: ArtifactSnapshot[] = [];
+    const startTime = Date.now();
+    const snapshots: (ArtifactSnapshot | null)[] = [];
+    let cacheHits = 0;
 
     for (const artifact of artifacts) {
-      const snapshot = await this.fetchAndSnapshot(contractId, artifact, triggeredBy);
-      if (snapshot) {
+      // Check cache first
+      const existing = await this.findValidSnapshot(contractId, artifact);
+
+      if (existing) {
+        console.log(`[ArtifactFetcher] Cache hit for ${artifact.type}`);
+        snapshots.push(existing);
+        cacheHits++;
+      } else {
+        // Fetch new snapshot
+        const snapshot = await this.fetchAndSnapshot(contractId, artifact, triggeredBy);
         snapshots.push(snapshot);
       }
     }
 
-    return snapshots;
+    const fetchTimeMs = Date.now() - startTime;
+
+    // Calculate and log telemetry
+    const { calculateArtifactMetrics, logArtifactMetrics, logSummaryStats } = await import('./artifactTelemetry.js');
+
+    const metrics = calculateArtifactMetrics(
+      this.workspaceId,
+      triggeredBy.signalEventId || 'unknown',
+      contractId,
+      snapshots,
+      cacheHits,
+      fetchTimeMs
+    );
+
+    logArtifactMetrics(metrics);
+    logSummaryStats(metrics);
+
+    // Return only successful snapshots
+    return snapshots.filter((s): s is ArtifactSnapshot => s !== null);
   }
 
   /**
