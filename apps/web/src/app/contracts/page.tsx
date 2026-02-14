@@ -1,8 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Navigation from '@/components/Navigation';
+
+// Force dynamic rendering (no static generation)
+export const dynamic = 'force-dynamic';
 
 interface ContractPack {
   workspaceId: string;
