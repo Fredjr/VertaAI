@@ -1,8 +1,19 @@
 /**
  * Contract Packs API Routes
  * Task 2: Create UI for Managing ContractPacks
- * 
+ *
  * Provides CRUD operations for ContractPacks
+ *
+ * SECURITY NOTE:
+ * - All endpoints validate workspace existence (prevents access to non-existent workspaces)
+ * - TODO: Add user authentication and workspace access control before production
+ * - Current implementation is suitable for single-tenant or trusted environments
+ * - For multi-tenant production, implement workspace access middleware
+ *
+ * ADMIN-ONLY:
+ * - Contract packs are configuration, not end-user data
+ * - Should be managed by platform engineers/SREs only
+ * - Consider moving to Settings page in frontend
  */
 
 import { Router, type Router as ExpressRouter } from 'express';
@@ -18,6 +29,19 @@ const router: ExpressRouter = Router();
 router.get('/workspaces/:workspaceId/contract-packs', async (req, res) => {
   try {
     const { workspaceId } = req.params;
+
+    // Validate workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true },
+    });
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
 
     const contractPacks = await prisma.contractPack.findMany({
       where: { workspaceId },
@@ -44,6 +68,19 @@ router.get('/workspaces/:workspaceId/contract-packs', async (req, res) => {
 router.get('/workspaces/:workspaceId/contract-packs/:id', async (req, res) => {
   try {
     const { workspaceId, id } = req.params;
+
+    // Validate workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true },
+    });
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
 
     const contractPack = await prisma.contractPack.findUnique({
       where: {
@@ -82,6 +119,19 @@ router.post('/workspaces/:workspaceId/contract-packs', async (req, res) => {
   try {
     const { workspaceId } = req.params;
     const { name, description, contracts, version } = req.body;
+
+    // Validate workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true },
+    });
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
 
     // Validate required fields
     if (!name || !contracts) {
@@ -131,6 +181,19 @@ router.put('/workspaces/:workspaceId/contract-packs/:id', async (req, res) => {
     const { workspaceId, id } = req.params;
     const { name, description, contracts, version } = req.body;
 
+    // Validate workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true },
+    });
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
+
     const contractPack = await prisma.contractPack.update({
       where: {
         workspaceId_id: {
@@ -166,6 +229,19 @@ router.put('/workspaces/:workspaceId/contract-packs/:id', async (req, res) => {
 router.delete('/workspaces/:workspaceId/contract-packs/:id', async (req, res) => {
   try {
     const { workspaceId, id } = req.params;
+
+    // Validate workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true },
+    });
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
 
     await prisma.contractPack.delete({
       where: {

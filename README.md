@@ -26,6 +26,7 @@
 - **🔔 Notification Service**: Multi-channel notifications (email, SMS, push, Slack, webhooks) with priority-based routing and user preferences
 - **📤 Export Service**: Multi-format data export (JSON, CSV, Excel, PDF) with streaming support for large datasets
 - **🚀 Railway Deployment**: Cloud-native deployment with automatic scaling and health checks
+- **🔒 Contract Integrity & Readiness**: Prevents inconsistencies across code ↔ API ↔ docs ↔ runbooks ↔ dashboards ↔ diagrams (Phase 1 Week 1-4 complete)
 
 ## 🎯 Cluster-First Drift Triage
 
@@ -645,6 +646,67 @@ cd apps/api && npx tsc --noEmit
 - **SYSTEMATIC_FIXES_FROM_BUGS.md**: Quality improvement patterns
 - **NOISE_FILTERING_ASSESSMENT.md**: Noise filtering analysis and fixes
 - **REVISED_IMPLEMENTATION_PLAN.md**: Overall gap analysis and roadmap
+- **PRODUCT_GUIDE.md**: Contract Integrity & Readiness implementation plan
+- **ARCHITECTURE_REVIEW.md**: Senior architect review of Phase 1 Week 1-4
+
+## 🔒 Contract Integrity & Readiness (Phase 1 Week 1-4)
+
+**Status**: ✅ **Complete** (4 weeks, 9 commits)
+
+VertaAI now includes a **Contract Integrity & Readiness** system that prevents inconsistencies across:
+- Code ↔ API specs (OpenAPI, GraphQL)
+- API specs ↔ Documentation (Confluence, Notion)
+- Infrastructure ↔ Runbooks (Terraform, Kubernetes)
+- Dashboards ↔ Runbooks (Grafana, Datadog)
+
+### Architecture
+
+**Option B: Separate State Machines**
+- **Contract Validation**: Fast, deterministic (< 30s for PR checks)
+- **Drift Remediation**: Thorough, LLM-assisted (can take minutes)
+- **Shared Services**: ArtifactFetcher, ContractResolver, Comparators
+
+### Completed Features
+
+**Week 1-2: Contract Registry & Resolution Engine** (6 steps, 3 commits)
+- ✅ Prisma schema extensions (ContractPack, ContractResolution, ArtifactSnapshot, IntegrityFinding)
+- ✅ TypeScript type definitions (Contract, ArtifactRef, ArtifactVersion, ResolutionMethod)
+- ✅ ContractResolver service (5 resolution strategies with confidence scoring)
+- ✅ Webhook handler integration (parallel with drift detection)
+- ✅ Comprehensive telemetry (metrics, logging, confidence distribution)
+- ✅ End-to-end testing (all tests pass)
+- ✅ Full CRUD API for ContractPacks
+- ✅ Next.js UI for managing contract packs
+
+**Week 3-4: Artifact Fetcher & Snapshot System** (4 steps, 4 commits)
+- ✅ ArtifactFetcher service with adapter pattern
+- ✅ 3 artifact adapters (GitHub, Confluence, Grafana)
+- ✅ Versioned snapshots with TTL-based caching (3.8x faster on cache hits)
+- ✅ Webhook integration (automatic artifact fetching after contract resolution)
+- ✅ TTL cleanup job with QStash integration
+- ✅ Comprehensive telemetry and end-to-end testing
+
+### Security & Access Control
+
+**Current Status**: ⚠️ **Admin-Only Feature**
+- Contract packs are **configuration**, not end-user data
+- Should be managed by platform engineers/SREs only
+- All endpoints validate workspace existence
+- **TODO**: Add user authentication and workspace access control before production
+
+**For Production**:
+- Implement workspace access middleware
+- Add role-based access control (admin-only)
+- Consider moving Contracts UI to Settings page
+
+### Next Steps
+
+**Week 5-6: Comparators & IntegrityFinding** (planned)
+- Create comparator interface and base class
+- Implement OpenAPI comparator (schema drift detection)
+- Implement Terraform ↔ Runbook comparator
+- Generate IntegrityFinding records
+- Add comparison telemetry
 
 ## 📄 License
 
