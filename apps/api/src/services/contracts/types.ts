@@ -173,13 +173,13 @@ export type RecommendedAction = 'no_action' | 'notify' | 'create_patch_candidate
 
 export interface EvidenceItem {
   kind: string;
-  leftValue?: string;
-  rightValue?: string;
+  leftValue?: any; // Can be string, object, or null
+  rightValue?: any; // Can be string, object, or null
   leftSnippet?: string;
   rightSnippet?: string;
   pointers?: {
-    left?: string;
-    right?: string;
+    left?: string | null;
+    right?: string | null;
   };
 }
 
