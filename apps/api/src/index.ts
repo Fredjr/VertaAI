@@ -20,6 +20,7 @@ import auditRouter from './routes/audit.js';  // Phase 4 Week 8: Audit Trail & C
 import monitoringRouter from './routes/monitoring.js';  // Production monitoring endpoints
 import testWebhooksRouter from './routes/test-webhooks.js';  // Test endpoint for E2E testing
 import healthCheckRouter from './routes/health-check.js';  // Health check endpoints
+import contractPacksRouter from './routes/contractPacks.js';  // Phase 1 Week 1-2: Contract Packs Management
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -96,6 +97,9 @@ app.use('/api/audit', auditRouter);
 
 // Monitoring API routes (Production health and metrics)
 app.use('/api/monitoring', monitoringRouter);
+
+// Contract Packs API routes (Phase 1 Week 1-2 - Contract Integrity & Readiness)
+app.use('/api', contractPacksRouter);
 
 // Health check API routes
 app.use('/api', healthCheckRouter);

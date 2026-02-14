@@ -58,7 +58,7 @@ export default function Home() {
           <h3 className="text-xl font-semibold mb-6 text-gray-900 dark:text-white">
             Quick Access
           </h3>
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-4">
             <Link
               href={`/compliance?workspace=${workspaceId}`}
               className="p-6 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 hover:border-primary-500 transition-colors"
@@ -87,6 +87,16 @@ export default function Home() {
               <h4 className="font-semibold text-lg mb-2">Plans</h4>
               <p className="text-gray-600 dark:text-gray-400 text-sm">
                 DriftPlan management, templates, versioning
+              </p>
+            </Link>
+            <Link
+              href={`/contracts?workspace=${workspaceId}`}
+              className="p-6 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 hover:border-primary-500 transition-colors"
+            >
+              <div className="text-4xl mb-3">🔒</div>
+              <h4 className="font-semibold text-lg mb-2">Contracts</h4>
+              <p className="text-gray-600 dark:text-gray-400 text-sm">
+                Contract integrity rules, artifact validation
               </p>
             </Link>
             <Link
