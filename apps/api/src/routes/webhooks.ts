@@ -761,6 +761,39 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
         });
 
         console.log(`[Webhook] [V2] Contract resolution stored successfully`);
+
+        // PHASE 1 WEEK 3-4: Artifact Fetching (after contract resolution)
+        // Fetch artifacts for resolved contracts
+        if (contractResolutionResult.resolvedContracts.length > 0) {
+          try {
+            const { ArtifactFetcher } = await import('../services/contracts/artifactFetcher.js');
+            const fetcher = new ArtifactFetcher(workspaceId);
+
+            for (const resolvedContract of contractResolutionResult.resolvedContracts) {
+              // Find the contract definition
+              const contract = contracts.find(c => c.contractId === resolvedContract.contractId);
+              if (!contract) {
+                continue;
+              }
+
+              // Fetch artifacts for this contract
+              const triggeredBy = {
+                signalEventId: signalEvent.id,
+                prNumber: prInfo?.prNumber,
+              };
+
+              const snapshots = await fetcher.fetchContractArtifacts(
+                contract.contractId,
+                contract.artifacts,
+                triggeredBy
+              );
+
+              console.log(`[Webhook] [V2] Fetched ${snapshots.length} artifact snapshots for contract ${contract.contractId}`);
+            }
+          } catch (fetchError) {
+            console.error('[Webhook] [V2] Artifact fetching failed (non-blocking):', fetchError);
+          }
+        }
       } else {
         console.log(`[Webhook] [V2] No contract pack found for workspace ${workspaceId} - skipping contract resolution`);
       }
