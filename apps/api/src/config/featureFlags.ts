@@ -49,6 +49,9 @@ export const FEATURE_FLAGS = {
   ENABLE_MATERIALITY_GATE: false,       // Phase 3: Materiality-based routing
   ENABLE_CONTEXT_EXPANSION: false,      // Phase 4: Bounded context expansion
   ENABLE_TEMPORAL_ACCUMULATION: false,  // Phase 5: Temporal drift accumulation
+
+  // Agent PR Gatekeeper (Phase 1)
+  ENABLE_AGENT_PR_GATEKEEPER: true,     // Agent PR detection and risk gating
 } as const;
 
 export type FeatureFlag = keyof typeof FEATURE_FLAGS;

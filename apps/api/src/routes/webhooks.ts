@@ -20,6 +20,7 @@ import {
   diffCodeOwners,
   createOwnershipDriftSignal
 } from '../services/signals/codeownersParser.js';
+import { runGatekeeper, shouldRunGatekeeper } from '../services/gatekeeper/index.js';
 
 // LEGACY: Create Octokit with personal access token for repo webhooks (no installation)
 // Used only by legacy endpoint - will be deprecated
@@ -404,7 +405,11 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
 
     // Get PR diff and files for analysis using WORKSPACE-SCOPED GitHub client
     let diff = '';
-    let files: Array<{ filename: string; status: string; additions: number; deletions: number }> = [];
+    let files: Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string }> = [];
+    let commits: Array<{ message: string; author: string }> = [];
+    let labels: string[] = [];
+    let additions = 0;
+    let deletions = 0;
 
     try {
       // Use workspace-scoped GitHub client (multi-tenant)
@@ -413,16 +418,87 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
 
       if (octokit) {
         console.log(`[Webhook] [V2] Fetching PR diff and files using workspace-scoped client`);
-        [diff, files] = await Promise.all([
+
+        // Fetch PR details, diff, files, and commits in parallel
+        const [prDetails, prDiff, prFiles, prCommits] = await Promise.all([
+          octokit.rest.pulls.get({
+            owner: prInfo.repoOwner,
+            repo: prInfo.repoName,
+            pull_number: prInfo.prNumber,
+          }),
           getPRDiff(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
-          getPRFiles(octokit, prInfo.repoOwner, prInfo.repoName, prInfo.prNumber),
+          octokit.rest.pulls.listFiles({
+            owner: prInfo.repoOwner,
+            repo: prInfo.repoName,
+            pull_number: prInfo.prNumber,
+            per_page: 100,
+          }),
+          octokit.rest.pulls.listCommits({
+            owner: prInfo.repoOwner,
+            repo: prInfo.repoName,
+            pull_number: prInfo.prNumber,
+            per_page: 100,
+          }),
         ]);
-        console.log(`[Webhook] [V2] Fetched ${files.length} files, diff length: ${diff.length}`);
+
+        diff = prDiff;
+        files = prFiles.data.map(file => ({
+          filename: file.filename,
+          status: file.status,
+          additions: file.additions,
+          deletions: file.deletions,
+          patch: file.patch,
+        }));
+        commits = prCommits.data.map(commit => ({
+          message: commit.commit.message,
+          author: commit.commit.author?.name || commit.author?.login || 'unknown',
+        }));
+        labels = prDetails.data.labels.map(label => typeof label === 'string' ? label : label.name);
+        additions = prDetails.data.additions;
+        deletions = prDetails.data.deletions;
+
+        console.log(`[Webhook] [V2] Fetched ${files.length} files, ${commits.length} commits, ${labels.length} labels`);
       } else {
         console.warn(`[Webhook] [V2] No GitHub client available for workspace ${workspaceId}`);
       }
     } catch (error: any) {
       console.error('[Webhook] [V2] Error fetching PR details:', error.message);
+    }
+
+    // =========================================================================
+    // AGENT PR GATEKEEPER (Phase 1)
+    // Run gatekeeper for opened and synchronize events (not for merged PRs)
+    // Creates GitHub Check with risk tier and evidence requirements
+    // =========================================================================
+    if (isFeatureEnabled('ENABLE_AGENT_PR_GATEKEEPER', workspaceId) && !prInfo.merged) {
+      if (shouldRunGatekeeper({ author: prInfo.authorLogin, labels })) {
+        console.log(`[Webhook] [V2] Running Agent PR Gatekeeper for PR #${prInfo.prNumber}`);
+
+        try {
+          const gatekeeperResult = await runGatekeeper({
+            owner: prInfo.repoOwner,
+            repo: prInfo.repoName,
+            prNumber: prInfo.prNumber,
+            headSha: payload.pull_request.head.sha,
+            installationId: prInfo.installationId,
+            author: prInfo.authorLogin,
+            title: prInfo.prTitle,
+            body: prInfo.prBody || '',
+            labels,
+            commits,
+            additions,
+            deletions,
+            files,
+          });
+
+          console.log(`[Webhook] [V2] Gatekeeper result: ${gatekeeperResult.riskTier} (agent: ${gatekeeperResult.agentDetected})`);
+        } catch (error: any) {
+          console.error('[Webhook] [V2] Gatekeeper failed:', error.message);
+          // Don't fail the webhook if gatekeeper fails
+        }
+      } else {
+        console.log(`[Webhook] [V2] Skipping gatekeeper for PR #${prInfo.prNumber} (trusted bot or skip label)`);
+      }
     }
 
     // =========================================================================
