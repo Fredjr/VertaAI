@@ -1,8 +1,10 @@
 # VertaAI Product Guide
 
-**Version:** 2.1
+**Version:** 3.0
 **Last Updated:** February 14, 2026
 **Audience:** New developers, customers, and technical stakeholders
+
+**Major Update:** This version reflects the strategic pivot to **Contract Integrity & Readiness**, introducing a dual-track architecture with fast contract validation (Track 1) and thorough drift remediation (Track 2).
 
 ---
 
@@ -25,33 +27,38 @@
 
 ## What is VertaAI?
 
-**VertaAI** is an **AI-powered documentation maintenance agent** that automatically keeps your operational documentation (runbooks, onboarding guides, decision docs) in sync with reality.
+**VertaAI** is an **AI-powered governance platform** that ensures consistency across your entire operational stack — from code to APIs to documentation to infrastructure to observability.
 
 ### One-Liner
-> "We keep runbooks and onboarding docs correct by automatically proposing PR-style updates from incidents, PRs, and Slack — with owner routing and approvals."
+> "We prevent inconsistencies across code ↔ API ↔ docs ↔ runbooks ↔ dashboards ↔ diagrams by validating contracts in real-time and proposing surgical fixes when drift occurs."
 
 ### Core Value Proposition
-When your infrastructure changes, your deployment process evolves, or your team structure shifts, **VertaAI detects the drift** between what your documentation says and what actually happens, then **proposes precise fixes** for human approval.
+VertaAI operates on two levels:
+
+1. **Contract Integrity & Readiness** (Prevention): Fast, deterministic validation that catches inconsistencies before they reach production. When you open a PR, VertaAI validates that your OpenAPI spec matches your documentation, your Terraform matches your runbooks, and your dashboards match your alerts — all in < 30 seconds.
+
+2. **Drift Detection & Remediation** (Correction): When changes slip through or accumulate over time, VertaAI detects the drift between what your documentation says and what actually happens, then proposes precise, evidence-grounded fixes for human approval.
 
 ---
 
 ## The Problem We Solve
 
-### The Documentation Drift Problem
+### The Contract Integrity Problem
 
 Every engineering team faces this cycle:
 
 ```
-Code Changes → Docs Become Stale → Engineers Waste Time → Incidents Happen → Docs Updated (Maybe)
+Code Changes → API Drifts → Docs Become Stale → Runbooks Lie → Dashboards Mislead → Incidents Happen → (Maybe) Fixed
 ```
 
 **Specific pain points:**
 
-1. **Runbooks lie**: "Deploy with kubectl" but you switched to Helm 6 months ago
-2. **Ownership is wrong**: Slack channel moved, on-call rotation changed, CODEOWNERS outdated
-3. **Missing scenarios**: New failure modes aren't documented after incidents
-4. **Process drift**: Deployment steps changed but runbook wasn't updated
-5. **Tool migrations**: Switched from Jenkins to GitHub Actions, docs still reference old tools
+1. **API ↔ Docs Drift**: OpenAPI spec says endpoint requires `userId`, docs say it's optional
+2. **Infrastructure ↔ Runbook Drift**: Terraform deploys to 3 regions, runbook only covers 2
+3. **Dashboard ↔ Alert Drift**: Grafana dashboard shows metric `api_latency_p99`, but alerts use `api_response_time_p99`
+4. **Code ↔ Ownership Drift**: CODEOWNERS says `@platform-team`, but team was renamed to `@infra-team`
+5. **Deployment ↔ Docs Drift**: Switched from kubectl to Helm, runbook still shows kubectl commands
+6. **Missing Coverage**: New failure modes, rollback procedures, or edge cases aren't documented
 
 ### Why Traditional Solutions Fail
 
@@ -62,18 +69,77 @@ Code Changes → Docs Become Stale → Engineers Waste Time → Incidents Happen
 | **Search tools** | Help you find docs, don't keep them correct |
 | **Wikis with "last updated"** | Timestamp doesn't mean content is accurate |
 | **"Living documentation"** | Requires discipline that doesn't scale |
+| **Contract testing** | Only validates code ↔ API, ignores docs/runbooks/dashboards |
+| **Schema validation** | Catches syntax errors, not semantic inconsistencies |
 
 ---
 
 ## How VertaAI Works
 
-### The VertaAI Approach: Detect → Cluster → Propose → Approve → Update
+### The VertaAI Dual-Track Approach
+
+VertaAI operates on two parallel tracks:
+
+#### **Track 1: Contract Validation (Fast, Deterministic, PR-Blocking)**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. PR OPENED/UPDATED (GitHub Webhook)                           │
+│  ├─ Extract changed files (OpenAPI, Terraform, CODEOWNERS, etc.) │
+│  ├─ Resolve applicable contracts (file patterns, service tags)   │
+│  └─ Trigger contract validation (< 30s total)                    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  2. FETCH ARTIFACT SNAPSHOTS (Parallel)                          │
+│  ├─ Primary artifacts (OpenAPI spec, Terraform configs)          │
+│  ├─ Secondary artifacts (Confluence docs, Notion pages)          │
+│  └─ Reference artifacts (Grafana dashboards, alert configs)      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  3. RUN COMPARATORS (Deterministic, < 5s each)                   │
+│  ├─ OpenAPI ↔ Docs: Endpoint/schema/example parity              │
+│  ├─ Terraform ↔ Runbook: Infrastructure consistency             │
+│  ├─ Dashboard ↔ Alert: Metric name consistency                  │
+│  └─ CODEOWNERS ↔ Docs: Ownership accuracy                       │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  4. GENERATE INTEGRITY FINDINGS (Structured)                     │
+│  ├─ Severity: critical/high/medium/low                           │
+│  ├─ Drift type: endpoint_missing, schema_mismatch, etc.          │
+│  ├─ Evidence: Specific mismatches with pointers                  │
+│  └─ Recommended action: block_merge/create_patch/notify         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  5. CREATE GITHUB CHECK (Real-time)                              │
+│  ├─ Conclusion: success (PASS) / neutral (WARN) / failure (BLOCK)│
+│  ├─ Summary: Risk tier, findings count, impact band              │
+│  ├─ Annotations: File-level findings (max 50)                    │
+│  └─ Details: Evidence, recommendations, links                    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  6. (OPTIONAL) CREATE DRIFT CANDIDATE                            │
+│  └─ If findings are severe → Trigger remediation track          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### **Track 2: Drift Remediation (Thorough, LLM-Assisted, Human-Approved)**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. DETECT DRIFT (Deterministic)                                 │
 │  ├─ GitHub PR merged (changed deployment scripts)                │
 │  ├─ PagerDuty incident resolved (new failure scenario)           │
+│  ├─ Contract validation findings (from Track 1)                  │
 │  └─ Slack questions clustered (knowledge gap detected)           │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -144,21 +210,35 @@ Code Changes → Docs Become Stale → Engineers Waste Time → Incidents Happen
 
 ### Key Differentiators
 
-1. **Deterministic detection with typed deltas**: 100% reproducible artifact comparison producing machine-readable typed deltas (no LLM randomness)
-2. **Evidence-grounded patching**: LLM agents receive structured typed deltas from the EvidenceBundle — not raw diffs — ensuring every patch element traces to deterministic evidence
-3. **Materiality gate**: Deterministic pre-patch filter prevents low-value patches (tag-only changes, low-confidence single deltas) from reaching the LLM
-4. **Bounded context expansion**: Fetches up to 3 key changed files (config, Dockerfile, API specs) to distinguish critical changes from trivial edits
-5. **Temporal drift accumulation**: Tracks cumulative drift per document over time, bundling multiple small drifts into comprehensive updates
-6. **Cluster-first triage**: Groups similar drifts for bulk actions (80-90% notification reduction)
-7. **Orthogonal coverage**: Detects both incorrect AND missing documentation
-8. **Early threshold routing**: Filters low-confidence drifts before patch generation (30-40% LLM call reduction)
-9. **Diff-based, not rewrites**: We propose surgical changes, not full document regeneration
-10. **Human-in-the-loop**: No autonomous publishing — you always approve
-11. **Multi-source correlation**: Combines GitHub + PagerDuty + Slack signals
-12. **Ownership-aware**: Routes to the right person based on CODEOWNERS, mappings, on-call
-13. **Complete audit trail**: Full observability with PlanRun tracking, EvidenceBundle pattern, and materiality skip reasons
-14. **Agent PR gatekeeper**: Detects agent-authored PRs and gates risky changes with evidence-based checks
-15. **Delta sync findings**: Reuses existing parsers (IaC, OpenAPI, CODEOWNERS) to detect drift in real-time
+#### **Contract Validation (Track 1)**
+1. **Fast, deterministic validation**: < 30s total for PR checks (no LLM calls)
+2. **Contract-first design**: Explicit contract definitions with artifact roles (primary/secondary/reference)
+3. **Pluggable comparators**: Easy to add new comparator types (OpenAPI, Terraform, Grafana, etc.)
+4. **Structured findings**: Machine-readable IntegrityFindings with severity, evidence, and recommendations
+5. **Real-time GitHub Checks**: Inline annotations on changed files with actionable feedback
+6. **Snapshot versioning**: Immutable artifact snapshots with TTL cleanup
+7. **Multi-artifact comparison**: Compare across 3+ artifact types in a single contract
+8. **Confidence scoring**: Resolution confidence (0.0-1.0) based on matching strategy
+
+#### **Drift Remediation (Track 2)**
+9. **Deterministic detection with typed deltas**: 100% reproducible artifact comparison producing machine-readable typed deltas (no LLM randomness)
+10. **Evidence-grounded patching**: LLM agents receive structured typed deltas from the EvidenceBundle — not raw diffs — ensuring every patch element traces to deterministic evidence
+11. **Materiality gate**: Deterministic pre-patch filter prevents low-value patches (tag-only changes, low-confidence single deltas) from reaching the LLM
+12. **Bounded context expansion**: Fetches up to 3 key changed files (config, Dockerfile, API specs) to distinguish critical changes from trivial edits
+13. **Temporal drift accumulation**: Tracks cumulative drift per document over time, bundling multiple small drifts into comprehensive updates
+14. **Cluster-first triage**: Groups similar drifts for bulk actions (80-90% notification reduction)
+15. **Orthogonal coverage**: Detects both incorrect AND missing documentation
+16. **Early threshold routing**: Filters low-confidence drifts before patch generation (30-40% LLM call reduction)
+17. **Diff-based, not rewrites**: We propose surgical changes, not full document regeneration
+18. **Human-in-the-loop**: No autonomous publishing — you always approve
+19. **Multi-source correlation**: Combines GitHub + PagerDuty + Slack + Contract findings
+20. **Ownership-aware**: Routes to the right person based on CODEOWNERS, mappings, on-call
+21. **Complete audit trail**: Full observability with PlanRun tracking, EvidenceBundle pattern, and materiality skip reasons
+
+#### **Cross-Cutting**
+22. **Agent PR gatekeeper**: Detects agent-authored PRs and gates risky changes with evidence-based checks
+23. **Delta sync findings**: Reuses existing parsers (IaC, OpenAPI, CODEOWNERS) to detect drift in real-time
+24. **Workspace-scoped multi-tenancy**: Complete data isolation with composite primary keys
 
 ---
 
@@ -227,7 +307,7 @@ Signal: PR changes "kubectl apply" to "helm install"
 
 ### System Overview
 
-VertaAI is built as a **multi-tenant, event-driven system** with a **deterministic state machine** at its core.
+VertaAI is built as a **multi-tenant, event-driven system** with **two parallel processing tracks**: fast contract validation and thorough drift remediation.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -248,32 +328,32 @@ VertaAI is built as a **multi-tenant, event-driven system** with a **determinist
 │  │              SIGNAL NORMALIZATION & STORAGE                          │     │
 │  │  • SignalEvent table (workspace-scoped)                              │     │
 │  │  • Extract: repo, service, author, diff, metadata                    │     │
-│  │  • Create DriftCandidate with state=INGESTED                         │     │
+│  │  • Dual routing: Contract validation + Drift detection               │     │
 │  └────────────────────────────┬────────────────────────────────────────┘     │
 │                               │                                              │
 │            ┌──────────────────┼──────────────────┐                           │
 │            ▼                  ▼                  ▼                           │
-│  ┌──────────────────┐  ┌─────────────────────────────────────────┐           │
-│  │ AGENT PR         │  │   STATE MACHINE ORCHESTRATOR            │           │
-│  │ GATEKEEPER       │  │  • QStash job queue (Vercel-compatible) │           │
-│  │ • Agent Detector │  │  • Bounded loop: MAX_TRANSITIONS = 5    │           │
-│  │ • Risk Scoring   │  │  • Distributed locking (30s TTL)        │           │
-│  │ • Delta Sync     │  │  • Retry logic with exponential backoff │           │
-│  │ • GitHub Checks  │  └─────────────────┬───────────────────────┘           │
-│  └──────────────────┘                    │                                   │
-│         │                                │                                   │
-│         ▼                                │                                   │
-│  ┌──────────────────┐         ┌─────────┼─────────────────────────┐         │
+│  ┌──────────────────┐  ┌─────────────────┐  ┌─────────────────────────┐     │
+│  │ CONTRACT         │  │ AGENT PR        │  │ STATE MACHINE           │     │
+│  │ VALIDATION       │  │ GATEKEEPER      │  │ ORCHESTRATOR            │     │
+│  │ • Resolver       │  │ • Agent Detect  │  │ • QStash job queue      │     │
+│  │ • Fetcher        │  │ • Risk Scoring  │  │ • Bounded loop (5 max)  │     │
+│  │ • Comparators    │  │ • Delta Sync    │  │ • Distributed locking   │     │
+│  │ • Findings       │  │ • GitHub Checks │  │ • Retry w/ backoff      │     │
+│  │ • GitHub Check   │  └─────────────────┘  └─────────┬───────────────┘     │
+│  └────────┬─────────┘                                 │                     │
+│           │                                           │                     │
+│           ▼                                           ▼                     │
+│  ┌──────────────────┐         ┌─────────┬─────────────────────────┐         │
 │  │ GitHub Check API │         ▼         ▼                         ▼         │
-│  │ • Risk Tiers     │  ┌─────────────┐      ┌─────────────┐         ┌─────────────┐  │
-│  │ • Annotations    │  │ LLM AGENTS  │      │ DOC SERVICE │         │  SLACK APP  │  │
-│  │ • Findings       │  │             │      │             │         │             │  │
-│  └──────────────────┘  │ • Triage    │      │ • Adapters  │         │ • Composer  │  │
-│                        │ • Planner   │      │ • Fetch     │         │ • Buttons   │  │
-│                        │ • Generator │      │ • Writeback │         │ • Routing   │  │
-│                        │             │      │ • Versioning│         │             │  │
-│                        │ (Stateless) │      │             │         │             │  │
-│                        └─────────────┘      └─────────────┘         └─────────────┘  │
+│  │ • PASS/WARN/BLOCK│  ┌─────────────┐      ┌─────────────┐  ┌──────────┐  │
+│  │ • Annotations    │  │ LLM AGENTS  │      │ DOC SERVICE │  │ SLACK APP│  │
+│  │ • Findings       │  │             │      │             │  │          │  │
+│  └──────────────────┘  │ • Triage    │      │ • Adapters  │  │ • Compose│  │
+│                        │ • Planner   │      │ • Fetch     │  │ • Buttons│  │
+│                        │ • Generator │      │ • Writeback │  │ • Routing│  │
+│                        │ (Stateless) │      │ • Versioning│  │          │  │
+│                        └─────────────┘      └─────────────┘  └──────────┘  │
 │                               │                                              │
 │                               ▼                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐     │
@@ -281,6 +361,10 @@ VertaAI is built as a **multi-tenant, event-driven system** with a **determinist
 │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │     │
 │  │  │  Workspace   │  │ SignalEvent  │  │DriftCandidate│               │     │
 │  │  │ (tenant)     │  │ (normalized) │  │ (state)      │               │     │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘               │     │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │     │
+│  │  │ContractPack  │  │ArtifactSnap  │  │IntegrityFind │               │     │
+│  │  │ (contracts)  │  │ (versioned)  │  │ (findings)   │               │     │
 │  │  └──────────────┘  └──────────────┘  └──────────────┘               │     │
 │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │     │
 │  │  │PatchProposal │  │ Integration  │  │DocMappingsV2 │               │     │
@@ -315,11 +399,43 @@ model DriftCandidate {
   id          String
   @@id([workspaceId, id])
 }
+
+model ContractPack {
+  workspaceId String
+  id          String
+  @@id([workspaceId, id])
+}
 ```
 
 **Why:** Ensures complete data isolation between customers.
 
-#### 2. Deterministic State Machine
+#### 2. Contract-First Design
+
+Contracts are first-class objects that define what should be consistent:
+
+```typescript
+model ContractPack {
+  workspaceId     String
+  id              String
+  name            String
+  description     String
+  invariants      Invariant[]  // What to check
+  scope           Json         // Where to apply (repos, services, file patterns)
+  isActive        Boolean
+  @@id([workspaceId, id])
+}
+
+model Invariant {
+  invariantId       String
+  comparatorType    String      // 'openapi_docs_endpoint_parity', 'terraform_runbook_consistency'
+  artifactRoles     Json        // { primary: 'openapi', secondary: 'confluence_page' }
+  expectedOutcome   String      // 'all_endpoints_documented', 'infrastructure_matches_runbook'
+}
+```
+
+**Why:** Explicit, versioned contracts that can be audited and evolved.
+
+#### 3. Deterministic State Machine (Drift Remediation)
 
 18 states with explicit transition handlers:
 
@@ -333,11 +449,16 @@ const TRANSITION_HANDLERS: Record<DriftState, TransitionHandler> = {
 
 **Why:** Predictable, debuggable, resumable processing.
 
-#### 3. Adapter Pattern for Documentation Systems
+#### 4. Adapter Pattern for Artifacts & Documentation
 
-Unified interface for different doc platforms:
+Unified interface for different systems:
 
 ```typescript
+interface ArtifactAdapter {
+  fetch(ref: ArtifactRef): Promise<FetchResult>;
+  getArtifactUrl(ref: ArtifactRef): string;
+}
+
 interface DocAdapter {
   fetch(doc: DocRef): Promise<FetchResult>;
   writePatch(params: WritePatchParams): Promise<WriteResult>;
@@ -346,9 +467,34 @@ interface DocAdapter {
 }
 ```
 
-**Why:** Easy to add new doc systems without changing core logic.
+**Why:** Easy to add new systems (Grafana, Datadog, etc.) without changing core logic.
 
-#### 4. Bounded Loop Pattern
+#### 5. Comparator Pattern (Template Method)
+
+Pluggable, stateless comparators:
+
+```typescript
+abstract class BaseComparator implements IComparator {
+  async compare(input: ComparatorInput): Promise<ComparatorResult> {
+    this.validateInput(input);
+    if (!this.canCompare(input.invariant, [input.leftSnapshot, input.rightSnapshot])) {
+      return this.createSkippedResult(input.invariant.invariantId, 'not_applicable');
+    }
+    const leftData = this.extractData(input.leftSnapshot);
+    const rightData = this.extractData(input.rightSnapshot);
+    const findings = await this.performComparison(leftData, rightData, input);
+    return { invariantId: input.invariant.invariantId, evaluated: true, findings };
+  }
+
+  abstract canCompare(invariant: Invariant, snapshots: ArtifactSnapshot[]): boolean;
+  abstract extractData(snapshot: ArtifactSnapshot): any;
+  abstract performComparison(left: any, right: any, input: ComparatorInput): Promise<IntegrityFinding[]>;
+}
+```
+
+**Why:** Consistent workflow, easy to test, pluggable implementations.
+
+#### 6. Bounded Loop Pattern
 
 ```typescript
 const MAX_TRANSITIONS_PER_INVOCATION = 5;
@@ -356,7 +502,7 @@ const MAX_TRANSITIONS_PER_INVOCATION = 5;
 
 **Why:** Prevents infinite loops, keeps job execution time predictable.
 
-#### 5. Evidence-Based Patch Generation
+#### 7. Evidence-Based Patch Generation
 
 ```typescript
 interface EvidencePack {
@@ -948,7 +1094,167 @@ github_pr:
 
 ## Key Technical Concepts
 
-### 1. Drift Types & Orthogonal Coverage
+### 1. Contract Packs & Invariants
+
+**Contract Packs** are collections of invariants that define what should be consistent across your operational stack.
+
+**Key Concepts:**
+
+- **ContractPack**: A named collection of invariants with scope rules (which repos/services/files it applies to)
+- **Invariant**: A single consistency rule (e.g., "all OpenAPI endpoints must be documented in Confluence")
+- **Artifact Roles**: Each invariant defines which artifacts to compare:
+  - `primary`: Source of truth (e.g., OpenAPI spec)
+  - `secondary`: Derived artifact (e.g., Confluence docs)
+  - `reference`: Additional context (e.g., Grafana dashboard)
+- **Comparator Type**: Which comparator to use (e.g., `openapi_docs_endpoint_parity`)
+- **Expected Outcome**: What success looks like (e.g., `all_endpoints_documented`)
+
+**Example Contract Pack:**
+
+```typescript
+{
+  name: "API Documentation Consistency",
+  description: "Ensures OpenAPI spec matches Confluence API docs",
+  scope: {
+    repos: ["acme/api-service"],
+    services: ["api-service"],
+    filePatterns: ["**/openapi.yaml", "**/swagger.json"]
+  },
+  invariants: [
+    {
+      invariantId: "endpoint-parity",
+      comparatorType: "openapi_docs_endpoint_parity",
+      artifactRoles: {
+        primary: { type: "openapi", locator: "openapi.yaml" },
+        secondary: { type: "confluence_page", locator: "164013" }
+      },
+      expectedOutcome: "all_endpoints_documented"
+    },
+    {
+      invariantId: "schema-parity",
+      comparatorType: "openapi_docs_schema_parity",
+      artifactRoles: {
+        primary: { type: "openapi", locator: "openapi.yaml" },
+        secondary: { type: "confluence_page", locator: "164013" }
+      },
+      expectedOutcome: "all_schemas_documented"
+    }
+  ]
+}
+```
+
+### 2. Contract Resolution Strategies
+
+When a PR is opened, VertaAI resolves which contracts apply using 5 strategies (in priority order):
+
+| Strategy | Confidence | How It Works | Example |
+|----------|-----------|--------------|---------|
+| **explicit_path** | 1.0 | Exact file path match | `scope.filePaths = ["openapi.yaml"]` |
+| **file_pattern** | 0.7-1.0 | Glob pattern match | `scope.filePatterns = ["**/openapi.yaml"]` |
+| **directory_pattern** | 0.7 | Directory match | `scope.directoryPatterns = ["deploy/**"]` |
+| **codeowners** | 0.75 | CODEOWNERS team match | `scope.codeownersTeams = ["@platform-team"]` |
+| **service_tag** | 0.6 | Service name match | `scope.services = ["api-service"]` |
+
+**Why confidence matters:** Higher confidence = more likely to block merge on failure.
+
+### 3. Artifact Snapshots & Versioning
+
+Every artifact is fetched and stored as an immutable snapshot:
+
+```typescript
+model ArtifactSnapshot {
+  workspaceId     String
+  id              String
+  artifactType    String      // 'openapi', 'confluence_page', 'terraform_config'
+  artifactLocator String      // URL, file path, or ID
+  content         Json        // Parsed artifact content
+  rawContent      String?     // Original raw content
+  version         String?     // Artifact version (if available)
+  fetchedAt       DateTime
+  expiresAt       DateTime    // TTL for cleanup
+  @@id([workspaceId, id])
+}
+```
+
+**Benefits:**
+- ✅ **Reproducibility**: Can replay comparisons with exact same data
+- ✅ **Performance**: No need to re-fetch artifacts for multiple comparisons
+- ✅ **Auditability**: Full history of what was compared
+- ✅ **TTL Cleanup**: Automatic cleanup after 24 hours (configurable)
+
+### 4. Comparators & IntegrityFindings
+
+**Comparators** are deterministic, stateless functions that compare artifact snapshots and produce structured findings.
+
+**Key Properties:**
+- ✅ **Deterministic**: Same input always produces same output (no LLM calls)
+- ✅ **Fast**: Complete in < 5 seconds
+- ✅ **Stateless**: No side effects, easy to test
+- ✅ **Pluggable**: Easy to add new comparators
+
+**Comparator Types (Implemented):**
+1. **OpenAPI ↔ Docs** (`openapi_docs_endpoint_parity`):
+   - Detects missing endpoints (in OpenAPI but not in docs)
+   - Detects deprecated endpoints (in docs but not in OpenAPI)
+   - Detects missing parameters (required/optional)
+   - Detects missing schemas
+   - Detects missing examples
+
+**Comparator Types (Planned):**
+2. **Terraform ↔ Runbook** (`terraform_runbook_consistency`):
+   - Detects infrastructure drift (regions, resources, configs)
+   - Detects missing deployment steps
+   - Detects outdated rollback procedures
+
+3. **Dashboard ↔ Alert** (`dashboard_alert_metric_parity`):
+   - Detects metric name mismatches
+   - Detects missing alerts for dashboard panels
+   - Detects threshold inconsistencies
+
+4. **CODEOWNERS ↔ Docs** (`codeowners_docs_ownership_parity`):
+   - Detects ownership drift (team renames, moves)
+   - Detects missing ownership documentation
+
+**IntegrityFinding Structure:**
+
+```typescript
+model IntegrityFinding {
+  workspaceId       String
+  id                String
+  contractId        String
+  invariantId       String
+  signalEventId     String
+  driftType         String      // 'endpoint_missing', 'schema_mismatch', etc.
+  severity          String      // 'critical', 'high', 'medium', 'low'
+  evidence          Json        // Structured evidence with pointers
+  comparedArtifacts Json        // Which snapshots were compared
+  recommendedAction String      // 'block_merge', 'create_patch_candidate', 'notify', 'no_action'
+  confidence        Float       // 0.0-1.0
+  impact            Float       // 0.0-1.0
+  band              String      // 'pass', 'warn', 'fail'
+  routedTo          Json        // Who should be notified
+  createdAt         DateTime
+  @@id([workspaceId, id])
+}
+```
+
+**Evidence Structure:**
+
+```typescript
+{
+  kind: "endpoint_missing",
+  leftValue: { method: "POST", path: "/api/users", summary: "Create user" },
+  rightValue: null,
+  leftSnippet: "POST /api/users - Create a new user account",
+  rightSnippet: null,
+  pointers: {
+    left: "paths./api/users.post",
+    right: null
+  }
+}
+```
+
+### 5. Drift Types & Orthogonal Coverage
 
 VertaAI classifies drift into 4 primary types, with **coverage as an orthogonal dimension**:
 
@@ -980,7 +1286,7 @@ Coverage gaps are detected **independently** and can apply to ANY drift type:
 - **Detection**: `driftType = "instruction"` + `hasCoverageGap = true`
 - **Slack**: "📋 Instruction Drift + 📊 Coverage Gap Detected"
 
-### 2. Evidence-Based Detection (EvidenceBundle Pattern + Typed Deltas)
+### 6. Evidence-Based Detection (EvidenceBundle Pattern + Typed Deltas)
 
 **Purpose:** Deterministic, reproducible drift detection without LLM randomness. Produces machine-readable typed deltas that flow directly to LLM agents.
 
@@ -1052,7 +1358,7 @@ Coverage gaps are detected **independently** and can apply to ANY drift type:
 - **Accurate**: Detects 5 types of drift across 7 source types with key:value depth
 - **Auditable**: Full evidence trail with per-delta provenance for compliance
 
-### 3. Patch Generation (Unified Diff)
+### 7. Patch Generation (Unified Diff)
 
 **Key constraint:** Generate diffs, not full rewrites
 
@@ -1083,7 +1389,7 @@ Coverage gaps are detected **independently** and can apply to ANY drift type:
 - No secrets (validated with regex)
 - Must apply cleanly to current doc version
 
-### 4. Owner Resolution
+### 8. Owner Resolution
 
 **Priority chain:**
 
@@ -1115,7 +1421,7 @@ CODEOWNERS:
 Result: Send Slack message to #platform-team
 ```
 
-### 5. Notification Routing
+### 9. Notification Routing
 
 **Decision tree:**
 
@@ -1130,7 +1436,7 @@ Confidence < 0.5 → Don't send (log only)
 - Max 10 notifications per hour per workspace (configurable)
 - Deduplication: Same drift fingerprint within 24 hours → Skip
 
-### 6. Managed Regions
+### 10. Managed Regions
 
 **Purpose:** Limit where VertaAI can make changes
 
@@ -1155,7 +1461,7 @@ These steps require human judgment...
 
 **Best practice:** Mark operational sections as managed, leave strategic/judgment sections unmanaged
 
-### 7. Audit Trail & Compliance
+### 11. Audit Trail & Compliance
 
 **Purpose:** Complete observability and compliance for all drift processing decisions
 
@@ -1203,7 +1509,7 @@ All significant actions are logged as audit events:
 - ✅ **Analytics**: Understand system behavior and user patterns
 - ✅ **Accountability**: Know who did what and when
 
-### 8. Early Threshold Routing + Materiality Gate
+### 12. Early Threshold Routing + Materiality Gate
 
 **Purpose:** Two-layer pre-patch filter at BASELINE_CHECKED that prevents both low-confidence AND low-value drifts from reaching the LLM.
 
@@ -1554,7 +1860,89 @@ Without temporal tracking, each signal is processed independently. A document th
 
 ## Example Workflows
 
-### Example 1: GitHub PR → Confluence Runbook Update
+### Example 1: Contract Validation - OpenAPI ↔ Docs Consistency (Track 1)
+
+**Scenario:** Developer opens PR that adds new endpoint to OpenAPI spec but forgets to update Confluence API docs
+
+**Timeline:**
+
+```
+2:00 PM - PR #5678 opened
+  ├─ Changed files: openapi.yaml (added POST /api/users endpoint)
+  ├─ No changes to Confluence docs
+  └─ GitHub webhook fires (pull_request.opened)
+
+2:00:02 PM - VertaAI receives webhook
+  ├─ Creates SignalEvent (github_pr)
+  ├─ Dual routing: Contract validation + Drift detection
+  └─ Contract validation runs immediately (no queue)
+
+2:00:05 PM - Contract Resolution
+  ├─ Matches file pattern: **/openapi.yaml
+  ├─ Resolves contract: "API Documentation Consistency"
+  ├─ Confidence: 1.0 (explicit_path match)
+  └─ Invariants: [endpoint-parity, schema-parity, example-parity]
+
+2:00:08 PM - Artifact Fetching (parallel)
+  ├─ Primary: openapi.yaml from PR branch (GitHub API)
+  ├─ Secondary: Confluence page 164013 (Confluence API)
+  └─ Both snapshots stored with 24h TTL
+
+2:00:12 PM - Comparator Execution
+  ├─ OpenApiComparator.compare()
+  ├─ Extracts endpoints from OpenAPI: [GET /api/users, POST /api/users, ...]
+  ├─ Extracts endpoints from Confluence: [GET /api/users, DELETE /api/users, ...]
+  ├─ Detects missing endpoint: POST /api/users (in OpenAPI, not in docs)
+  └─ Creates IntegrityFinding:
+      {
+        driftType: "endpoint_missing",
+        severity: "high",
+        evidence: {
+          kind: "endpoint_missing",
+          leftValue: { method: "POST", path: "/api/users", summary: "Create user" },
+          rightValue: null,
+          pointers: { left: "paths./api/users.post", right: null }
+        },
+        recommendedAction: "create_patch_candidate",
+        confidence: 0.95,
+        impact: 0.8,
+        band: "fail"
+      }
+
+2:00:15 PM - GitHub Check Created
+  ├─ Conclusion: failure (band=fail)
+  ├─ Summary: "⚠️ WARN (Risk: 75%) - 1 high-severity finding"
+  ├─ Annotation on openapi.yaml:
+      Line 45: "Endpoint POST /api/users is not documented in Confluence"
+  └─ Details: Link to Confluence page, suggested action
+
+2:00:16 PM - PR Status Updated
+  ├─ GitHub shows red X on PR
+  ├─ Developer sees inline annotation
+  └─ Can click through to see full evidence
+
+2:05 PM - Developer updates Confluence docs
+  ├─ Adds POST /api/users endpoint documentation
+  └─ Pushes new commit to PR
+
+2:05:30 PM - VertaAI re-validates
+  ├─ Fetches new snapshots
+  ├─ Comparator runs again
+  ├─ No findings (all endpoints documented)
+  └─ GitHub Check: ✅ success (PASS)
+
+2:06 PM - PR approved and merged
+```
+
+**Key Benefits:**
+- ✅ **Fast feedback**: < 20 seconds from PR open to check result
+- ✅ **Inline annotations**: Developer sees exactly what's wrong
+- ✅ **Prevents drift**: Catches inconsistency before merge
+- ✅ **No LLM calls**: Deterministic, reproducible, fast
+
+---
+
+### Example 2: Drift Remediation - GitHub PR → Confluence Runbook Update (Track 2)
 
 **Scenario:** Developer merges PR that changes deployment from kubectl to Helm
 
@@ -1650,7 +2038,72 @@ Proposed changes (8 lines):
 
 ---
 
-### Example 2: Agent PR Gatekeeper → Risk Assessment & GitHub Check
+### Example 3: PagerDuty Incident → Confluence Runbook Update (Track 2)
+
+**Scenario:** Production incident reveals new failure mode that should be documented
+
+**Timeline:**
+
+```
+3:00 PM - Incident P-456 triggered (API Gateway 503 errors)
+  ├─ Service: api-service
+  ├─ Severity: high
+  └─ On-call: @bob
+
+3:45 PM - Incident resolved
+  ├─ Root cause: Redis connection pool exhausted
+  ├─ Fix: Increased pool size from 10 to 50
+  ├─ Resolution notes: "Added connection pool monitoring, updated config"
+  └─ PagerDuty webhook fires (incident.resolved)
+
+3:45:05 PM - VertaAI receives webhook
+  ├─ Creates SignalEvent (pagerduty_incident)
+  ├─ Creates DriftCandidate (state=INGESTED)
+  └─ Enqueues job
+
+3:45:10 PM - State machine processes
+  ├─ INGESTED → ELIGIBILITY_CHECKED (passes: has resolution notes)
+  ├─ ELIGIBILITY_CHECKED → SIGNALS_CORRELATED (no duplicates)
+  ├─ SIGNALS_CORRELATED → DOCS_RESOLVED (mapping: service=api-service → doc=164013)
+  ├─ DOCS_RESOLVED → DOCS_FETCHED (fetches Confluence runbook)
+  ├─ DOCS_FETCHED → DOC_CONTEXT_EXTRACTED (extracts "Troubleshooting" section)
+  ├─ DOC_CONTEXT_EXTRACTED → EVIDENCE_EXTRACTED
+  │   Coverage gap detected: "Redis connection pool" not mentioned in runbook
+  ├─ EVIDENCE_EXTRACTED → BASELINE_CHECKED
+  │   driftType: "coverage", hasCoverageGap: true, confidence: 0.78
+  ├─ BASELINE_CHECKED → PATCH_PLANNED (LLM: plan new troubleshooting section)
+  ├─ PATCH_PLANNED → PATCH_GENERATED (LLM: generates diff with new section)
+  ├─ PATCH_GENERATED → PATCH_VALIDATED (passes: no secrets, size OK)
+  ├─ PATCH_VALIDATED → OWNER_RESOLVED (routes to @bob, on-call engineer)
+  └─ OWNER_RESOLVED → SLACK_SENT
+
+3:45:30 PM - Slack message sent to @bob
+  📊 Coverage Gap Detected
+
+  Source: Incident P-456 (API Gateway 503 errors)
+  Service: api-service
+  Confidence: 78%
+
+  Proposed change: Add new troubleshooting section for Redis connection pool issues
+
+  [Approve] [Edit] [Reject] [Snooze 24h]
+
+3:50 PM - @bob clicks "Approve"
+  ├─ AWAITING_HUMAN → APPROVED → WRITEBACK_VALIDATED
+  ├─ Fetches current Confluence page version
+  ├─ Applies diff (adds new "Redis Connection Pool Issues" section)
+  └─ Updates Confluence page with comment: "Updated by VertaAI from Incident P-456"
+
+3:50:05 PM - Confluence page updated
+  ✅ New troubleshooting section added
+  ✅ Future incidents will have documented resolution steps
+```
+
+**Result:** Runbook now includes new failure mode, preventing future confusion
+
+---
+
+### Example 4: Agent PR Gatekeeper → Risk Assessment & GitHub Check (Cross-Cutting)
 
 **Scenario:** Agent-authored PR touches deployment infrastructure without required evidence
 
