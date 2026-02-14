@@ -458,5 +458,71 @@ router.post('/slack-analysis', async (req: Request, res: Response) => {
   return res.status(200).json({ status: 'complete', results });
 });
 
+/**
+ * POST /api/jobs/snapshot-cleanup
+ * Scheduled job to clean up expired artifact snapshots (Phase 1 Week 3-4)
+ *
+ * Can be triggered by:
+ * - QStash scheduled message (daily cron)
+ * - Manual trigger for a specific workspace
+ */
+router.post('/snapshot-cleanup', async (req: Request, res: Response) => {
+  const receiver = getReceiver();
+
+  // Verify QStash signature (if configured)
+  if (receiver) {
+    const signature = req.headers['upstash-signature'] as string;
+    const body = (req as any).rawBody || JSON.stringify(req.body);
+
+    try {
+      const isValid = await receiver.verify({ signature, body });
+      if (!isValid) {
+        console.error('[Jobs] Invalid QStash signature for snapshot-cleanup');
+        return res.status(401).json({ error: 'Invalid QStash signature' });
+      }
+    } catch (error) {
+      console.error('[Jobs] Signature verification failed:', error);
+      return res.status(401).json({ error: 'Signature verification failed' });
+    }
+  }
+
+  const { workspaceId } = req.body;
+
+  try {
+    const { cleanupExpiredSnapshots, cleanupAllWorkspaces } = await import('../services/contracts/snapshotCleanup.js');
+
+    // If workspaceId provided, clean up that workspace only
+    // Otherwise, clean up all workspaces
+    if (workspaceId) {
+      console.log(`[Jobs] Running snapshot cleanup for workspace ${workspaceId}`);
+      const stats = await cleanupExpiredSnapshots(workspaceId);
+
+      return res.status(200).json({
+        status: 'complete',
+        workspaceId,
+        stats,
+      });
+    } else {
+      console.log('[Jobs] Running snapshot cleanup for all workspaces');
+      const results = await cleanupAllWorkspaces();
+
+      const totalDeleted = results.reduce((sum, r) => sum + r.deletedSnapshots, 0);
+
+      return res.status(200).json({
+        status: 'complete',
+        workspacesProcessed: results.length,
+        totalDeleted,
+        results,
+      });
+    }
+  } catch (error) {
+    console.error('[Jobs] Snapshot cleanup failed:', error);
+    return res.status(500).json({
+      status: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 export default router;
 
