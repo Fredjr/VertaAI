@@ -21,6 +21,8 @@ import {
   createOwnershipDriftSignal
 } from '../services/signals/codeownersParser.js';
 import { runGatekeeper, shouldRunGatekeeper } from '../services/gatekeeper/index.js';
+import { ContractResolver } from '../services/contracts/contractResolver.js';
+import type { Contract } from '../services/contracts/types.js';
 
 // LEGACY: Create Octokit with personal access token for repo webhooks (no installation)
 // Used only by legacy endpoint - will be deprecated
@@ -708,6 +710,51 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
     });
 
     console.log(`[Webhook] [V2] Created signal event ${signalEvent.id}`);
+
+    // PHASE 1 WEEK 1-2: Contract Resolution (parallel with drift detection)
+    // Load contract pack and resolve contracts from signal
+    let contractResolutionResult = null;
+    try {
+      const contractPack = await prisma.contractPack.findFirst({
+        where: { workspaceId },
+        orderBy: { createdAt: 'desc' }, // Get latest version
+      });
+
+      if (contractPack) {
+        const contracts = contractPack.contracts as unknown as Contract[];
+        const resolver = new ContractResolver(workspaceId, contracts);
+
+        const startTime = Date.now();
+        contractResolutionResult = await resolver.resolveFromSignal(signalEvent);
+        const resolutionTimeMs = Date.now() - startTime;
+
+        // Store contract resolution result
+        await prisma.contractResolution.create({
+          data: {
+            workspaceId,
+            signalEventId: signalEvent.id,
+            resolvedContracts: contractResolutionResult.resolvedContracts as any,
+            unresolvedArtifacts: contractResolutionResult.unresolvedArtifacts as any,
+            obligations: contractResolutionResult.obligations as any,
+            resolutionMethod: contractResolutionResult.resolvedContracts.length > 0 && contractResolutionResult.resolvedContracts[0]
+              ? contractResolutionResult.resolvedContracts[0].resolutionMethod
+              : 'none',
+            resolutionTimeMs,
+          },
+        });
+
+        console.log(`[Webhook] [V2] Contract resolution: ${contractResolutionResult.resolvedContracts.length} contracts resolved, ${contractResolutionResult.unresolvedArtifacts.length} unresolved artifacts (${resolutionTimeMs}ms)`);
+
+        if (contractResolutionResult.obligations.length > 0) {
+          console.log(`[Webhook] [V2] Contract obligations: ${contractResolutionResult.obligations.map(o => o.type).join(', ')}`);
+        }
+      } else {
+        console.log(`[Webhook] [V2] No contract pack found for workspace ${workspaceId} - skipping contract resolution`);
+      }
+    } catch (contractError) {
+      console.error('[Webhook] [V2] Contract resolution failed (non-blocking):', contractError);
+      // Contract resolution failure should not block drift detection
+    }
 
     // PHASE 4: Generate trace ID for end-to-end observability
     const { generateTraceId } = await import('../lib/structuredLogger.js');
