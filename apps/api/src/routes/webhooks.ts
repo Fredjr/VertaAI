@@ -23,6 +23,11 @@ import {
 import { runGatekeeper, shouldRunGatekeeper } from '../services/gatekeeper/index.js';
 import { ContractResolver } from '../services/contracts/contractResolver.js';
 import type { Contract } from '../services/contracts/types.js';
+import {
+  calculateResolutionMetrics,
+  logResolutionMetrics,
+  logResolutionDetails,
+} from '../services/contracts/telemetry.js';
 
 // LEGACY: Create Octokit with personal access token for repo webhooks (no installation)
 // Used only by legacy endpoint - will be deprecated
@@ -728,6 +733,18 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
         contractResolutionResult = await resolver.resolveFromSignal(signalEvent);
         const resolutionTimeMs = Date.now() - startTime;
 
+        // Calculate and log telemetry metrics
+        const metrics = calculateResolutionMetrics(
+          workspaceId,
+          signalEvent.id,
+          contractResolutionResult,
+          resolutionTimeMs,
+          files.length
+        );
+
+        logResolutionMetrics(metrics);
+        logResolutionDetails(contractResolutionResult, true);
+
         // Store contract resolution result
         await prisma.contractResolution.create({
           data: {
@@ -743,11 +760,7 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
           },
         });
 
-        console.log(`[Webhook] [V2] Contract resolution: ${contractResolutionResult.resolvedContracts.length} contracts resolved, ${contractResolutionResult.unresolvedArtifacts.length} unresolved artifacts (${resolutionTimeMs}ms)`);
-
-        if (contractResolutionResult.obligations.length > 0) {
-          console.log(`[Webhook] [V2] Contract obligations: ${contractResolutionResult.obligations.map(o => o.type).join(', ')}`);
-        }
+        console.log(`[Webhook] [V2] Contract resolution stored successfully`);
       } else {
         console.log(`[Webhook] [V2] No contract pack found for workspace ${workspaceId} - skipping contract resolution`);
       }
