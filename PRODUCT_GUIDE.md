@@ -1,7 +1,7 @@
 # VertaAI Product Guide
 
-**Version:** 2.0
-**Last Updated:** February 11, 2026
+**Version:** 2.1
+**Last Updated:** February 14, 2026
 **Audience:** New developers, customers, and technical stakeholders
 
 ---
@@ -157,6 +157,8 @@ Code Changes → Docs Become Stale → Engineers Waste Time → Incidents Happen
 11. **Multi-source correlation**: Combines GitHub + PagerDuty + Slack signals
 12. **Ownership-aware**: Routes to the right person based on CODEOWNERS, mappings, on-call
 13. **Complete audit trail**: Full observability with PlanRun tracking, EvidenceBundle pattern, and materiality skip reasons
+14. **Agent PR gatekeeper**: Detects agent-authored PRs and gates risky changes with evidence-based checks
+15. **Delta sync findings**: Reuses existing parsers (IaC, OpenAPI, CODEOWNERS) to detect drift in real-time
 
 ---
 
@@ -249,26 +251,29 @@ VertaAI is built as a **multi-tenant, event-driven system** with a **determinist
 │  │  • Create DriftCandidate with state=INGESTED                         │     │
 │  └────────────────────────────┬────────────────────────────────────────┘     │
 │                               │                                              │
-│                               ▼                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐     │
-│  │                   STATE MACHINE ORCHESTRATOR                         │     │
-│  │  • QStash job queue (Vercel-compatible)                              │     │
-│  │  • Bounded loop: MAX_TRANSITIONS_PER_INVOCATION = 5                  │     │
-│  │  • Distributed locking (30s TTL)                                     │     │
-│  │  • Retry logic with exponential backoff                              │     │
-│  └────────────────────────────┬────────────────────────────────────────┘     │
-│                               │                                              │
-│         ┌─────────────────────┼─────────────────────────┐                   │
-│         ▼                     ▼                         ▼                   │
-│  ┌─────────────┐      ┌─────────────┐         ┌─────────────┐               │
-│  │ LLM AGENTS  │      │ DOC SERVICE │         │  SLACK APP  │               │
-│  │             │      │             │         │             │               │
-│  │ • Triage    │      │ • Adapters  │         │ • Composer  │               │
-│  │ • Planner   │      │ • Fetch     │         │ • Buttons   │               │
-│  │ • Generator │      │ • Writeback │         │ • Routing   │               │
-│  │             │      │ • Versioning│         │             │               │
-│  │ (Stateless) │      │             │         │             │               │
-│  └─────────────┘      └─────────────┘         └─────────────┘               │
+│            ┌──────────────────┼──────────────────┐                           │
+│            ▼                  ▼                  ▼                           │
+│  ┌──────────────────┐  ┌─────────────────────────────────────────┐           │
+│  │ AGENT PR         │  │   STATE MACHINE ORCHESTRATOR            │           │
+│  │ GATEKEEPER       │  │  • QStash job queue (Vercel-compatible) │           │
+│  │ • Agent Detector │  │  • Bounded loop: MAX_TRANSITIONS = 5    │           │
+│  │ • Risk Scoring   │  │  • Distributed locking (30s TTL)        │           │
+│  │ • Delta Sync     │  │  • Retry logic with exponential backoff │           │
+│  │ • GitHub Checks  │  └─────────────────┬───────────────────────┘           │
+│  └──────────────────┘                    │                                   │
+│         │                                │                                   │
+│         ▼                                │                                   │
+│  ┌──────────────────┐         ┌─────────┼─────────────────────────┐         │
+│  │ GitHub Check API │         ▼         ▼                         ▼         │
+│  │ • Risk Tiers     │  ┌─────────────┐      ┌─────────────┐         ┌─────────────┐  │
+│  │ • Annotations    │  │ LLM AGENTS  │      │ DOC SERVICE │         │  SLACK APP  │  │
+│  │ • Findings       │  │             │      │             │         │             │  │
+│  └──────────────────┘  │ • Triage    │      │ • Adapters  │         │ • Composer  │  │
+│                        │ • Planner   │      │ • Fetch     │         │ • Buttons   │  │
+│                        │ • Generator │      │ • Writeback │         │ • Routing   │  │
+│                        │             │      │ • Versioning│         │             │  │
+│                        │ (Stateless) │      │             │         │             │  │
+│                        └─────────────┘      └─────────────┘         └─────────────┘  │
 │                               │                                              │
 │                               ▼                                              │
 │  ┌─────────────────────────────────────────────────────────────────────┐     │
@@ -493,7 +498,7 @@ VertaAI listens to multiple signal sources to detect documentation drift:
 
 | Source | Status | What It Detects | Webhook Endpoint |
 |--------|--------|-----------------|------------------|
-| **GitHub PRs** | ✅ Live | Code/config changes that invalidate docs | `POST /webhooks/github/:workspaceId` |
+| **GitHub PRs** | ✅ Live | Code/config changes that invalidate docs + Agent PR gatekeeper | `POST /webhooks/github/:workspaceId` |
 | **PagerDuty Incidents** | ✅ Live | New failure scenarios, ownership changes | `POST /webhooks/pagerduty/:workspaceId` |
 | **Slack Questions** | 🚧 Planned | Clustered questions revealing knowledge gaps | `POST /webhooks/slack/:workspaceId` |
 | **Datadog/Grafana Alerts** | 🚧 Planned | Environment/tooling drift | TBD |
@@ -504,6 +509,10 @@ VertaAI listens to multiple signal sources to detect documentation drift:
 - PR is **merged** (not just opened)
 - Touches operational paths: `**/deploy/**`, `**/infra/**`, `**/terraform/**`, `**/helm/**`, `**/k8s/**`, `**/.github/workflows/**`, `**/config/**`
 - OR contains keywords: `breaking`, `migrate`, `deprecate`, `rollback`, `deploy`, `helm`, `k8s`, `terraform`, `config`, `endpoint`, `auth`
+
+**Dual Processing:**
+1. **Drift Detection Pipeline**: Analyzes merged PRs for documentation drift
+2. **Agent PR Gatekeeper**: Runs on all PRs (opened/synchronized) to detect agent-authored PRs and gate risky changes
 
 **Extracted data:**
 ```typescript
@@ -539,9 +548,9 @@ VertaAI listens to multiple signal sources to detect documentation drift:
 }
 ```
 
-### Output Targets (Documentation Systems)
+### Output Targets (Documentation Systems & GitHub Checks)
 
-VertaAI supports multiple documentation platforms with two update strategies:
+VertaAI supports multiple documentation platforms with two update strategies, plus GitHub Checks for PR gating:
 
 | Doc System | Direct Writeback? | Update Method | Adapter |
 |------------|-------------------|---------------|---------|
@@ -551,6 +560,7 @@ VertaAI supports multiple documentation platforms with two update strategies:
 | **Backstage catalog-info.yaml** | ❌ No | Create PR (manual merge) | `backstageAdapter.ts` |
 | **GitBook** | ❌ No | Create PR (manual merge) | `gitbookAdapter.ts` |
 | **Swagger/OpenAPI** | ❌ No | Create PR (manual merge) | `swaggerAdapter.ts` |
+| **GitHub Checks** | ✅ Yes | GitHub Check API (real-time) | `githubCheck.ts` |
 
 #### Direct Writeback (Confluence, Notion)
 
@@ -597,6 +607,51 @@ When user clicks **Approve** in Slack:
 - Allows CI checks to run (linting, tests)
 - Maintains git history and blame
 - Safer for critical docs like API specs
+
+#### GitHub Check Workflow (Agent PR Gatekeeper)
+
+When a PR is opened or updated:
+1. **Agent Detection**: Analyze PR author, commit messages, size, and code patterns
+2. **Risk Assessment**: Calculate risk tier based on:
+   - Agent confidence (30% weight)
+   - High-risk domains touched (25% per domain, capped at 50%)
+   - Missing evidence requirements (15% per item, capped at 45%)
+   - Impact score from deterministic rules (20% weight)
+   - Correlated incidents/alerts (10% per incident, capped at 30%)
+3. **Delta Sync Analysis**: Analyze IaC, API, and ownership changes using existing parsers
+4. **Create GitHub Check** with:
+   - **Conclusion**: `success` (PASS), `neutral` (INFO/WARN), `failure` (BLOCK)
+   - **Summary**: Risk tier, impact band, correlated signals count
+   - **Annotations**: File-level findings from delta sync (max 50)
+   - **Details**: Evidence requirements, domain analysis, delta sync findings
+5. **Risk Tiers**:
+   - **PASS** (<30%): ✅ Green check, no action needed
+   - **INFO** (30-60%): ℹ️ Neutral, informational warnings
+   - **WARN** (60-80%): ⚠️ Neutral, requires attention
+   - **BLOCK** (≥80%): ❌ Red X, blocks merge (if configured)
+
+**Example GitHub Check:**
+```
+VertaAI Agent PR Gatekeeper
+Status: ⚠️ WARN (Risk: 72%)
+
+Summary:
+- Agent Confidence: 85% (likely agent-authored)
+- High-Risk Domains: deployment, database
+- Missing Evidence: rollback note, migration note
+- Impact Band: 🟠 high
+- Correlated Signals: 2 incidents in past 7 days
+
+Delta Sync Findings (3):
+- [CRITICAL] IaC drift: Database infrastructure change detected
+- [HIGH] API drift: Breaking API change in openapi.yaml
+- [MEDIUM] Ownership drift: 2 CODEOWNERS rules changed
+
+Suggested Actions:
+- Add rollback procedure to PR description
+- Add database migration note
+- Review correlated incidents: INC-123, INC-456
+```
 
 ### Signal Normalization
 
@@ -1240,7 +1295,155 @@ Drifts:
 
 **Status:** ✅ Fully implemented and verified functional (P0-2 audit)
 
-### 10. Typed Deltas & Evidence-Grounded Patching
+### 10. Agent PR Gatekeeper
+
+**Purpose:** Detect agent-authored PRs (Claude, ChatGPT, Copilot, etc.) and gate risky changes with evidence-based checks to reduce review overload and prevent unsafe merges.
+
+**Target Users:** Platform/Eng Productivity/Staff Engineers who own merge hygiene
+
+**How it works:**
+
+#### 1. Agent Detection (Deterministic Heuristics)
+
+Detects agent-authored PRs using multiple signals:
+
+- **Author patterns**: Matches `copilot`, `claude`, `gpt`, `chatgpt`, `ai-`, `bot`, `assistant`, `codewhisperer`, `tabnine`, `cursor`, `aider`, `augment`
+- **Commit message markers**: Detects `Co-authored-by: GitHub Copilot`, `Generated by Claude`, `AI-generated`, etc.
+- **PR size threshold**: Flags PRs with >1000 lines changed
+- **Tool signatures**: Detects `// Generated by`, `@generated`, `# Auto-generated` in code
+- **Confidence scoring**: Additive weights, capped at 1.0, threshold at 0.50
+
+#### 2. Risk Tier Calculation (Multi-Factor Scoring)
+
+Calculates risk score (0-100%) based on:
+
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| **Agent Confidence** | 30% | How confident we are this is agent-authored |
+| **High-Risk Domains** | 25% per domain (max 50%) | IaC, auth, deployment, database, API contracts |
+| **Missing Evidence** | 15% per item (max 45%) | Tests, rollback notes, migration notes, runbook links |
+| **Impact Score** | 20% | Deterministic impact assessment from rules matrix |
+| **Correlated Incidents** | 10% per incident (max 30%) | Recent incidents/alerts for same service (7-day window) |
+
+**Risk Tiers:**
+- **PASS** (<30%): ✅ Green check, safe to merge
+- **INFO** (30-60%): ℹ️ Informational, review recommended
+- **WARN** (60-80%): ⚠️ Warning, requires attention
+- **BLOCK** (≥80%): ❌ Blocks merge, high risk
+
+#### 3. Evidence Requirements (Domain-Specific Checklist)
+
+Deterministic checklist based on domains touched:
+
+| Domain | Required Evidence |
+|--------|-------------------|
+| **Deployment/IaC** | Rollback procedure, deployment runbook link |
+| **Database/Schema** | Migration note, rollback plan |
+| **Auth/Security** | Security review note, threat model update |
+| **API Contract** | Breaking change note, migration guide |
+| **All PRs** | Tests changed OR explicit "no tests needed" note |
+
+#### 4. Delta Sync Findings (Reuses Existing Parsers)
+
+Analyzes PR changes using existing drift detection parsers:
+
+**IaC Analysis** (`iacParser.ts`):
+- Detects Terraform/Pulumi/CloudFormation changes
+- Classifies: deployment infrastructure, database infrastructure, security infrastructure
+- Severity: high (deployment), critical (database/security)
+- Suggests: deployment runbook, migration guide, security policies
+
+**API Analysis** (`openApiParser.ts`):
+- Detects OpenAPI/Swagger spec changes
+- Classifies: breaking vs non-breaking changes
+- Severity: critical (breaking), medium (non-breaking)
+- Suggests: API documentation, migration guide, changelog
+
+**Ownership Analysis** (`codeownersParser.ts`):
+- Detects CODEOWNERS file changes
+- Classifies: ownership rule changes
+- Severity: medium/high (based on count)
+- Suggests: team structure docs, on-call rotation docs
+
+#### 5. Impact Assessment Integration
+
+Reuses existing `impactAssessment.ts` service:
+
+1. Builds `SourceEvidence` from PR data (files changed, lines added/removed, PR title/body)
+2. Builds `TargetEvidence` (defaults to runbook surface for high-risk domains)
+3. Calls `computeImpactAssessment()` using deterministic rules matrix
+4. Returns: `impactScore` (0-1), `impactBand` (low/medium/high/critical)
+
+#### 6. Signal Correlation Integration
+
+Reuses existing `signalJoiner.ts` service:
+
+1. Creates signal ID: `github_pr_{owner}_{repo}_{prNumber}`
+2. Infers service name from file paths (e.g., `services/api/...` → `api`)
+3. Calls `joinSignals()` to find correlated incidents/alerts within 7-day window
+4. Boosts risk score when correlated signals are found
+
+#### 7. GitHub Check Output
+
+Creates GitHub Check run with:
+
+**Summary:**
+- Risk tier with emoji (✅ PASS, ℹ️ INFO, ⚠️ WARN, ❌ BLOCK)
+- Risk score percentage
+- Agent confidence
+- Impact band (🟢 low, 🟡 medium, 🟠 high, 🔴 critical)
+- Correlated signals count
+- Delta sync findings count
+
+**Annotations** (max 50):
+- File-level findings from delta sync analysis
+- Severity mapping: critical→failure, high→warning, medium/low→notice
+- Includes suggested docs to update
+
+**Details:**
+- Evidence requirements checklist
+- High-risk domains detected
+- Delta sync findings with descriptions
+- Suggested actions
+
+**Example:**
+```
+VertaAI Agent PR Gatekeeper
+Status: ⚠️ WARN (Risk: 72%)
+
+Agent Confidence: 85%
+Impact Band: 🟠 high
+Correlated Signals: 2 incidents
+Delta Sync Findings: 3 (1 critical, 2 high)
+
+Missing Evidence:
+- ❌ Rollback procedure
+- ❌ Database migration note
+
+High-Risk Domains:
+- deployment
+- database
+
+Delta Sync Findings:
+1. [CRITICAL] IaC drift: Database infrastructure change in terraform/rds.tf
+   Suggested docs: migration guide, rollback plan
+2. [HIGH] API drift: Breaking change in openapi.yaml (removed endpoint)
+   Suggested docs: API documentation, migration guide
+3. [HIGH] Ownership drift: 2 CODEOWNERS rules changed
+   Suggested docs: team structure docs
+```
+
+**Benefits:**
+- ✅ **Reduces Review Overload**: Automated risk assessment for agent PRs
+- ✅ **Prevents Unsafe Merges**: Blocks high-risk changes without evidence
+- ✅ **Evidence-Based**: Deterministic checks, no LLM randomness
+- ✅ **Reuses Existing Infrastructure**: 85% code reuse from drift detection
+- ✅ **Real-Time Feedback**: GitHub Check appears within seconds of PR creation
+- ✅ **Actionable**: Clear checklist of what's needed to pass
+
+**Status:** ✅ Fully implemented (Phase 1-4 complete)
+
+### 11. Typed Deltas & Evidence-Grounded Patching
 
 **Purpose:** Replace raw diff text with structured, machine-readable typed deltas that flow from deterministic comparison all the way to LLM agents.
 
@@ -1447,7 +1650,150 @@ Proposed changes (8 lines):
 
 ---
 
-### Example 2: PagerDuty Incident → Ownership Doc Update
+### Example 2: Agent PR Gatekeeper → Risk Assessment & GitHub Check
+
+**Scenario:** Agent-authored PR touches deployment infrastructure without required evidence
+
+**Timeline:**
+
+```
+10:00 AM - Developer opens PR #5678 (authored by GitHub Copilot)
+  ├─ Title: "Update deployment configuration"
+  ├─ Author: developer-name (but commit messages show Copilot markers)
+  ├─ Files changed: terraform/eks.tf, deploy/helm/values.yaml
+  ├─ Lines changed: 450 additions, 120 deletions
+  └─ GitHub webhook fires (pull_request.opened)
+
+10:00:05 AM - VertaAI receives webhook
+  ├─ Gatekeeper enabled (feature flag check)
+  ├─ Runs agent detection heuristics
+  └─ Runs risk assessment
+
+10:00:10 AM - Agent Detection Results
+  ├─ Commit messages: Found "Co-authored-by: GitHub Copilot" (weight: 0.40)
+  ├─ PR size: 570 lines (weight: 0.20)
+  ├─ Tool signatures: Found "# Generated by" in code (weight: 0.15)
+  └─ Agent confidence: 75%
+
+10:00:12 AM - Domain Detection
+  ├─ IaC files detected: terraform/eks.tf
+  ├─ Deployment files detected: deploy/helm/values.yaml
+  └─ High-risk domains: deployment, iac
+
+10:00:14 AM - Evidence Check
+  ├─ Tests changed: ❌ No test files modified
+  ├─ "No tests needed" note: ❌ Not found in PR body
+  ├─ Rollback procedure: ❌ Not found in PR body
+  ├─ Deployment runbook link: ❌ Not found in PR body
+  └─ Missing evidence: 4 items
+
+10:00:16 AM - Delta Sync Analysis
+  ├─ IaC Parser: Detects EKS cluster configuration change
+  │   └─ Finding: [CRITICAL] Deployment infrastructure change
+  ├─ API Parser: No OpenAPI changes detected
+  └─ CODEOWNERS Parser: No ownership changes detected
+
+10:00:18 AM - Impact Assessment
+  ├─ Source Evidence: 450 lines added, 120 removed, deployment files
+  ├─ Target Evidence: Runbook surface (deployment domain)
+  ├─ Rules fired: "iac_change_high_impact", "deployment_config_change"
+  └─ Impact: score=0.75, band=high
+
+10:00:20 AM - Signal Correlation
+  ├─ Signal ID: github_pr_acme_api-service_5678
+  ├─ Service inferred: api-service
+  ├─ Correlation window: 7 days
+  ├─ Found: 2 incidents (INC-789, INC-790) for api-service
+  └─ Correlated signals: 2
+
+10:00:22 AM - Risk Tier Calculation
+  ├─ Agent confidence: 75% × 0.30 = 22.5%
+  ├─ High-risk domains: 2 domains × 0.25 = 50% (capped)
+  ├─ Missing evidence: 4 items × 0.15 = 60% → 45% (capped)
+  ├─ Impact score: 0.75 × 0.20 = 15%
+  ├─ Correlated incidents: 2 × 0.10 = 20%
+  └─ Total risk score: 22.5 + 50 + 45 + 15 + 20 = 152.5% → capped at 100%
+      Final risk tier: BLOCK (≥80%)
+
+10:00:25 AM - GitHub Check Created
+  └─ Status: ❌ failure (BLOCK tier)
+```
+
+**GitHub Check Output:**
+
+```
+VertaAI Agent PR Gatekeeper
+Status: ❌ BLOCK (Risk: 100%)
+
+Summary:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Agent Confidence: 75% (likely agent-authored)
+Impact Band: 🔴 critical
+Correlated Signals: 2 incidents in past 7 days
+Delta Sync Findings: 1 critical
+
+Missing Evidence (4):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+❌ Tests changed OR "no tests needed" note
+❌ Rollback procedure
+❌ Deployment runbook link
+❌ Migration note
+
+High-Risk Domains (2):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ deployment
+⚠️ iac
+
+Delta Sync Findings (1):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. [CRITICAL] IaC drift: Deployment infrastructure change detected
+   File: terraform/eks.tf
+   Suggested docs: deployment runbook, migration guide
+
+Correlated Signals:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• INC-789 - API service outage (2 days ago)
+• INC-790 - Deployment failure (5 days ago)
+
+Suggested Actions:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Add tests for infrastructure changes OR add "no tests needed" note to PR description
+2. Add rollback procedure to PR description
+3. Add link to deployment runbook
+4. Review correlated incidents: INC-789, INC-790
+5. Consider breaking this PR into smaller, reviewable chunks
+```
+
+**Annotations on terraform/eks.tf:**
+```
+Line 45-60: [FAILURE] IaC drift: Deployment infrastructure change detected
+Suggested docs: deployment runbook, migration guide
+```
+
+**10:05 AM - Developer updates PR**
+  ├─ Adds rollback procedure to PR description
+  ├─ Adds deployment runbook link
+  ├─ Adds "no tests needed" note (infrastructure-only change)
+  ├─ Adds migration note
+  └─ GitHub webhook fires (pull_request.synchronize)
+
+**10:05:30 AM - VertaAI re-runs gatekeeper**
+  ├─ Evidence check: All items now present ✅
+  ├─ Risk score recalculated: 22.5 + 50 + 0 + 15 + 20 = 107.5% → capped at 100%
+  │   (Missing evidence now 0%, but still BLOCK due to other factors)
+  └─ GitHub Check updated: Still BLOCK (high impact + correlated incidents)
+
+**10:10 AM - Platform team reviews**
+  ├─ Sees evidence is complete
+  ├─ Reviews correlated incidents
+  ├─ Approves PR with manual override
+  └─ PR merged
+
+**Result:** High-risk agent PR was properly gated, required evidence was added, and platform team made informed decision
+
+---
+
+### Example 3: PagerDuty Incident → Ownership Doc Update
 
 **Scenario:** Incident reveals team ownership changed
 
