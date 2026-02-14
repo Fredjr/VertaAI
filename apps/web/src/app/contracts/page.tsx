@@ -4,9 +4,6 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Navigation from '@/components/Navigation';
 
-// Force dynamic rendering (no static generation)
-export const dynamic = 'force-dynamic';
-
 interface ContractPack {
   workspaceId: string;
   id: string;
@@ -18,7 +15,7 @@ interface ContractPack {
   updatedAt: string;
 }
 
-export default function ContractsPage() {
+function ContractsContent() {
   const searchParams = useSearchParams();
   const workspaceId = searchParams.get('workspace') || 'demo-workspace';
   
@@ -268,3 +265,20 @@ export default function ContractsPage() {
   );
 }
 
+export default function ContractsPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+        <Navigation />
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="text-center py-12">
+            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+            <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
+          </div>
+        </main>
+      </div>
+    }>
+      <ContractsContent />
+    </Suspense>
+  );
+}
