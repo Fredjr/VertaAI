@@ -47,8 +47,26 @@ export class ContractResolver {
     const service = this.extractService(signal);
     const repo = this.extractRepo(signal);
 
-    // Strategy 1: Explicit file pattern mapping (deterministic, highest priority)
+    // Strategy 1: Explicit path mapping (highest confidence)
     for (const contract of this.contractPack) {
+      const match = this.matchByExplicitPath(contract, changedFiles, repo);
+      if (match.matched) {
+        result.resolvedContracts.push({
+          contractId: contract.contractId,
+          resolutionMethod: 'explicit_path',
+          confidence: 1.0,
+          triggeredBy: { files: match.matchedFiles }
+        });
+      }
+    }
+
+    // Strategy 2: File pattern matching (deterministic, high priority)
+    for (const contract of this.contractPack) {
+      // Skip if already resolved by explicit path
+      if (result.resolvedContracts.some(rc => rc.contractId === contract.contractId)) {
+        continue;
+      }
+
       const match = this.matchByFilePattern(contract, changedFiles, repo);
       if (match.matched) {
         result.resolvedContracts.push({
@@ -60,14 +78,52 @@ export class ContractResolver {
       }
     }
 
-    // Strategy 2: Service tag mapping (if no file pattern match)
+    // Strategy 3: Directory pattern matching
+    for (const contract of this.contractPack) {
+      // Skip if already resolved
+      if (result.resolvedContracts.some(rc => rc.contractId === contract.contractId)) {
+        continue;
+      }
+
+      const match = this.matchByDirectoryPattern(contract, changedFiles);
+      if (match.matched) {
+        result.resolvedContracts.push({
+          contractId: contract.contractId,
+          resolutionMethod: 'directory_pattern',
+          confidence: 0.7,
+          triggeredBy: { files: match.matchedFiles }
+        });
+      }
+    }
+
+    // Strategy 4: CODEOWNERS mapping
+    const codeownersMatch = await this.matchByCodeowners(changedFiles, repo);
+    if (codeownersMatch) {
+      for (const contract of this.contractPack) {
+        // Skip if already resolved
+        if (result.resolvedContracts.some(rc => rc.contractId === contract.contractId)) {
+          continue;
+        }
+
+        if (this.matchesCodeownersScope(contract, codeownersMatch)) {
+          result.resolvedContracts.push({
+            contractId: contract.contractId,
+            resolutionMethod: 'codeowners',
+            confidence: 0.75,
+            triggeredBy: { files: codeownersMatch.files, owners: codeownersMatch.owners }
+          });
+        }
+      }
+    }
+
+    // Strategy 5: Service tag mapping (fallback)
     if (result.resolvedContracts.length === 0 && service) {
       for (const contract of this.contractPack) {
         if (this.matchesServiceScope(contract, service, repo)) {
           result.resolvedContracts.push({
             contractId: contract.contractId,
             resolutionMethod: 'service_tag',
-            confidence: 0.8,
+            confidence: 0.6,
             triggeredBy: { service }
           });
         }
@@ -283,5 +339,152 @@ export class ContractResolver {
       .replace(/\*/g, '[^/]*')
       .replace(/\?/g, '.');
     return new RegExp(`^${regex}$`).test(file);
+  }
+
+  // ============================================================================
+  // New Resolution Strategies (Task 3)
+  // ============================================================================
+
+  /**
+   * Strategy 1: Explicit path mapping
+   * Matches exact file paths specified in contract artifacts
+   * Confidence: 1.0 (highest)
+   */
+  private matchByExplicitPath(
+    contract: Contract,
+    changedFiles: string[],
+    repo: string
+  ): { matched: boolean; matchedFiles: string[]; confidence: number } {
+    const matchedFiles: string[] = [];
+
+    for (const artifact of contract.artifacts) {
+      // Only match if artifact has explicit path
+      if (!artifact.locator.path) {
+        continue;
+      }
+
+      // Check repo scope if specified
+      if (artifact.locator.repo && artifact.locator.repo !== repo) {
+        continue;
+      }
+
+      // Exact path match
+      if (changedFiles.includes(artifact.locator.path)) {
+        matchedFiles.push(artifact.locator.path);
+      }
+    }
+
+    return {
+      matched: matchedFiles.length > 0,
+      matchedFiles,
+      confidence: 1.0
+    };
+  }
+
+  /**
+   * Strategy 3: Directory pattern matching
+   * Matches files based on directory structure
+   * Confidence: 0.7
+   */
+  private matchByDirectoryPattern(
+    contract: Contract,
+    changedFiles: string[]
+  ): { matched: boolean; matchedFiles: string[]; confidence: number } {
+    const matchedFiles: string[] = [];
+
+    // Extract directory patterns from contract scope
+    const directoryPatterns: string[] = [];
+
+    // Check if contract has directory-based scope
+    if (contract.scope.tags) {
+      for (const tag of contract.scope.tags) {
+        // Map tags to directory patterns
+        if (tag === 'infrastructure' || tag === 'terraform') {
+          directoryPatterns.push('**/terraform/**', '**/infra/**', '**/infrastructure/**');
+        } else if (tag === 'api' || tag === 'openapi') {
+          directoryPatterns.push('**/api/**', '**/routes/**', '**/controllers/**');
+        } else if (tag === 'documentation' || tag === 'docs') {
+          directoryPatterns.push('**/docs/**', '**/documentation/**');
+        } else if (tag === 'deployment') {
+          directoryPatterns.push('**/deploy/**', '**/.github/workflows/**', '**/helm/**');
+        }
+      }
+    }
+
+    // Match files against directory patterns
+    for (const file of changedFiles) {
+      for (const pattern of directoryPatterns) {
+        if (this.globMatch(file, pattern)) {
+          matchedFiles.push(file);
+          break;
+        }
+      }
+    }
+
+    return {
+      matched: matchedFiles.length > 0,
+      matchedFiles,
+      confidence: 0.7
+    };
+  }
+
+  /**
+   * Strategy 4: CODEOWNERS mapping
+   * Matches files based on code ownership
+   * Confidence: 0.75
+   */
+  private async matchByCodeowners(
+    changedFiles: string[],
+    repo: string
+  ): Promise<{ files: string[]; owners: string[] } | null> {
+    // This is a simplified implementation
+    // In production, you would fetch CODEOWNERS file from GitHub
+    // and parse it to determine ownership
+
+    // For now, we'll use a simple heuristic based on file paths
+    const ownershipMap: Record<string, string[]> = {
+      'terraform/': ['@infrastructure-team'],
+      'docs/': ['@documentation-team'],
+      'api/': ['@backend-team'],
+      '.github/workflows/': ['@devops-team'],
+    };
+
+    const matchedFiles: string[] = [];
+    const owners = new Set<string>();
+
+    for (const file of changedFiles) {
+      for (const [path, fileOwners] of Object.entries(ownershipMap)) {
+        if (file.startsWith(path)) {
+          matchedFiles.push(file);
+          fileOwners.forEach(owner => owners.add(owner));
+        }
+      }
+    }
+
+    if (matchedFiles.length === 0) {
+      return null;
+    }
+
+    return {
+      files: matchedFiles,
+      owners: Array.from(owners)
+    };
+  }
+
+  /**
+   * Check if contract matches CODEOWNERS scope
+   */
+  private matchesCodeownersScope(
+    contract: Contract,
+    codeownersMatch: { files: string[]; owners: string[] }
+  ): boolean {
+    // Check if contract has owner-based routing
+    if (contract.routing?.method === 'codeowners') {
+      return true;
+    }
+
+    // Check if contract scope matches owners
+    // This is a simplified check - in production you'd have more sophisticated matching
+    return codeownersMatch.owners.length > 0;
   }
 }

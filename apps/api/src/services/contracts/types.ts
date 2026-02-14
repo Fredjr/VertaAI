@@ -88,7 +88,14 @@ export interface Contract {
 // CONTRACT RESOLUTION TYPES
 // ======================================================================
 
-export type ResolutionMethod = 'explicit_mapping' | 'file_pattern' | 'service_tag' | 'search';
+export type ResolutionMethod =
+  | 'explicit_path'        // Exact file path match (confidence: 1.0)
+  | 'explicit_mapping'     // Explicit contract mapping (confidence: 1.0)
+  | 'file_pattern'         // File pattern matching (confidence: 0.7-1.0)
+  | 'directory_pattern'    // Directory structure matching (confidence: 0.7)
+  | 'codeowners'           // CODEOWNERS-based matching (confidence: 0.75)
+  | 'service_tag'          // Service tag matching (confidence: 0.6)
+  | 'search';              // Full-text search (confidence: 0.5-0.7)
 
 export interface ResolvedContract {
   contractId: string;
@@ -98,6 +105,7 @@ export interface ResolvedContract {
     files?: string[];
     tags?: string[];
     service?: string;
+    owners?: string[];     // For CODEOWNERS strategy
   };
 }
 
