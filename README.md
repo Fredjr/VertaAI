@@ -686,6 +686,16 @@ VertaAI now includes a **Contract Integrity & Readiness** system that prevents i
 - ✅ TTL cleanup job with QStash integration
 - ✅ Comprehensive telemetry and end-to-end testing
 
+**Week 5-6: Comparators & IntegrityFinding** (4 steps, in progress)
+- ✅ BaseComparator with Template Method pattern (26 tests passing)
+- ✅ OpenApiComparator for endpoint/schema/example parity (13 tests passing)
+- ✅ TerraformRunbookComparator for infrastructure consistency (13 tests passing)
+- ✅ IntegrityFinding CRUD operations with findingRepository (8 tests passing)
+- ✅ Webhook integration for contract validation (runs parallel with drift detection)
+- ✅ Feature flag `ENABLE_CONTRACT_VALIDATION` for gradual rollout
+- ⏳ Full contract resolution and artifact fetching (stub implementation)
+- ⏳ GitHub Check creation from IntegrityFindings (planned)
+
 ### Security & Access Control
 
 **Current Status**: ⚠️ **Admin-Only Feature**
@@ -699,14 +709,24 @@ VertaAI now includes a **Contract Integrity & Readiness** system that prevents i
 - Add role-based access control (admin-only)
 - Consider moving Contracts UI to Settings page
 
-### Next Steps
+### Week 5-6: Comparators & IntegrityFinding (In Progress)
 
-**Week 5-6: Comparators & IntegrityFinding** (planned)
-- Create comparator interface and base class
-- Implement OpenAPI comparator (schema drift detection)
-- Implement Terraform ↔ Runbook comparator
-- Generate IntegrityFinding records
-- Add comparison telemetry
+**Completed:**
+- ✅ Comparator interface and base class (Template Method pattern)
+- ✅ OpenAPI ↔ Docs comparator (endpoint/parameter/schema/example parity)
+- ✅ Terraform ↔ Runbook comparator (resource/variable/deployment parity)
+- ✅ IntegrityFinding database model and CRUD operations
+- ✅ Webhook integration (contract validation runs after Agent PR Gatekeeper)
+- ✅ Feature flag (`ENABLE_CONTRACT_VALIDATION`)
+- ✅ All tests passing (52 tests: 26 base + 13 OpenAPI + 13 Terraform + 8 repository)
+
+**In Progress:**
+- ⏳ Contract resolution and artifact fetching integration (stub implementation)
+- ⏳ Comparison telemetry (metrics tracking)
+- ⏳ Deep comparison enhancement (value checks, not just existence)
+- ⏳ GitHub Check integration (create checks from IntegrityFindings)
+
+**Status:** Core infrastructure complete, end-to-end flow stubbed, ready for full integration
 
 ## 📄 License
 

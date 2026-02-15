@@ -101,10 +101,10 @@ VertaAI operates on two parallel tracks:
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  3. RUN COMPARATORS (Deterministic, < 5s each)                   │
-│  ├─ OpenAPI ↔ Docs: Endpoint/schema/example parity              │
-│  ├─ Terraform ↔ Runbook: Infrastructure consistency             │
-│  ├─ Dashboard ↔ Alert: Metric name consistency                  │
-│  └─ CODEOWNERS ↔ Docs: Ownership accuracy                       │
+│  ├─ ✅ OpenAPI ↔ Docs: Endpoint/schema/example parity           │
+│  ├─ ✅ Terraform ↔ Runbook: Infrastructure consistency          │
+│  ├─ 🚧 Dashboard ↔ Alert: Metric name consistency (planned)     │
+│  └─ 🚧 CODEOWNERS ↔ Docs: Ownership accuracy (planned)          │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -113,12 +113,13 @@ VertaAI operates on two parallel tracks:
 │  ├─ Severity: critical/high/medium/low                           │
 │  ├─ Drift type: endpoint_missing, schema_mismatch, etc.          │
 │  ├─ Evidence: Specific mismatches with pointers                  │
-│  └─ Recommended action: block_merge/create_patch/notify         │
+│  ├─ Recommended action: block_merge/create_patch/notify         │
+│  └─ ✅ Persist to database (findingRepository)                   │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  5. CREATE GITHUB CHECK (Real-time)                              │
+│  5. CREATE GITHUB CHECK (Real-time) 🚧 PLANNED                   │
 │  ├─ Conclusion: success (PASS) / neutral (WARN) / failure (BLOCK)│
 │  ├─ Summary: Risk tier, findings count, impact band              │
 │  ├─ Annotations: File-level findings (max 50)                    │
@@ -127,7 +128,7 @@ VertaAI operates on two parallel tracks:
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  6. (OPTIONAL) CREATE DRIFT CANDIDATE                            │
+│  6. (OPTIONAL) CREATE DRIFT CANDIDATE 🚧 PLANNED                 │
 │  └─ If findings are severe → Trigger remediation track          │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -1196,16 +1197,19 @@ model ArtifactSnapshot {
 1. **OpenAPI ↔ Docs** (`openapi_docs_endpoint_parity`):
    - Detects missing endpoints (in OpenAPI but not in docs)
    - Detects deprecated endpoints (in docs but not in OpenAPI)
-   - Detects missing parameters (required/optional)
-   - Detects missing schemas
-   - Detects missing examples
+   - Detects missing/extra parameters (required/optional)
+   - Detects schema mismatches (missing properties, type changes)
+   - Detects outdated/missing/invalid examples
+   - **Status:** ✅ Complete (13 tests passing)
+
+2. **Terraform ↔ Runbook** (`terraform_runbook_consistency`):
+   - Detects resource parity (missing/deprecated resources)
+   - Detects variable parity (undocumented variables)
+   - Detects deployment step parity (missing terraform commands, unreferenced outputs)
+   - Severity assignment based on resource type (critical for databases, high for compute)
+   - **Status:** ✅ Complete (13 tests passing)
 
 **Comparator Types (Planned):**
-2. **Terraform ↔ Runbook** (`terraform_runbook_consistency`):
-   - Detects infrastructure drift (regions, resources, configs)
-   - Detects missing deployment steps
-   - Detects outdated rollback procedures
-
 3. **Dashboard ↔ Alert** (`dashboard_alert_metric_parity`):
    - Detects metric name mismatches
    - Detects missing alerts for dashboard panels
@@ -1223,20 +1227,33 @@ model IntegrityFinding {
   id                String
   contractId        String
   invariantId       String
-  signalEventId     String
-  driftType         String      // 'endpoint_missing', 'schema_mismatch', etc.
+  driftType         String      // 'endpoint_missing', 'schema_mismatch', 'resource_missing', etc.
+  domains           String[]    // ['api', 'deployment', 'database']
   severity          String      // 'critical', 'high', 'medium', 'low'
+  compared          Json        // { left: { snapshotId, artifactType }, right: { ... } }
   evidence          Json        // Structured evidence with pointers
-  comparedArtifacts Json        // Which snapshots were compared
-  recommendedAction String      // 'block_merge', 'create_patch_candidate', 'notify', 'no_action'
   confidence        Float       // 0.0-1.0
   impact            Float       // 0.0-1.0
   band              String      // 'pass', 'warn', 'fail'
-  routedTo          Json        // Who should be notified
+  recommendedAction String      // 'block_merge', 'create_patch_candidate', 'notify', 'no_action'
+  ownerRouting      Json        // { teams: [], channels: [], individuals: [] }
+  driftCandidateId  String?     // Link to Track 2 drift candidate (if escalated)
   createdAt         DateTime
   @@id([workspaceId, id])
 }
 ```
+
+**CRUD Operations (findingRepository.ts):**
+- `createFinding()` - Create single finding
+- `createFindings()` - Batch create findings
+- `findByContractId()` - Query findings by contract
+- `findByBand()` - Query findings by band (pass/warn/fail)
+- `findBySignalEvent()` - Query findings by signal event (PR, incident, etc.)
+- `linkToDriftCandidate()` - Link finding to Track 2 drift candidate
+- `calculateRiskTier()` - Aggregate findings and determine PASS/WARN/FAIL band
+- `getFindingsSummary()` - Get summary statistics for a contract
+
+**Status:** ✅ Complete (8 tests passing)
 
 **Evidence Structure:**
 
