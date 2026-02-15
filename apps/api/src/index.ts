@@ -88,7 +88,8 @@ app.use('/api/workspaces', slackChannelsRouter);
 app.use('/api/workspaces', settingsRouter);
 
 // Plans API routes (Phase 3 - DriftPlan Management)
-app.use('/api/plans', plansRouter);
+app.use('/api/plans', plansRouter); // Legacy routes for backward compatibility
+app.use('/api', plansRouter); // New workspace-scoped routes
 
 // Coverage API routes (Phase 3 Week 6 - Coverage Monitoring) - TEMPORARILY DISABLED
 // app.use('/api/coverage', coverageRouter);

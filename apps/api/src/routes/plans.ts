@@ -55,13 +55,87 @@ router.get('/templates/:templateId', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /api/plans
+ * GET /api/workspaces/:workspaceId/drift-plans
+ * List all drift plans for a workspace
+ */
+router.get('/workspaces/:workspaceId/drift-plans', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId } = req.params;
+
+    // Validate workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true },
+    });
+
+    if (!workspace) {
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
+
+    const { status, scopeType } = req.query;
+
+    const plans = await listDriftPlans({
+      workspaceId,
+      status: status as any,
+      scopeType: scopeType as any,
+    });
+
+    res.json({
+      success: true,
+      data: plans,
+    });
+  } catch (error: any) {
+    console.error('[Plans API] Error listing plans:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to list plans',
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * GET /api/workspaces/:workspaceId/drift-plans/:planId
+ * Get a specific drift plan by ID
+ */
+router.get('/workspaces/:workspaceId/drift-plans/:planId', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId, planId } = req.params;
+
+    const plan = await getDriftPlan({ workspaceId, planId });
+
+    if (!plan) {
+      return res.status(404).json({
+        success: false,
+        error: 'Plan not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: plan,
+    });
+  } catch (error: any) {
+    console.error('[Plans API] Error fetching plan:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch plan',
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/workspaces/:workspaceId/drift-plans
  * Create a new drift plan
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/workspaces/:workspaceId/drift-plans', async (req: Request, res: Response) => {
   try {
+    const { workspaceId } = req.params;
     const {
-      workspaceId,
       name,
       description,
       scopeType,
@@ -74,17 +148,47 @@ router.post('/', async (req: Request, res: Response) => {
       createdBy,
     } = req.body;
 
-    // Validate required fields
-    if (!workspaceId || !name || !scopeType || !config) {
-      return res.status(400).json({ error: 'Missing required fields: workspaceId, name, scopeType, config' });
-    }
-
     // Validate workspace exists
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
+      select: { id: true },
     });
+
     if (!workspace) {
-      return res.status(404).json({ error: `Workspace not found: ${workspaceId}` });
+      return res.status(404).json({
+        success: false,
+        error: 'Workspace not found',
+      });
+    }
+
+    // Validate required fields
+    if (!name || !scopeType || !config) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: name, scopeType, config',
+      });
+    }
+
+    // Validate config structure
+    if (!config.inputSources || !Array.isArray(config.inputSources)) {
+      return res.status(400).json({
+        success: false,
+        error: 'config.inputSources must be an array',
+      });
+    }
+
+    if (!config.driftTypes || !Array.isArray(config.driftTypes)) {
+      return res.status(400).json({
+        success: false,
+        error: 'config.driftTypes must be an array',
+      });
+    }
+
+    if (!config.allowedOutputs || !Array.isArray(config.allowedOutputs)) {
+      return res.status(400).json({
+        success: false,
+        error: 'config.allowedOutputs must be an array',
+      });
     }
 
     const plan = await createDriftPlan({
@@ -101,78 +205,27 @@ router.post('/', async (req: Request, res: Response) => {
       createdBy,
     });
 
-    res.status(201).json({ plan });
+    res.status(201).json({
+      success: true,
+      data: plan,
+    });
   } catch (error: any) {
     console.error('[Plans API] Error creating plan:', error);
-    res.status(500).json({ error: 'Failed to create plan', message: error.message });
-  }
-});
-
-/**
- * GET /api/plans/:workspaceId
- * List all plans for a workspace
- */
-router.get('/:workspaceId', async (req: Request, res: Response) => {
-  try {
-    const workspaceId = req.params.workspaceId;
-    if (!workspaceId) {
-      return res.status(400).json({ error: 'Workspace ID is required' });
-    }
-
-    const { status, scopeType } = req.query;
-
-    const plans = await listDriftPlans({
-      workspaceId,
-      status: status as any,
-      scopeType: scopeType as any,
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create plan',
+      message: error.message,
     });
-
-    res.json({ plans });
-  } catch (error: any) {
-    console.error('[Plans API] Error listing plans:', error);
-    res.status(500).json({ error: 'Failed to list plans', message: error.message });
   }
 });
 
 /**
- * GET /api/plans/:workspaceId/:planId
- * Get a specific plan by ID
- */
-router.get('/:workspaceId/:planId', async (req: Request, res: Response) => {
-  try {
-    const workspaceId = req.params.workspaceId;
-    const planId = req.params.planId;
-
-    if (!workspaceId || !planId) {
-      return res.status(400).json({ error: 'Workspace ID and Plan ID are required' });
-    }
-
-    const plan = await getDriftPlan({ workspaceId, planId });
-
-    if (!plan) {
-      return res.status(404).json({ error: 'Plan not found' });
-    }
-
-    res.json({ plan });
-  } catch (error: any) {
-    console.error('[Plans API] Error fetching plan:', error);
-    res.status(500).json({ error: 'Failed to fetch plan', message: error.message });
-  }
-});
-
-/**
- * PUT /api/plans/:workspaceId/:planId
+ * PUT /api/workspaces/:workspaceId/drift-plans/:planId
  * Update a drift plan
  */
-router.put('/:workspaceId/:planId', async (req: Request, res: Response) => {
+router.put('/workspaces/:workspaceId/drift-plans/:planId', async (req: Request, res: Response) => {
   try {
-    const workspaceId = req.params.workspaceId;
-    const planId = req.params.planId;
-
-    if (!workspaceId || !planId) {
-      return res.status(400).json({ error: 'Workspace ID and Plan ID are required' });
-    }
-
+    const { workspaceId, planId } = req.params;
     const { name, description, config, status, updatedBy } = req.body;
 
     const plan = await updateDriftPlan({
@@ -185,34 +238,42 @@ router.put('/:workspaceId/:planId', async (req: Request, res: Response) => {
       updatedBy,
     });
 
-    res.json({ plan });
+    res.json({
+      success: true,
+      data: plan,
+    });
   } catch (error: any) {
     console.error('[Plans API] Error updating plan:', error);
-    res.status(500).json({ error: 'Failed to update plan', message: error.message });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update plan',
+      message: error.message,
+    });
   }
 });
 
 /**
- * DELETE /api/plans/:workspaceId/:planId
+ * DELETE /api/workspaces/:workspaceId/drift-plans/:planId
  * Delete (archive) a drift plan
  */
-router.delete('/:workspaceId/:planId', async (req: Request, res: Response) => {
+router.delete('/workspaces/:workspaceId/drift-plans/:planId', async (req: Request, res: Response) => {
   try {
-    const workspaceId = req.params.workspaceId;
-    const planId = req.params.planId;
-
-    if (!workspaceId || !planId) {
-      return res.status(400).json({ error: 'Workspace ID and Plan ID are required' });
-    }
-
+    const { workspaceId, planId } = req.params;
     const { updatedBy } = req.body;
 
     await deleteDriftPlan({ workspaceId, planId, updatedBy });
 
-    res.json({ success: true, message: 'Plan archived successfully' });
+    res.json({
+      success: true,
+      message: 'Plan archived successfully',
+    });
   } catch (error: any) {
     console.error('[Plans API] Error deleting plan:', error);
-    res.status(500).json({ error: 'Failed to delete plan', message: error.message });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete plan',
+      message: error.message,
+    });
   }
 });
 
