@@ -1,0 +1,172 @@
+# VertaAI Contract Packs Configuration
+# 
+# This file defines contract integrity rules for your repositories.
+# Place this file at `.verta/contractpacks.yaml` in your repository.
+#
+# Hierarchy: org → repo → pack → contract → invariant
+# Rollout modes: disabled, warn, block
+# Surfaces: api, infra, docs, data_model, observability, security
+
+version: "1.0"
+
+orgs:
+  - org: "Fredjr"
+    rolloutMode: warn # Default for all repos in this org
+    enabled: true
+    
+    repos:
+      - repo: "Fredjr/VertaAI"
+        rolloutMode: warn # Override org-level rollout mode
+        enabled: true
+        
+        packs:
+          # ============================================================
+          # API Contract Pack
+          # ============================================================
+          - name: "API Integrity Pack"
+            description: "Ensures API contracts are maintained and documented"
+            surfaces: [api]
+            rolloutMode: warn
+            enabled: true
+            
+            contracts:
+              - name: "OpenAPI Documentation"
+                description: "Ensures OpenAPI spec is valid and up-to-date"
+                surfaces: [api]
+                artifactLocations:
+                  - artifactType: openapi_spec
+                    location: "docs/openapi.yaml"
+                
+                invariants:
+                  - comparatorType: "openapi.validate"
+                    description: "OpenAPI spec must be valid"
+                    severity: high
+                    config:
+                      strictMode: true
+                  
+                  - comparatorType: "openapi.diff"
+                    description: "No breaking changes to API"
+                    severity: critical
+                    config:
+                      allowBreakingChanges: false
+              
+              - name: "API Documentation Requirements"
+                description: "Ensures API docs have required sections"
+                surfaces: [api]
+                artifactLocations:
+                  - artifactType: github_readme
+                    location: "README.md"
+                
+                invariants:
+                  - comparatorType: "docs.required_sections"
+                    description: "README must have API documentation sections"
+                    severity: medium
+                    config:
+                      requiredSections:
+                        - "API Reference"
+                        - "Authentication"
+                        - "Examples"
+                      caseSensitive: false
+                      exactMatch: false
+          
+          # ============================================================
+          # Infrastructure Contract Pack
+          # ============================================================
+          - name: "Infrastructure Integrity Pack"
+            description: "Ensures infrastructure changes are safe and documented"
+            surfaces: [infra]
+            rolloutMode: block # Block PRs that violate infra contracts
+            enabled: true
+            
+            contracts:
+              - name: "Terraform Runbook"
+                description: "Ensures runbook exists and is updated"
+                surfaces: [infra]
+                artifactLocations:
+                  - artifactType: markdown
+                    location: "docs/runbook.md"
+                
+                invariants:
+                  - comparatorType: "obligation.file_present"
+                    description: "Runbook must exist"
+                    severity: high
+                    config:
+                      requiredFiles:
+                        - "docs/runbook.md"
+                  
+                  - comparatorType: "obligation.file_changed"
+                    description: "Runbook must be updated when infra changes"
+                    severity: medium
+                    config:
+                      requiredChangedFiles:
+                        - "docs/runbook.md"
+                  
+                  - comparatorType: "docs.required_sections"
+                    description: "Runbook must have required sections"
+                    severity: high
+                    config:
+                      requiredSections:
+                        - "Prerequisites"
+                        - "Deployment"
+                        - "Rollback"
+                        - "Monitoring"
+          
+          # ============================================================
+          # Documentation Contract Pack
+          # ============================================================
+          - name: "Documentation Quality Pack"
+            description: "Ensures documentation is complete and valid"
+            surfaces: [docs]
+            rolloutMode: warn
+            enabled: true
+            
+            contracts:
+              - name: "README Quality"
+                description: "Ensures README has required sections and no broken links"
+                surfaces: [docs]
+                artifactLocations:
+                  - artifactType: github_readme
+                    location: "README.md"
+                
+                invariants:
+                  - comparatorType: "docs.required_sections"
+                    description: "README must have standard sections"
+                    severity: medium
+                    config:
+                      requiredSections:
+                        - "Installation"
+                        - "Usage"
+                        - "Contributing"
+                        - "License"
+                  
+                  - comparatorType: "docs.anchor_check"
+                    description: "No broken internal links"
+                    severity: low
+              
+              - name: "Changelog Maintenance"
+                description: "Ensures CHANGELOG is updated"
+                surfaces: [docs, api, infra]
+                artifactLocations:
+                  - artifactType: markdown
+                    location: "CHANGELOG.md"
+                
+                invariants:
+                  - comparatorType: "obligation.file_present"
+                    description: "CHANGELOG must exist"
+                    severity: medium
+                    config:
+                      requiredFiles:
+                        - "CHANGELOG.md"
+                  
+                  - comparatorType: "obligation.file_changed"
+                    description: "CHANGELOG must be updated"
+                    severity: medium
+                    config:
+                      requiredChangedFiles:
+                        - "CHANGELOG.md"
+
+# Global severity overrides (optional)
+severityOverrides:
+  "openapi.diff": critical
+  "terraform.risk_classifier": high
+

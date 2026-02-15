@@ -21,6 +21,7 @@ import monitoringRouter from './routes/monitoring.js';  // Production monitoring
 import testWebhooksRouter from './routes/test-webhooks.js';  // Test endpoint for E2E testing
 import healthCheckRouter from './routes/health-check.js';  // Health check endpoints
 import contractPacksRouter from './routes/contractPacks.js';  // Phase 1 Week 1-2: Contract Packs Management
+import contractPoliciesRouter from './routes/contractPolicies.js';  // Week 5-6: Contract Policies Management
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -100,6 +101,9 @@ app.use('/api/monitoring', monitoringRouter);
 
 // Contract Packs API routes (Phase 1 Week 1-2 - Contract Integrity & Readiness)
 app.use('/api', contractPacksRouter);
+
+// Contract Policies API routes (Week 5-6 - Policy Enforcement Configuration)
+app.use('/api', contractPoliciesRouter);
 
 // Health check API routes
 app.use('/api', healthCheckRouter);

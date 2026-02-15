@@ -28,6 +28,7 @@ import {
   logResolutionMetrics,
   logResolutionDetails,
 } from '../services/contracts/telemetry.js';
+import { runContractValidation } from '../services/contracts/contractValidation.js';
 
 // LEGACY: Create Octokit with personal access token for repo webhooks (no installation)
 // Used only by legacy endpoint - will be deprecated
@@ -511,6 +512,122 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
         }
       } else {
         console.log(`[Webhook] [V2] Skipping gatekeeper for PR #${prInfo.prNumber} (trusted bot or skip label)`);
+      }
+    }
+
+    // =========================================================================
+    // CONTRACT VALIDATION (Track 1 - Week 5-6)
+    // Run contract validation for opened and synchronize events (not for merged PRs)
+    // Creates GitHub Check with contract integrity findings
+    // CRITICAL: Must complete in < 30s to avoid GitHub webhook timeout
+    // =========================================================================
+    if (isFeatureEnabled('ENABLE_CONTRACT_VALIDATION', workspaceId) && !prInfo.merged) {
+      console.log(`[Webhook] [V2] Running Contract Validation for PR #${prInfo.prNumber}`);
+
+      // FIX: Declare timeout ID outside try block so it's accessible in catch
+      let timeoutId: NodeJS.Timeout | undefined;
+
+      try {
+        // Track A requirement: < 30s total latency
+        // Use 25s timeout to leave 5s buffer for GitHub webhook processing
+        const TRACK_A_TIMEOUT_MS = 25000;
+
+        const validationPromise = runContractValidation({
+          workspaceId,
+          signalEventId,
+          changedFiles: files,
+          service: inferredService,
+          repo: prInfo.repoFullName,
+        });
+
+        // FIX: Store timeout ID so we can clear it to prevent memory leak
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Contract validation timeout')), TRACK_A_TIMEOUT_MS);
+        });
+
+        const validationResult = await Promise.race([validationPromise, timeoutPromise]);
+
+        // FIX: Clear timeout if validation completed successfully
+        if (timeoutId) clearTimeout(timeoutId);
+
+        console.log(`[Webhook] [V2] Contract validation result: ${validationResult.band} (${validationResult.totalCount} findings)`);
+        console.log(`[Webhook] [V2] Severity breakdown: critical=${validationResult.criticalCount}, high=${validationResult.highCount}, medium=${validationResult.mediumCount}, low=${validationResult.lowCount}`);
+        console.log(`[Webhook] [V2] Contracts checked: ${validationResult.contractsChecked}, duration: ${validationResult.duration}ms`);
+
+        // Create GitHub Check from validation result (Week 3-4 Task 1)
+        if (prInfo.installationId) {
+          try {
+            const { createContractValidationCheck } = await import('../services/contractGate/githubCheck.js');
+
+            await createContractValidationCheck({
+              owner: prInfo.repoOwner,
+              repo: prInfo.repoName,
+              headSha: payload.pull_request.head.sha,
+              installationId: prInfo.installationId,
+              band: validationResult.band,
+              findings: validationResult.findings,
+              contractsChecked: validationResult.contractsChecked,
+              duration: validationResult.duration,
+              signalEventId,
+              workspaceId,
+              surfacesTouched: validationResult.surfacesTouched,
+              criticalCount: validationResult.criticalCount,
+              highCount: validationResult.highCount,
+              mediumCount: validationResult.mediumCount,
+              lowCount: validationResult.lowCount,
+              policyMode: validationResult.policyMode, // NEW: Policy enforcement mode
+            });
+
+            console.log(`[Webhook] [V2] Created GitHub Check for contract validation`);
+          } catch (checkError: any) {
+            console.error('[Webhook] [V2] Failed to create GitHub Check:', checkError.message);
+            // Don't fail the webhook if check creation fails
+          }
+        } else {
+          console.warn('[Webhook] [V2] No installation ID - skipping GitHub Check creation');
+        }
+      } catch (error: any) {
+        // FIX: Clear timeout on error to prevent memory leak
+        if (timeoutId) clearTimeout(timeoutId);
+
+        // Handle timeout with soft-fail to WARN
+        if (error.message === 'Contract validation timeout') {
+          console.error('[Webhook] [V2] Contract validation timeout - soft-failing to WARN');
+
+          // Create WARN check to indicate timeout
+          if (prInfo.installationId) {
+            try {
+              const { createContractValidationCheck } = await import('../services/contractGate/githubCheck.js');
+
+              await createContractValidationCheck({
+                owner: prInfo.repoOwner,
+                repo: prInfo.repoName,
+                headSha: payload.pull_request.head.sha,
+                installationId: prInfo.installationId,
+                band: 'warn',
+                findings: [],
+                contractsChecked: 0,
+                duration: 25000,
+                signalEventId,
+                workspaceId,
+                surfacesTouched: [],
+                criticalCount: 0,
+                highCount: 0,
+                mediumCount: 0,
+                lowCount: 0,
+                policyMode: 'warn_only',
+                timeoutOccurred: true, // Flag to indicate timeout
+              });
+
+              console.log(`[Webhook] [V2] Created WARN GitHub Check for timeout`);
+            } catch (checkError: any) {
+              console.error('[Webhook] [V2] Failed to create timeout GitHub Check:', checkError.message);
+            }
+          }
+        } else {
+          console.error('[Webhook] [V2] Contract validation failed:', error.message);
+          // Don't fail the webhook if validation fails
+        }
       }
     }
 

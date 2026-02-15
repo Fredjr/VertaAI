@@ -11,6 +11,7 @@
  */
 
 import { BaseComparator } from './base.js';
+import { getComparatorRegistry } from './registry.js';
 import type {
   Invariant,
   ArtifactSnapshot,
@@ -410,3 +411,11 @@ export class OpenApiComparator extends BaseComparator {
     return path.replace(/~/g, '~0').replace(/\//g, '~1');
   }
 }
+
+// ======================================================================
+// AUTO-REGISTRATION
+// ======================================================================
+
+// Auto-register this comparator when the module is imported
+const openApiComparator = new OpenApiComparator();
+getComparatorRegistry().register(openApiComparator);

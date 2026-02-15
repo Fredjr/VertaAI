@@ -1,4 +1,5 @@
 import { BaseComparator } from './base.js';
+import { getComparatorRegistry } from './registry.js';
 import type {
   ComparatorInput,
   IntegrityFinding,
@@ -601,3 +602,11 @@ export class TerraformRunbookComparator extends BaseComparator {
     return 'medium';
   }
 }
+
+// ============================================================================
+// AUTO-REGISTRATION
+// ============================================================================
+
+// Auto-register this comparator when the module is imported
+const terraformRunbookComparator = new TerraformRunbookComparator();
+getComparatorRegistry().register(terraformRunbookComparator);

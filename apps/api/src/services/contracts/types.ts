@@ -72,16 +72,21 @@ export interface Contract {
   contractId: string;
   name: string;
   description?: string;
-  scope: {
+  scope?: {
     service?: string;
     repo?: string;
     tags?: string[];
   };
+  surfaces?: string[]; // Optional: which surfaces this contract applies to (api, infra, data_model, etc.)
   artifacts: ArtifactRef[];
   invariants: Invariant[];
   enforcement: EnforcementConfig;
   routing: RoutingConfig;
-  writeback: WritebackConfig;
+  writeback?: WritebackConfig;
+  workspaceId?: string; // Optional: for database-backed contracts
+  enabled?: boolean; // Optional: whether contract is active
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 // ======================================================================
@@ -199,22 +204,41 @@ export interface OwnerRouting {
   owners: string[];
 }
 
+export type FindingSource = 'contract_comparator' | 'obligation_policy' | 'risk_modifier';
+
 export interface IntegrityFinding {
+  // Core identity
   workspaceId: string;
   id: string;
-  contractId: string;
-  invariantId: string;
+
+  // Source (NEW FIELD - distinguishes finding origin)
+  source: FindingSource;
+
+  // Contract context (optional - only for contract_comparator source)
+  contractId?: string;
+  invariantId?: string;
+
+  // Classification
   driftType: DriftType;
   domains: string[];
   severity: Severity;
-  compared: ComparedArtifacts;
+
+  // Evidence
+  compared?: ComparedArtifacts; // Optional - only for contract comparators
   evidence: EvidenceItem[];
   confidence: number;
   impact: number;
+
+  // Routing
   band: Band;
   recommendedAction: RecommendedAction;
   ownerRouting: OwnerRouting;
+
+  // Links (NEW FIELDS - for DeltaSync compatibility)
   driftCandidateId?: string;
+  affectedFiles: string[];
+  suggestedDocs: string[];
+
   createdAt: Date;
 }
 

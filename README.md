@@ -649,52 +649,77 @@ cd apps/api && npx tsc --noEmit
 - **PRODUCT_GUIDE.md**: Contract Integrity & Readiness implementation plan
 - **ARCHITECTURE_REVIEW.md**: Senior architect review of Phase 1 Week 1-4
 
-## 🔒 Contract Integrity & Readiness (Phase 1 Week 1-4)
+## 🔒 Contract Integrity & Readiness (Track A - Weeks 1-6)
 
-**Status**: ✅ **Complete** (4 weeks, 9 commits)
+**Status**: ✅ **Fully Functional** (6 weeks, Track A complete)
 
-VertaAI now includes a **Contract Integrity & Readiness** system that prevents inconsistencies across:
+VertaAI includes a **dual-track architecture** for preventing and correcting inconsistencies:
+
+### Track A: Contract Integrity Gate (Synchronous, < 30s)
+Fast, deterministic validation that runs on every PR to catch inconsistencies before they reach production:
 - Code ↔ API specs (OpenAPI, GraphQL)
 - API specs ↔ Documentation (Confluence, Notion)
 - Infrastructure ↔ Runbooks (Terraform, Kubernetes)
 - Dashboards ↔ Runbooks (Grafana, Datadog)
 
+### Track B: Drift Remediation (Asynchronous, LLM-Assisted)
+Thorough, evidence-grounded patching for drifts that slip through or accumulate over time (see sections above for full details).
+
 ### Architecture
 
-**Option B: Separate State Machines**
-- **Contract Validation**: Fast, deterministic (< 30s for PR checks)
-- **Drift Remediation**: Thorough, LLM-assisted (can take minutes)
-- **Shared Services**: ArtifactFetcher, ContractResolver, Comparators
+**Dual-Track Design:**
+- **Track A (Contract Validation)**: Synchronous, deterministic, < 30s, GitHub Checks, no LLM
+- **Track B (Drift Remediation)**: Asynchronous, LLM-assisted, human-approved, Slack workflow
+- **Shared Services**: ArtifactFetcher, SurfaceClassifier, Comparators
 
-### Completed Features
+### Completed Features (Track A)
 
-**Week 1-2: Contract Registry & Resolution Engine** (6 steps, 3 commits)
-- ✅ Prisma schema extensions (ContractPack, ContractResolution, ArtifactSnapshot, IntegrityFinding)
-- ✅ TypeScript type definitions (Contract, ArtifactRef, ArtifactVersion, ResolutionMethod)
-- ✅ ContractResolver service (5 resolution strategies with confidence scoring)
-- ✅ Webhook handler integration (parallel with drift detection)
-- ✅ Comprehensive telemetry (metrics, logging, confidence distribution)
-- ✅ End-to-end testing (all tests pass)
-- ✅ Full CRUD API for ContractPacks
-- ✅ Next.js UI for managing contract packs
+**Week 1-2: Foundation** (✅ Complete)
+- ✅ SurfaceClassifier (6 surface types: api, infra, docs, data_model, observability, security)
+- ✅ ContractResolver (database-backed contract resolution)
+- ✅ ArtifactFetcher with TTL caching (3.8x faster on cache hits)
+- ✅ Comparators (OpenAPI, Terraform with Template Method pattern)
+- ✅ Prisma schema (ContractPack, ArtifactSnapshot, IntegrityFinding)
 
-**Week 3-4: Artifact Fetcher & Snapshot System** (4 steps, 4 commits)
-- ✅ ArtifactFetcher service with adapter pattern
-- ✅ 3 artifact adapters (GitHub, Confluence, Grafana)
-- ✅ Versioned snapshots with TTL-based caching (3.8x faster on cache hits)
-- ✅ Webhook integration (automatic artifact fetching after contract resolution)
-- ✅ TTL cleanup job with QStash integration
-- ✅ Comprehensive telemetry and end-to-end testing
+**Week 3-4: GitHub Check Integration** (✅ Complete)
+- ✅ GitHub Check publisher (PASS/WARN/BLOCK conclusions)
+- ✅ Unified IntegrityFinding model
+- ✅ Webhook integration (parallel with drift detection)
+- ✅ Feature flag `ENABLE_CONTRACT_VALIDATION` (currently enabled)
 
-**Week 5-6: Comparators & IntegrityFinding** (4 steps, in progress)
-- ✅ BaseComparator with Template Method pattern (26 tests passing)
-- ✅ OpenApiComparator for endpoint/schema/example parity (13 tests passing)
-- ✅ TerraformRunbookComparator for infrastructure consistency (13 tests passing)
-- ✅ IntegrityFinding CRUD operations with findingRepository (8 tests passing)
-- ✅ Webhook integration for contract validation (runs parallel with drift detection)
-- ✅ Feature flag `ENABLE_CONTRACT_VALIDATION` for gradual rollout
-- ⏳ Full contract resolution and artifact fetching (stub implementation)
-- ⏳ GitHub Check creation from IntegrityFindings (planned)
+**Week 5-6: Configuration & Deployment** (✅ Complete)
+- ✅ ContractPolicy model (warn_only, block_high_critical, block_all_critical modes)
+- ✅ ContractPack model with CRUD API
+- ✅ Policy enforcement in risk calculation
+- ✅ Timeout enforcement (25s with soft-fail to WARN)
+- ✅ ContractPack resolver (database-backed, surfaces-based activation)
+- ✅ Obligation checker (evidence files, changelog, tests)
+- ✅ Full validation pipeline (7 steps: classify → resolve → obligations → fetch → compare → persist → risk)
+
+**Week 7-8: Extensibility & Configuration** (⏳ Planned)
+- ⏳ Comparator registry (plugin architecture)
+- ⏳ YAML config support (org/repo/pack hierarchy)
+- ⏳ Tier 0 comparators (docs.required_sections, docs.anchor_check, obligations)
+- ⏳ Extractor layer (OpenAPI, Markdown, Confluence parsing)
+- ⏳ Rollout controls (warn→block graduation)
+
+### Current Status
+
+**Feature Flag:** `ENABLE_CONTRACT_VALIDATION: true` ✅ **ENABLED**
+
+**Validation Pipeline:** Fully functional (no longer a stub)
+- Step 0: Fetch active ContractPolicy
+- Step 1: Classify surfaces (api, infra, data_model, etc.)
+- Step 2: Resolve applicable ContractPacks from database
+- Step 3: Run obligation checks (evidence, changelog, tests)
+- Step 4: Fetch artifact snapshots (with caching + timeout)
+- Step 5: Run comparators (OpenAPI, Terraform)
+- Step 6: Persist findings to database
+- Step 7: Calculate risk tier with policy enforcement
+
+**Performance:** < 25s validation time (5s buffer for GitHub's 30s limit)
+
+**Bugs Fixed:** 2/2 bugs from architectural audit fixed (obligation counter, timeout cleanup)
 
 ### Security & Access Control
 
@@ -708,25 +733,6 @@ VertaAI now includes a **Contract Integrity & Readiness** system that prevents i
 - Implement workspace access middleware
 - Add role-based access control (admin-only)
 - Consider moving Contracts UI to Settings page
-
-### Week 5-6: Comparators & IntegrityFinding (In Progress)
-
-**Completed:**
-- ✅ Comparator interface and base class (Template Method pattern)
-- ✅ OpenAPI ↔ Docs comparator (endpoint/parameter/schema/example parity)
-- ✅ Terraform ↔ Runbook comparator (resource/variable/deployment parity)
-- ✅ IntegrityFinding database model and CRUD operations
-- ✅ Webhook integration (contract validation runs after Agent PR Gatekeeper)
-- ✅ Feature flag (`ENABLE_CONTRACT_VALIDATION`)
-- ✅ All tests passing (52 tests: 26 base + 13 OpenAPI + 13 Terraform + 8 repository)
-
-**In Progress:**
-- ⏳ Contract resolution and artifact fetching integration (stub implementation)
-- ⏳ Comparison telemetry (metrics tracking)
-- ⏳ Deep comparison enhancement (value checks, not just existence)
-- ⏳ GitHub Check integration (create checks from IntegrityFindings)
-
-**Status:** Core infrastructure complete, end-to-end flow stubbed, ready for full integration
 
 ## 📄 License
 

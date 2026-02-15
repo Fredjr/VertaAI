@@ -238,6 +238,7 @@ export abstract class BaseComparator implements IComparator {
     return {
       workspaceId,
       id: uuidv4(),
+      source: 'contract_comparator', // All comparator findings are from contract comparators
       contractId,
       invariantId,
       driftType,
@@ -250,6 +251,8 @@ export abstract class BaseComparator implements IComparator {
       band,
       recommendedAction,
       ownerRouting,
+      affectedFiles: [], // Comparators don't track affected files (yet)
+      suggestedDocs: [], // Comparators don't suggest docs (yet)
       createdAt: new Date(),
     };
   }

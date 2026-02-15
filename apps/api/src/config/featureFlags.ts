@@ -52,6 +52,9 @@ export const FEATURE_FLAGS = {
 
   // Agent PR Gatekeeper (Phase 1)
   ENABLE_AGENT_PR_GATEKEEPER: true,     // Agent PR detection and risk gating
+
+  // Contract Validation (Track 1 - Week 5-6)
+  ENABLE_CONTRACT_VALIDATION: true,     // ✅ ENABLED: Full validation pipeline implemented (2026-02-15)
 } as const;
 
 export type FeatureFlag = keyof typeof FEATURE_FLAGS;

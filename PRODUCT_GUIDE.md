@@ -86,30 +86,41 @@ VertaAI operates on two parallel tracks:
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. PR OPENED/UPDATED (GitHub Webhook)                           │
 │  ├─ Extract changed files (OpenAPI, Terraform, CODEOWNERS, etc.) │
-│  ├─ Resolve applicable contracts (file patterns, service tags)   │
-│  └─ Trigger contract validation (< 30s total)                    │
+│  ├─ Classify surfaces (api, infra, docs, data_model, etc.)      │
+│  └─ Trigger contract validation (< 30s total, 25s timeout)      │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  2. FETCH ARTIFACT SNAPSHOTS (Parallel)                          │
+│  2. RESOLVE CONTRACTS & RUN OBLIGATIONS (Database-backed)        │
+│  ├─ Fetch active ContractPolicy (warn_only/block modes)          │
+│  ├─ Resolve applicable ContractPacks (surfaces-based activation) │
+│  ├─ Run obligation checks (evidence files, changelog, tests)     │
+│  └─ Generate obligation findings (deterministic policy gates)    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  3. FETCH ARTIFACT SNAPSHOTS (Parallel, with TTL caching)        │
 │  ├─ Primary artifacts (OpenAPI spec, Terraform configs)          │
 │  ├─ Secondary artifacts (Confluence docs, Notion pages)          │
-│  └─ Reference artifacts (Grafana dashboards, alert configs)      │
+│  ├─ Reference artifacts (Grafana dashboards, alert configs)      │
+│  └─ Cache hits: 3.8x faster, 25s timeout with soft-fail         │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  3. RUN COMPARATORS (Deterministic, < 5s each)                   │
+│  4. RUN COMPARATORS (Deterministic, < 5s each)                   │
 │  ├─ ✅ OpenAPI ↔ Docs: Endpoint/schema/example parity           │
 │  ├─ ✅ Terraform ↔ Runbook: Infrastructure consistency          │
-│  ├─ 🚧 Dashboard ↔ Alert: Metric name consistency (planned)     │
-│  └─ 🚧 CODEOWNERS ↔ Docs: Ownership accuracy (planned)          │
+│  ├─ ⏳ docs.required_sections (Tier 0, Week 7)                   │
+│  ├─ ⏳ docs.anchor_check (Tier 0, Week 7)                        │
+│  └─ ⏳ Dashboard ↔ Alert: Metric consistency (Tier 2, Week 9)   │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  4. GENERATE INTEGRITY FINDINGS (Structured)                     │
+│  5. GENERATE INTEGRITY FINDINGS (Structured)                     │
 │  ├─ Severity: critical/high/medium/low                           │
 │  ├─ Drift type: endpoint_missing, schema_mismatch, etc.          │
 │  ├─ Evidence: Specific mismatches with pointers                  │
@@ -119,17 +130,19 @@ VertaAI operates on two parallel tracks:
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  5. CREATE GITHUB CHECK (Real-time) 🚧 PLANNED                   │
+│  6. CALCULATE RISK TIER & CREATE GITHUB CHECK (Real-time)        │
+│  ├─ Policy enforcement (warn_only/block_high_critical modes)     │
+│  ├─ Risk calculation (critical/high/medium/low counts)           │
 │  ├─ Conclusion: success (PASS) / neutral (WARN) / failure (BLOCK)│
-│  ├─ Summary: Risk tier, findings count, impact band              │
-│  ├─ Annotations: File-level findings (max 50)                    │
-│  └─ Details: Evidence, recommendations, links                    │
+│  ├─ Summary: Risk tier, findings count, obligations checked      │
+│  ├─ ✅ Timeout handling (soft-fail to WARN on 25s timeout)       │
+│  └─ ✅ GitHub Check created inline (synchronous)                 │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  6. (OPTIONAL) CREATE DRIFT CANDIDATE 🚧 PLANNED                 │
-│  └─ If findings are severe → Trigger remediation track          │
+│  7. (OPTIONAL) CREATE DRIFT CANDIDATE                            │
+│  └─ If findings are severe → Trigger Track 2 remediation        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

@@ -64,6 +64,7 @@ model Workspace {
   coverageSnapshots     CoverageSnapshot[] // NEW: Phase 3 Week 6 coverage monitoring
   auditTrails           AuditTrail[] // NEW: Phase 4 Week 8 comprehensive audit trail
   contractPacks         ContractPack[] // NEW: Contract Integrity & Readiness
+  contractPolicies      ContractPolicy[] // NEW: Contract Integrity Gate policies
 
   @@map("workspaces")
 }
@@ -543,6 +544,56 @@ model ContractPack {
   @@id([workspaceId, id])
   @@index([workspaceId])
   @@map("contract_packs")
+}
+
+// Contract Policy (workspace-level enforcement policy)
+// Defines how contract violations should be handled
+model ContractPolicy {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+  name        String
+  description String?
+
+  // Enforcement mode
+  // - 'warn_only': All violations create warnings, never block
+  // - 'block_high_critical': Block on high/critical, warn on medium/low
+  // - 'block_all_critical': Block only on critical, warn on all others
+  mode String @default("warn_only")
+
+  // Severity thresholds (0-100 scale)
+  criticalThreshold Int @default(90) @map("critical_threshold") // >= 90 = critical
+  highThreshold     Int @default(70) @map("high_threshold") // >= 70 = high
+  mediumThreshold   Int @default(40) @map("medium_threshold") // >= 40 = medium
+  // < 40 = low
+
+  // Graceful degradation settings
+  gracefulDegradation Json @default("{}") @map("graceful_degradation")
+  // Structure: {
+  //   "timeoutMs": 30000,
+  //   "maxArtifactFetchFailures": 3,
+  //   "fallbackMode": "warn_only",
+  //   "enableSoftFail": true
+  // }
+
+  // Policy application
+  appliesTo Json @default("[]") @map("applies_to")
+  // Structure: Array<{
+  //   "type": "surface" | "repo" | "service",
+  //   "value": "api" | "owner/repo" | "service-name"
+  // }>
+
+  // Active status
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId])
+  @@index([workspaceId, active])
+  @@map("contract_policies")
 }
 
 // Contract Resolution Result (audit trail)
