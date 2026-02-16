@@ -46,7 +46,7 @@ function PolicyPacksContent() {
       }
 
       const data = await response.json();
-      setPolicyPacks(data.data || []);
+      setPolicyPacks(data.policyPacks || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
