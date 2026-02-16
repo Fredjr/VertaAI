@@ -12,8 +12,7 @@ export default function Navigation() {
     { href: `/onboarding?workspace=${workspaceId}`, label: '🚀 Setup', icon: '🚀' },
     { href: `/compliance?workspace=${workspaceId}`, label: '📋 Compliance', icon: '📋' },
     { href: `/coverage?workspace=${workspaceId}`, label: '📊 Coverage', icon: '📊' },
-    { href: `/plans?workspace=${workspaceId}`, label: '📝 Plans', icon: '📝' },
-    { href: `/contracts?workspace=${workspaceId}`, label: '🔒 Contracts', icon: '🔒' },
+    { href: `/policy-packs?workspace=${workspaceId}`, label: '📦 Policy Packs', icon: '📦' },
     { href: `/settings?workspace=${workspaceId}`, label: '⚙️ Settings', icon: '⚙️' },
   ];
 
