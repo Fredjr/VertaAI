@@ -200,4 +200,55 @@ This will ensure users have full control over Track A configuration without need
 **Next Steps:**
 - Day 5: API endpoints for CRUD operations
 
+#### **Day 5: API Endpoints** ✅ COMPLETE
+
+**Completed:**
+1. ✅ Created `apps/api/src/routes/policyPacks.ts` (405 lines)
+   - Comprehensive CRUD endpoints for WorkspacePolicyPack
+   - Zod validation schemas for Track A and Track B configs
+   - Version hash generation (SHA-256)
+   - Soft delete support (archive vs hard delete)
+   - Test mode endpoint for dry-run execution
+
+2. ✅ Validation Schemas
+   - **TrackAConfigSchema**: Validates ALL 56 configurable elements
+     * Surfaces (6 types)
+     * Contracts (18 fields per contract)
+     * Artifacts (11 fields each)
+     * Invariants (7 fields each)
+     * Enforcement, Routing, Writeback
+     * Dictionaries, Extraction, Safety
+     * ContractPolicy thresholds
+   - **TrackBConfigSchema**: Validates all drift remediation config
+     * Primary doc (5 fields)
+     * Input sources (5 types)
+     * Drift types (5 types)
+     * Materiality thresholds (4 levels)
+     * Doc targeting, noise controls, budgets
+
+3. ✅ API Endpoints Implemented
+   - `GET /api/workspaces/:workspaceId/policy-packs` - List all policy packs
+   - `GET /api/workspaces/:workspaceId/policy-packs/:id` - Get specific policy pack
+   - `POST /api/workspaces/:workspaceId/policy-packs` - Create new policy pack
+   - `PUT /api/workspaces/:workspaceId/policy-packs/:id` - Update policy pack (creates new version)
+   - `DELETE /api/workspaces/:workspaceId/policy-packs/:id` - Delete policy pack (soft delete)
+   - `POST /api/workspaces/:workspaceId/policy-packs/:id/test` - Test mode (dry-run)
+
+4. ✅ Features
+   - Query filtering (status, trackAEnabled, trackBEnabled)
+   - Automatic version incrementing on updates
+   - Version hash generation for change detection
+   - User tracking (createdBy, updatedBy via x-user-id header)
+   - Soft delete (status='archived') vs hard delete
+   - Test mode for dry-run execution
+
+5. ✅ Registered routes in `apps/api/src/index.ts`
+   - Imported policyPacksRouter
+   - Registered at `/api` prefix
+
+**Next Steps:**
+- Week 8: Backend Integration & Backward Compatibility
+- Week 9: Frontend - Unified Configuration UI
+- Week 10: Migration, Testing & Deployment
+
 

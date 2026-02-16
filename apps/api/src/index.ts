@@ -22,6 +22,7 @@ import testWebhooksRouter from './routes/test-webhooks.js';  // Test endpoint fo
 import healthCheckRouter from './routes/health-check.js';  // Health check endpoints
 import contractPacksRouter from './routes/contractPacks.js';  // Phase 1 Week 1-2: Contract Packs Management
 import contractPoliciesRouter from './routes/contractPolicies.js';  // Week 5-6: Contract Policies Management
+import policyPacksRouter from './routes/policyPacks.js';  // P2 Week 7: Unified WorkspacePolicyPack Management
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -105,6 +106,9 @@ app.use('/api', contractPacksRouter);
 
 // Contract Policies API routes (Week 5-6 - Policy Enforcement Configuration)
 app.use('/api', contractPoliciesRouter);
+
+// Policy Packs API routes (P2 Week 7 - Unified WorkspacePolicyPack)
+app.use('/api', policyPacksRouter);
 
 // Health check API routes
 app.use('/api', healthCheckRouter);
