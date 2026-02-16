@@ -250,9 +250,8 @@ async function main() {
   }
 }
 
-if (require.main === module) {
-  main();
-}
+// Run if this is the main module
+main();
 
 export { migrateDriftPlans, transformDriftPlanToTrackBConfig };
 
