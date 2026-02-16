@@ -10,10 +10,13 @@ const router: RouterType = Router();
 /**
  * TEST ENDPOINT: Simulate GitHub PR webhook without signature validation
  * POST /test/webhooks/github/:workspaceId
- * 
+ *
  * This endpoint is for E2E testing only. It processes PR webhooks
  * without requiring valid GitHub webhook signatures.
- * 
+ *
+ * NOTE: This endpoint now delegates to the real webhook handler to ensure
+ * both Track A (PR Gatekeeper) and Track B (Drift Detection) are tested.
+ *
  * ⚠️ WARNING: This endpoint should be disabled in production or
  * protected with authentication.
  */
@@ -33,9 +36,11 @@ router.post('/github/:workspaceId', async (req: Request, res: Response) => {
     return res.json({ message: 'pong', workspaceId });
   }
 
-  // Handle pull_request event
+  // Handle pull_request event - delegate to real handler
   if (event === 'pull_request') {
-    return handleTestPullRequest(req.body, workspaceId, res);
+    // Import the real handler
+    const { handlePullRequestEventV2 } = await import('./webhooks.js');
+    return handlePullRequestEventV2(req.body, workspaceId, res);
   }
 
   // Ignore other events
@@ -124,7 +129,10 @@ index abc123..def456 100644
           authorLogin: prInfo.authorLogin,
           baseBranch: prInfo.baseBranch,
           headBranch: prInfo.headBranch,
-          merged: true,  // FIX: Test webhook always processes merged PRs
+          merged: prInfo.merged,  // Use actual PR status from payload
+          mergedAt: prInfo.mergedAt,
+          repoFullName: prInfo.repoFullName,
+          installationId: prInfo.installationId,
           changedFiles: files,
           diff: diff,
           totalChanges: files.reduce((sum: number, f: any) => sum + (f.additions || 0) + (f.deletions || 0), 0),
