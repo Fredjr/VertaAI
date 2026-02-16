@@ -19,8 +19,31 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import { prisma } from '../lib/db.js';
 import type { Contract } from '../services/contracts/types.js';
+import { getComparatorRegistry } from '../services/contracts/comparators/registry.js';
 
 const router: ExpressRouter = Router();
+
+/**
+ * GET /api/comparators
+ * List all available comparators from the registry
+ */
+router.get('/comparators', async (req, res) => {
+  try {
+    const registry = getComparatorRegistry();
+    const comparators = registry.list();
+
+    res.json({
+      success: true,
+      data: comparators,
+    });
+  } catch (error) {
+    console.error('[Comparators] List failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to list comparators',
+    });
+  }
+});
 
 /**
  * GET /api/workspaces/:workspaceId/contract-packs

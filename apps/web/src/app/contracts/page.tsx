@@ -3,6 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Navigation from '@/components/Navigation';
+import { X, Plus, Trash2, Edit2, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface ContractPack {
   workspaceId: string;
@@ -29,12 +30,25 @@ interface ContractPolicy {
   updatedAt: string;
 }
 
+interface Comparator {
+  comparatorType: string;
+  supportedArtifactTypes: string[];
+  version: string;
+}
+
+interface ComparatorSelection {
+  type: string;
+  enabled: boolean;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+}
+
 function ContractsContent() {
   const searchParams = useSearchParams();
   const workspaceId = searchParams.get('workspace') || 'demo-workspace';
 
   const [contractPacks, setContractPacks] = useState<ContractPack[]>([]);
   const [contractPolicies, setContractPolicies] = useState<ContractPolicy[]>([]);
+  const [availableComparators, setAvailableComparators] = useState<Comparator[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPack, setSelectedPack] = useState<ContractPack | null>(null);
@@ -42,18 +56,27 @@ function ContractsContent() {
   // Modal state
   const [showModal, setShowModal] = useState(false);
   const [editingPack, setEditingPack] = useState<ContractPack | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [currentStep, setCurrentStep] = useState(1);
+
+  // Form state
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     version: 'v1',
-    contracts: '[]',
+    scopeType: 'workspace' as 'workspace' | 'service' | 'repo',
+    scopeRef: '',
+    repoAllowlist: [] as string[],
+    pathGlobs: [] as string[],
+    enforcementMode: 'warn' as 'off' | 'warn' | 'block',
+    selectedComparators: [] as ComparatorSelection[],
   });
-  const [saving, setSaving] = useState(false);
 
-  // Fetch contract packs and policies
+  // Fetch contract packs, policies, and comparators
   useEffect(() => {
     fetchContractPacks();
     fetchContractPolicies();
+    fetchComparators();
   }, [workspaceId]);
 
   const fetchContractPacks = async () => {
@@ -94,6 +117,23 @@ function ContractsContent() {
     }
   };
 
+  const fetchComparators = async () => {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      const response = await fetch(`${apiUrl}/api/comparators`);
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch comparators');
+      }
+
+      const data = await response.json();
+      setAvailableComparators(data.data || []);
+    } catch (err) {
+      console.error('Failed to fetch comparators:', err);
+      // Don't set error state for comparators, just log it
+    }
+  };
+
   const handleDelete = async (packId: string) => {
     if (!confirm('Are you sure you want to delete this contract pack?')) {
       return;
@@ -120,49 +160,60 @@ function ContractsContent() {
 
   const openCreateModal = () => {
     setEditingPack(null);
+    setCurrentStep(1);
     setFormData({
       name: '',
       description: '',
       version: 'v1',
-      contracts: JSON.stringify([
-        {
-          contractId: 'example-contract',
-          name: 'Example Contract',
-          description: 'Example contract description',
-          surfaces: ['api'],
-          artifacts: [
-            {
-              type: 'openapi',
-              location: 'https://api.example.com/openapi.json',
-            },
-          ],
-          invariants: [
-            {
-              comparatorType: 'openapi.validate',
-              severity: 'high',
-              config: {},
-            },
-          ],
-          enforcement: {
-            mode: 'warn',
-            blockOnFail: false,
-          },
-          routing: {
-            method: 'service_owner',
-          },
-        },
-      ], null, 2),
+      scopeType: 'workspace',
+      scopeRef: '',
+      repoAllowlist: [],
+      pathGlobs: [],
+      enforcementMode: 'warn',
+      selectedComparators: availableComparators.map(c => ({
+        type: c.comparatorType,
+        enabled: false,
+        severity: 'medium' as const,
+      })),
     });
     setShowModal(true);
   };
 
   const openEditModal = (pack: ContractPack) => {
     setEditingPack(pack);
+    setCurrentStep(1);
+
+    // Extract enforcement mode from first contract (if exists)
+    const firstContract = pack.contracts[0];
+    const enforcementMode = firstContract?.enforcement?.mode || 'warn';
+
+    // Extract comparators from first contract's invariants
+    const existingComparators = firstContract?.invariants?.map((inv: any) => ({
+      type: inv.comparatorType,
+      enabled: true,
+      severity: inv.severity || 'medium',
+    })) || [];
+
+    // Merge with available comparators
+    const selectedComparators = availableComparators.map(c => {
+      const existing = existingComparators.find((ec: any) => ec.type === c.comparatorType);
+      return existing || {
+        type: c.comparatorType,
+        enabled: false,
+        severity: 'medium' as const,
+      };
+    });
+
     setFormData({
       name: pack.name,
       description: pack.description || '',
       version: pack.version,
-      contracts: JSON.stringify(pack.contracts, null, 2),
+      scopeType: firstContract?.scope?.type || 'workspace',
+      scopeRef: firstContract?.scope?.ref || '',
+      repoAllowlist: firstContract?.scope?.repoAllowlist || [],
+      pathGlobs: firstContract?.scope?.pathGlobs || [],
+      enforcementMode: enforcementMode as 'off' | 'warn' | 'block',
+      selectedComparators,
     });
     setShowModal(true);
   };
@@ -171,6 +222,7 @@ function ContractsContent() {
     setShowModal(false);
     setEditingPack(null);
     setSaving(false);
+    setCurrentStep(1);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -178,15 +230,39 @@ function ContractsContent() {
     setSaving(true);
 
     try {
-      // Parse contracts JSON
-      let contracts;
-      try {
-        contracts = JSON.parse(formData.contracts);
-      } catch (err) {
-        alert('Invalid JSON in contracts field');
-        setSaving(false);
-        return;
-      }
+      // Build contracts array from form data
+      const enabledComparators = formData.selectedComparators.filter(c => c.enabled);
+
+      const contracts = [{
+        contractId: `${formData.name.toLowerCase().replace(/\s+/g, '-')}-contract`,
+        name: formData.name,
+        description: formData.description,
+        surfaces: ['api'], // Default to API surface
+        scope: {
+          type: formData.scopeType,
+          ref: formData.scopeRef || undefined,
+          repoAllowlist: formData.repoAllowlist.length > 0 ? formData.repoAllowlist : undefined,
+          pathGlobs: formData.pathGlobs.length > 0 ? formData.pathGlobs : undefined,
+        },
+        artifacts: [
+          {
+            type: 'openapi',
+            location: 'https://api.example.com/openapi.json',
+          },
+        ],
+        invariants: enabledComparators.map(c => ({
+          comparatorType: c.type,
+          severity: c.severity,
+          config: {},
+        })),
+        enforcement: {
+          mode: formData.enforcementMode,
+          blockOnFail: formData.enforcementMode === 'block',
+        },
+        routing: {
+          method: 'service_owner',
+        },
+      }];
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
       const url = editingPack
@@ -220,6 +296,57 @@ function ContractsContent() {
       alert(err instanceof Error ? err.message : 'Failed to save contract pack');
       setSaving(false);
     }
+  };
+
+  // Helper functions for form management
+  const toggleComparator = (type: string) => {
+    setFormData(prev => ({
+      ...prev,
+      selectedComparators: prev.selectedComparators.map(c =>
+        c.type === type ? { ...c, enabled: !c.enabled } : c
+      ),
+    }));
+  };
+
+  const updateComparatorSeverity = (type: string, severity: 'low' | 'medium' | 'high' | 'critical') => {
+    setFormData(prev => ({
+      ...prev,
+      selectedComparators: prev.selectedComparators.map(c =>
+        c.type === type ? { ...c, severity } : c
+      ),
+    }));
+  };
+
+  const addRepoToAllowlist = (repo: string) => {
+    if (repo && !formData.repoAllowlist.includes(repo)) {
+      setFormData(prev => ({
+        ...prev,
+        repoAllowlist: [...prev.repoAllowlist, repo],
+      }));
+    }
+  };
+
+  const removeRepoFromAllowlist = (repo: string) => {
+    setFormData(prev => ({
+      ...prev,
+      repoAllowlist: prev.repoAllowlist.filter(r => r !== repo),
+    }));
+  };
+
+  const addPathGlob = (glob: string) => {
+    if (glob && !formData.pathGlobs.includes(glob)) {
+      setFormData(prev => ({
+        ...prev,
+        pathGlobs: [...prev.pathGlobs, glob],
+      }));
+    }
+  };
+
+  const removePathGlob = (glob: string) => {
+    setFormData(prev => ({
+      ...prev,
+      pathGlobs: prev.pathGlobs.filter(g => g !== glob),
+    }));
   };
 
   return (
@@ -499,92 +626,444 @@ function ContractsContent() {
         {/* Create/Edit Modal */}
         {showModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white dark:bg-gray-900 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="p-6 border-b border-gray-200 dark:border-gray-800">
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {editingPack ? 'Edit Contract Pack' : 'Create Contract Pack'}
-                </h2>
+            <div className="bg-white dark:bg-gray-900 rounded-lg max-w-5xl w-full max-h-[90vh] overflow-y-auto">
+              {/* Header */}
+              <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                    {editingPack ? 'Edit Contract Pack' : 'Create Contract Pack'}
+                  </h2>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                    Step {currentStep} of 4
+                  </p>
+                </div>
+                <button
+                  onClick={closeModal}
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              {/* Step Indicator */}
+              <div className="px-6 pt-4 pb-2">
+                <div className="flex items-center justify-between">
+                  {[
+                    { num: 1, label: 'Basic Info' },
+                    { num: 2, label: 'Enforcement' },
+                    { num: 3, label: 'Comparators' },
+                    { num: 4, label: 'Scope' },
+                  ].map((step, idx) => (
+                    <div key={step.num} className="flex items-center flex-1">
+                      <div className="flex flex-col items-center flex-1">
+                        <div
+                          className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
+                            currentStep >= step.num
+                              ? 'bg-primary-600 text-white'
+                              : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                          }`}
+                        >
+                          {step.num}
+                        </div>
+                        <span className="text-xs mt-1 text-gray-600 dark:text-gray-400">
+                          {step.label}
+                        </span>
+                      </div>
+                      {idx < 3 && (
+                        <div
+                          className={`h-1 flex-1 mx-2 ${
+                            currentStep > step.num
+                              ? 'bg-primary-600'
+                              : 'bg-gray-200 dark:bg-gray-700'
+                          }`}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <form onSubmit={handleSubmit} className="p-6 space-y-6">
-                {/* Name */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    placeholder="e.g., Production API Contract Pack"
-                  />
-                </div>
+                {/* Step 1: Basic Info */}
+                {currentStep === 1 && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Pack Name *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        placeholder="e.g., Production API Contract Pack"
+                      />
+                    </div>
 
-                {/* Description */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Description
-                  </label>
-                  <textarea
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    placeholder="Optional description of this contract pack"
-                  />
-                </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Description
+                      </label>
+                      <textarea
+                        value={formData.description}
+                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                        rows={3}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        placeholder="Optional description of this contract pack"
+                      />
+                    </div>
 
-                {/* Version */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Version
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.version}
-                    onChange={(e) => setFormData({ ...formData, version: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    placeholder="e.g., v1"
-                  />
-                </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Version
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.version}
+                        onChange={(e) => setFormData({ ...formData, version: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        placeholder="e.g., v1"
+                      />
+                    </div>
+                  </div>
+                )}
 
-                {/* Contracts (JSON Editor) */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    Contracts (JSON) *
-                  </label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                    Define contracts as a JSON array. Each contract should have: contractId, name, surfaces, artifacts, invariants, enforcement, routing.
-                  </p>
-                  <textarea
-                    required
-                    value={formData.contracts}
-                    onChange={(e) => setFormData({ ...formData, contracts: e.target.value })}
-                    rows={20}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent font-mono text-sm"
-                    placeholder='[{"contractId": "...", "name": "...", ...}]'
-                  />
-                </div>
+                {/* Step 2: Enforcement Mode */}
+                {currentStep === 2 && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                        Enforcement Mode *
+                      </label>
+                      <div className="space-y-3">
+                        {[
+                          { value: 'off', label: 'OFF', desc: 'No enforcement - findings are logged only' },
+                          { value: 'warn', label: 'WARN', desc: 'Show warnings but allow PR to proceed' },
+                          { value: 'block', label: 'BLOCK', desc: 'Block PR if critical findings detected' },
+                        ].map((mode) => (
+                          <label
+                            key={mode.value}
+                            className={`flex items-start p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                              formData.enforcementMode === mode.value
+                                ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20'
+                                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="enforcementMode"
+                              value={mode.value}
+                              checked={formData.enforcementMode === mode.value}
+                              onChange={(e) => setFormData({ ...formData, enforcementMode: e.target.value as any })}
+                              className="mt-1 mr-3"
+                            />
+                            <div>
+                              <div className="font-semibold text-gray-900 dark:text-white">
+                                {mode.label}
+                              </div>
+                              <div className="text-sm text-gray-600 dark:text-gray-400">
+                                {mode.desc}
+                              </div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
 
-                {/* Actions */}
-                <div className="flex justify-end gap-4 pt-4 border-t border-gray-200 dark:border-gray-800">
-                  <button
-                    type="button"
-                    onClick={closeModal}
-                    disabled={saving}
-                    className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={saving || !formData.name || !formData.contracts}
-                    className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {saving ? 'Saving...' : editingPack ? 'Update Pack' : 'Create Pack'}
-                  </button>
+                    <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                      <div className="flex items-start">
+                        <div className="text-blue-600 dark:text-blue-400 mr-3">ℹ️</div>
+                        <div className="text-sm text-blue-800 dark:text-blue-200">
+                          <strong>Recommendation:</strong> Start with WARN mode to understand the impact before enabling BLOCK mode.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 3: Comparator Selection */}
+                {currentStep === 3 && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                        Select Comparators
+                      </label>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                        Choose which comparators to enable for this contract pack. Each comparator validates a specific aspect of your contracts.
+                      </p>
+
+                      <div className="space-y-3 max-h-96 overflow-y-auto">
+                        {formData.selectedComparators.map((comp) => {
+                          const comparatorInfo = availableComparators.find(c => c.comparatorType === comp.type);
+                          return (
+                            <div
+                              key={comp.type}
+                              className={`p-4 border-2 rounded-lg transition-colors ${
+                                comp.enabled
+                                  ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20'
+                                  : 'border-gray-200 dark:border-gray-700'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between">
+                                <label className="flex items-start cursor-pointer flex-1">
+                                  <input
+                                    type="checkbox"
+                                    checked={comp.enabled}
+                                    onChange={() => toggleComparator(comp.type)}
+                                    className="mt-1 mr-3"
+                                  />
+                                  <div className="flex-1">
+                                    <div className="font-semibold text-gray-900 dark:text-white">
+                                      {comp.type}
+                                    </div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                      Supports: {comparatorInfo?.supportedArtifactTypes.join(', ') || 'N/A'}
+                                    </div>
+                                  </div>
+                                </label>
+
+                                {comp.enabled && (
+                                  <div className="ml-4">
+                                    <select
+                                      value={comp.severity}
+                                      onChange={(e) => updateComparatorSeverity(comp.type, e.target.value as any)}
+                                      className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                                    >
+                                      <option value="low">Low</option>
+                                      <option value="medium">Medium</option>
+                                      <option value="high">High</option>
+                                      <option value="critical">Critical</option>
+                                    </select>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {formData.selectedComparators.filter(c => c.enabled).length === 0 && (
+                        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 mt-4">
+                          <div className="flex items-start">
+                            <div className="text-yellow-600 dark:text-yellow-400 mr-3">⚠️</div>
+                            <div className="text-sm text-yellow-800 dark:text-yellow-200">
+                              No comparators selected. Your contract pack won't perform any validations.
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 4: Scope Configuration */}
+                {currentStep === 4 && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                        Scope Type
+                      </label>
+                      <div className="grid grid-cols-3 gap-3">
+                        {[
+                          { value: 'workspace', label: 'Workspace', desc: 'All repos in workspace' },
+                          { value: 'service', label: 'Service', desc: 'Specific service' },
+                          { value: 'repo', label: 'Repository', desc: 'Specific repo' },
+                        ].map((scope) => (
+                          <label
+                            key={scope.value}
+                            className={`flex flex-col p-3 border-2 rounded-lg cursor-pointer transition-colors ${
+                              formData.scopeType === scope.value
+                                ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20'
+                                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="scopeType"
+                              value={scope.value}
+                              checked={formData.scopeType === scope.value}
+                              onChange={(e) => setFormData({ ...formData, scopeType: e.target.value as any })}
+                              className="sr-only"
+                            />
+                            <div className="font-semibold text-sm text-gray-900 dark:text-white">
+                              {scope.label}
+                            </div>
+                            <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                              {scope.desc}
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    {formData.scopeType !== 'workspace' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Scope Reference
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.scopeRef}
+                          onChange={(e) => setFormData({ ...formData, scopeRef: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                          placeholder={formData.scopeType === 'service' ? 'e.g., payment-service' : 'e.g., org/repo-name'}
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Repository Allowlist (Optional)
+                      </label>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                        Restrict this pack to specific repositories. Leave empty to apply to all repos.
+                      </p>
+                      <div className="flex gap-2 mb-2">
+                        <input
+                          type="text"
+                          id="repoInput"
+                          placeholder="e.g., org/repo-name"
+                          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const input = e.currentTarget;
+                              addRepoToAllowlist(input.value);
+                              input.value = '';
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const input = document.getElementById('repoInput') as HTMLInputElement;
+                            addRepoToAllowlist(input.value);
+                            input.value = '';
+                          }}
+                          className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {formData.repoAllowlist.map((repo) => (
+                          <span
+                            key={repo}
+                            className="inline-flex items-center gap-1 px-3 py-1 bg-primary-100 dark:bg-primary-900/30 text-primary-800 dark:text-primary-200 rounded-full text-sm"
+                          >
+                            {repo}
+                            <button
+                              type="button"
+                              onClick={() => removeRepoFromAllowlist(repo)}
+                              className="hover:text-primary-900 dark:hover:text-primary-100"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Path Globs (Optional)
+                      </label>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                        Filter files using glob patterns. Leave empty to check all files.
+                      </p>
+                      <div className="flex gap-2 mb-2">
+                        <input
+                          type="text"
+                          id="globInput"
+                          placeholder="e.g., src/**/*.ts"
+                          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const input = e.currentTarget;
+                              addPathGlob(input.value);
+                              input.value = '';
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const input = document.getElementById('globInput') as HTMLInputElement;
+                            addPathGlob(input.value);
+                            input.value = '';
+                          }}
+                          className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {formData.pathGlobs.map((glob) => (
+                          <span
+                            key={glob}
+                            className="inline-flex items-center gap-1 px-3 py-1 bg-primary-100 dark:bg-primary-900/30 text-primary-800 dark:text-primary-200 rounded-full text-sm font-mono"
+                          >
+                            {glob}
+                            <button
+                              type="button"
+                              onClick={() => removePathGlob(glob)}
+                              className="hover:text-primary-900 dark:hover:text-primary-100"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Navigation Buttons */}
+                <div className="flex justify-between pt-4 border-t border-gray-200 dark:border-gray-800">
+                  <div>
+                    {currentStep > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setCurrentStep(currentStep - 1)}
+                        disabled={saving}
+                        className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                      >
+                        ← Previous
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={closeModal}
+                      disabled={saving}
+                      className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+
+                    {currentStep < 4 ? (
+                      <button
+                        type="button"
+                        onClick={() => setCurrentStep(currentStep + 1)}
+                        disabled={!formData.name}
+                        className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next →
+                      </button>
+                    ) : (
+                      <button
+                        type="submit"
+                        disabled={saving || !formData.name}
+                        className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {saving ? 'Saving...' : editingPack ? 'Update Pack' : 'Create Pack'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </form>
             </div>
