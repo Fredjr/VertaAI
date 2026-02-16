@@ -402,12 +402,6 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
       }
     }
 
-    // If signal already exists and it's not a merge event, skip
-    if (existingSignal) {
-      console.log(`[Webhook] [V2] PR already processed, skipping`);
-      return res.json({ message: 'PR already processed', signalEventId });
-    }
-
     // Infer service from repo name (simple heuristic - can be improved)
     const inferredService = prInfo.repoName;
 
@@ -477,6 +471,8 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
     // AGENT PR GATEKEEPER (Phase 1)
     // Run gatekeeper for opened and synchronize events (not for merged PRs)
     // Creates GitHub Check with risk tier and evidence requirements
+    // NOTE: Run this BEFORE checking for duplicate signals so that we can
+    // re-run the gatekeeper if needed (e.g., after a deployment)
     // =========================================================================
     if (isFeatureEnabled('ENABLE_AGENT_PR_GATEKEEPER', workspaceId) && !prInfo.merged) {
       if (shouldRunGatekeeper({ author: prInfo.authorLogin, labels })) {
@@ -513,6 +509,13 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
       } else {
         console.log(`[Webhook] [V2] Skipping gatekeeper for PR #${prInfo.prNumber} (trusted bot or skip label)`);
       }
+    }
+
+    // If signal already exists and it's not a merge event, skip creating duplicate signal
+    // NOTE: We still run the gatekeeper above even for duplicate signals
+    if (existingSignal) {
+      console.log(`[Webhook] [V2] Signal already exists, skipping signal/drift creation`);
+      return res.json({ message: 'PR already processed', signalEventId });
     }
 
     // =========================================================================
