@@ -4,8 +4,9 @@
 # This sends a webhook for an OPENED PR (not merged)
 # Track A creates a GitHub Check Run on the PR
 
-# Use the REAL webhook endpoint (not test endpoint) to trigger Track A
-curl -X POST "https://vertaai-api-production.up.railway.app/webhooks/github/demo-workspace" \
+# Use the TEST webhook endpoint (no signature required)
+# After Railway deploys the fix, this will call the real handler internally
+curl -X POST "https://vertaai-api-production.up.railway.app/test/webhooks/github/demo-workspace" \
   -H "Content-Type: application/json" \
   -H "X-GitHub-Event: pull_request" \
   -d '{

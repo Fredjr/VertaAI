@@ -791,6 +791,9 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
       baseBranch: prInfo.baseBranch,
       headBranch: prInfo.headBranch,
       merged: prInfo.merged,  // FIX: Required by pre-validation (preValidateGitHubPR)
+      mergedAt: prInfo.mergedAt,  // Include merge timestamp
+      repoFullName: prInfo.repoFullName,  // Include full repo name
+      installationId: prInfo.installationId,  // FIX: Required for GitHub client fallback
       changedFiles: files,
       diff: diff.substring(0, 50000),  // FIX: Required by deterministic comparison
       totalChanges: files.reduce((sum, f) => sum + f.additions + f.deletions, 0),  // FIX: Required by pre-validation
@@ -1142,6 +1145,9 @@ async function handlePullRequestEventLegacy(payload: any, res: Response) {
     return res.status(500).json({ error: 'Failed to process PR' });
   }
 }
+
+// Export the handler for use in test endpoint
+export { handlePullRequestEventV2 };
 
 export default router;
 
