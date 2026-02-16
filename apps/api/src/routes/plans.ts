@@ -62,6 +62,13 @@ router.get('/workspaces/:workspaceId/drift-plans', async (req: Request, res: Res
   try {
     const { workspaceId } = req.params;
 
+    if (!workspaceId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Workspace ID is required',
+      });
+    }
+
     // Validate workspace exists
     const workspace = await prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -105,6 +112,13 @@ router.get('/workspaces/:workspaceId/drift-plans/:planId', async (req: Request, 
   try {
     const { workspaceId, planId } = req.params;
 
+    if (!workspaceId || !planId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Workspace ID and Plan ID are required',
+      });
+    }
+
     const plan = await getDriftPlan({ workspaceId, planId });
 
     if (!plan) {
@@ -135,6 +149,14 @@ router.get('/workspaces/:workspaceId/drift-plans/:planId', async (req: Request, 
 router.post('/workspaces/:workspaceId/drift-plans', async (req: Request, res: Response) => {
   try {
     const { workspaceId } = req.params;
+
+    if (!workspaceId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Workspace ID is required',
+      });
+    }
+
     const {
       name,
       description,
@@ -226,6 +248,14 @@ router.post('/workspaces/:workspaceId/drift-plans', async (req: Request, res: Re
 router.put('/workspaces/:workspaceId/drift-plans/:planId', async (req: Request, res: Response) => {
   try {
     const { workspaceId, planId } = req.params;
+
+    if (!workspaceId || !planId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Workspace ID and Plan ID are required',
+      });
+    }
+
     const { name, description, config, status, updatedBy } = req.body;
 
     const plan = await updateDriftPlan({
@@ -259,6 +289,14 @@ router.put('/workspaces/:workspaceId/drift-plans/:planId', async (req: Request, 
 router.delete('/workspaces/:workspaceId/drift-plans/:planId', async (req: Request, res: Response) => {
   try {
     const { workspaceId, planId } = req.params;
+
+    if (!workspaceId || !planId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Workspace ID and Plan ID are required',
+      });
+    }
+
     const { updatedBy } = req.body;
 
     await deleteDriftPlan({ workspaceId, planId, updatedBy });
