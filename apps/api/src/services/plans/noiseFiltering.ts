@@ -30,11 +30,9 @@ export async function checkNoiseFilter(args: {
 }): Promise<NoiseFilterResult> {
   const { workspaceId, planId, signalData } = args;
 
-  // Get plan noise controls
-  const plan = await prisma.driftPlan.findUnique({
-    where: { workspaceId_id: { workspaceId, id: planId } },
-    select: { noiseControls: true },
-  });
+  // Get plan noise controls (using adapter for WorkspacePolicyPack)
+  const { getDriftPlanByIdAdapter } = await import('../policyPacks/adapter.js');
+  const plan = await getDriftPlanByIdAdapter(workspaceId, planId);
 
   if (!plan) {
     throw new Error(`Plan ${planId} not found`);

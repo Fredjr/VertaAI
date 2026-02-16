@@ -94,25 +94,27 @@ export class HybridConfigResolver {
 
     // Fall back to database
     console.log(`[HybridResolver] YAML config not found/invalid, falling back to database`);
-    
-    const dbResult = await resolveContractPacks({
-      workspaceId,
-      surfaces,
-    });
+
+    // P2 Migration: Use adapter to get ContractPacks from WorkspacePolicyPack
+    const { getContractPacksAdapter } = await import('../../policyPacks/adapter.js');
+    const contractPacks = await getContractPacksAdapter(workspaceId);
 
     // Convert database result to ResolvedContractPack format
-    const packs: ResolvedContractPack[] = dbResult.packs.map(pack => ({
-      packId: pack.packId,
+    const packs: ResolvedContractPack[] = contractPacks.map(pack => ({
+      packId: pack.id,
       name: pack.name,
       description: pack.description,
-      surfaces: pack.surfaces as SurfaceType[],
-      contracts: pack.contracts.map(contract => ({
+      surfaces: (pack.contracts as any)?.[0]?.surfaces || surfaces, // Extract surfaces from contracts
+      contracts: (pack.contracts || []).map((contract: any) => ({
         contractId: contract.contractId,
         name: contract.name,
         description: contract.description,
         surfaces: contract.surfaces as SurfaceType[],
-        artifactLocations: contract.artifactLocations,
-        invariants: contract.invariants.map(inv => ({
+        artifactLocations: contract.artifacts?.map((a: any) => ({
+          artifactType: a.type,
+          location: a.locator,
+        })) || [],
+        invariants: (contract.invariants || []).map((inv: any) => ({
           invariantId: inv.invariantId,
           comparatorType: inv.comparatorType,
           description: inv.description,

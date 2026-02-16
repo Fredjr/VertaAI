@@ -82,21 +82,14 @@ export async function createDriftPlan(args: CreatePlanArgs): Promise<DriftPlan> 
 
 /**
  * Get a drift plan by ID
+ * P2 Migration: Now uses WorkspacePolicyPack via adapter layer
  */
 export async function getDriftPlan(args: {
   workspaceId: string;
   planId: string;
 }): Promise<DriftPlan | null> {
-  const plan = await prisma.driftPlan.findUnique({
-    where: {
-      workspaceId_id: {
-        workspaceId: args.workspaceId,
-        id: args.planId,
-      },
-    },
-  });
-
-  return plan as any;
+  const { getDriftPlanByIdAdapter } = await import('../policyPacks/adapter.js');
+  return getDriftPlanByIdAdapter(args.workspaceId, args.planId) as any;
 }
 
 /**
