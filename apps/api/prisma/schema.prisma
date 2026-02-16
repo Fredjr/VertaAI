@@ -65,6 +65,7 @@ model Workspace {
   auditTrails           AuditTrail[] // NEW: Phase 4 Week 8 comprehensive audit trail
   contractPacks         ContractPack[] // NEW: Contract Integrity & Readiness
   contractPolicies      ContractPolicy[] // NEW: Contract Integrity Gate policies
+  policyPacks           WorkspacePolicyPack[] // NEW: P2 Unified Policy Packs
 
   @@map("workspaces")
 }
@@ -544,6 +545,99 @@ model ContractPack {
   @@id([workspaceId, id])
   @@index([workspaceId])
   @@map("contract_packs")
+}
+
+// ======================================================================
+// P2: UNIFIED WORKSPACE POLICY PACK (Week 7-10)
+// Combines Track A (Contract Integrity) + Track B (Drift Remediation)
+// ======================================================================
+
+model WorkspacePolicyPack {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+
+  // Metadata
+  name        String
+  description String?
+  status      String @default("active")  // 'active', 'draft', 'archived'
+
+  // Scope (shared by both tracks)
+  scopeType String   // 'workspace', 'service', 'repo'
+  scopeRef  String?  @map("scope_ref") // service ID or repo full name
+
+  // Scope filters
+  repoAllowlist String[] @default([]) @map("repo_allowlist")  // ['owner/repo1', 'owner/repo2']
+  pathGlobs     String[] @default([]) @map("path_globs")      // ['openapi.yaml', 'src/**/*.ts']
+
+  // Track A: Contract Integrity Gate
+  trackAEnabled Boolean @default(false) @map("track_a_enabled")
+  trackAConfig  Json @default("{}") @map("track_a_config")
+  // Structure: {
+  //   surfaces: ['api', 'infra', 'docs'],
+  //   contracts: [{ contractId, name, description, scope, artifacts, invariants, enforcement, routing, writeback }],
+  //   dictionaries: { serviceAliases: {}, glossary: {} },
+  //   extraction: { tokenLimits: {}, truncation: {} },
+  //   safety: { secretPatterns: [], immutableSections: [] },
+  //   enforcement: { mode: 'warn', criticalThreshold: 90, highThreshold: 70, mediumThreshold: 40 },
+  //   gracefulDegradation: { timeoutMs: 30000, fallbackMode: 'warn' },
+  //   appliesTo: [{ type: 'surface', value: 'api' }]
+  // }
+
+  // Track B: Drift + Remediation
+  trackBEnabled Boolean @default(false) @map("track_b_enabled")
+  trackBConfig  Json @default("{}") @map("track_b_config")
+  // Structure: {
+  //   primaryDoc: { system: 'confluence', id: '123', title: 'Runbook', url: '', class: 'runbook' },
+  //   inputSources: [{ type: 'github_pr', enabled: true, config: {} }],
+  //   driftTypes: [{ type: 'instruction', enabled: true, sectionTarget: 'Deployment Steps' }],
+  //   materiality: { autoApprove: 0.98, slackNotify: 0.40, digestOnly: 0.30, ignore: 0.20 },
+  //   docTargeting: { strategy: 'primary_first', maxDocsPerDrift: 3 },
+  //   noiseControls: { ignorePatterns: [], ignorePaths: [], temporalAccumulation: { enabled: true, windowDays: 7 } },
+  //   allowedOutputs: ['confluence', 'notion', 'github_readme']
+  // }
+
+  // Shared: Approval & Routing
+  approvalTiers Json @default("{}") @map("approval_tiers")
+  // Structure: {
+  //   tier1: { name: 'Team Lead', users: ['alice@example.com'], teams: ['@acme/team-leads'], requiredFor: ['medium', 'high', 'critical'] },
+  //   tier2: { name: 'Director', users: ['bob@example.com'], teams: ['@acme/directors'], requiredFor: ['high', 'critical'] },
+  //   tier3: { name: 'CTO', users: ['cto@example.com'], teams: ['@acme/executives'], requiredFor: ['critical'] }
+  // }
+
+  routing Json @default("{}") @map("routing")
+  // Structure: {
+  //   slackChannel: '#platform',
+  //   emailList: ['team@example.com'],
+  //   pagerDutyService: 'P123456'
+  // }
+
+  // Shared: Test Mode
+  testMode Boolean @default(false) @map("test_mode")
+  testModeConfig Json @default("{}") @map("test_mode_config")
+  // Structure: {
+  //   enabled: true,
+  //   dryRun: true,
+  //   previewFindings: true,
+  //   notifyOnTest: false
+  // }
+
+  // Versioning
+  version     Int    @default(1)
+  versionHash String @map("version_hash")
+  parentId    String? @map("parent_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String? @map("created_by")
+  updatedBy String? @map("updated_by")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId])
+  @@index([status])
+  @@index([workspaceId, status])
+  @@map("workspace_policy_packs")
 }
 
 // Contract Policy (workspace-level enforcement policy)
