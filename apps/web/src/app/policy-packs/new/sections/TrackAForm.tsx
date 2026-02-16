@@ -394,6 +394,122 @@ export default function TrackAForm({ formData, setFormData }: TrackAFormProps) {
                                 className="mt-1 block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-xs"
                               />
                             </div>
+                            <div className="col-span-2">
+                              <label className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={artifact.required || false}
+                                  onChange={(e) => updateArtifact(contractIndex, artifactIndex, { required: e.target.checked })}
+                                  className="h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                />
+                                <span className="ml-2 text-gray-700 dark:text-gray-300">Required artifact</span>
+                              </label>
+                            </div>
+                          </div>
+
+                          {/* Artifact Locator Details */}
+                          <div className="mt-2 p-2 bg-gray-100 dark:bg-gray-900 rounded">
+                            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                              Locator Details
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                              {artifact.system === 'github' && (
+                                <>
+                                  <div>
+                                    <label className="block text-gray-700 dark:text-gray-300 text-xs">Repository</label>
+                                    <input
+                                      type="text"
+                                      value={artifact.locator?.repo || ''}
+                                      onChange={(e) => updateArtifact(contractIndex, artifactIndex, {
+                                        locator: { ...artifact.locator, repo: e.target.value }
+                                      })}
+                                      className="mt-1 block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white text-xs"
+                                      placeholder="e.g., owner/repo"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-gray-700 dark:text-gray-300 text-xs">Path</label>
+                                    <input
+                                      type="text"
+                                      value={artifact.locator?.path || ''}
+                                      onChange={(e) => updateArtifact(contractIndex, artifactIndex, {
+                                        locator: { ...artifact.locator, path: e.target.value }
+                                      })}
+                                      className="mt-1 block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white text-xs"
+                                      placeholder="e.g., docs/openapi.yaml"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-gray-700 dark:text-gray-300 text-xs">Ref (branch/tag)</label>
+                                    <input
+                                      type="text"
+                                      value={artifact.locator?.ref || ''}
+                                      onChange={(e) => updateArtifact(contractIndex, artifactIndex, {
+                                        locator: { ...artifact.locator, ref: e.target.value }
+                                      })}
+                                      className="mt-1 block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white text-xs"
+                                      placeholder="e.g., main"
+                                    />
+                                  </div>
+                                </>
+                              )}
+                              {artifact.system === 'confluence' && (
+                                <>
+                                  <div>
+                                    <label className="block text-gray-700 dark:text-gray-300 text-xs">Page ID</label>
+                                    <input
+                                      type="text"
+                                      value={artifact.locator?.pageId || ''}
+                                      onChange={(e) => updateArtifact(contractIndex, artifactIndex, {
+                                        locator: { ...artifact.locator, pageId: e.target.value }
+                                      })}
+                                      className="mt-1 block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white text-xs"
+                                      placeholder="e.g., 123456789"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-gray-700 dark:text-gray-300 text-xs">Space Key</label>
+                                    <input
+                                      type="text"
+                                      value={artifact.locator?.spaceKey || ''}
+                                      onChange={(e) => updateArtifact(contractIndex, artifactIndex, {
+                                        locator: { ...artifact.locator, spaceKey: e.target.value }
+                                      })}
+                                      className="mt-1 block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white text-xs"
+                                      placeholder="e.g., PLATFORM"
+                                    />
+                                  </div>
+                                </>
+                              )}
+                              {artifact.system === 'notion' && (
+                                <>
+                                  <div>
+                                    <label className="block text-gray-700 dark:text-gray-300 text-xs">Page ID</label>
+                                    <input
+                                      type="text"
+                                      value={artifact.locator?.pageId || ''}
+                                      onChange={(e) => updateArtifact(contractIndex, artifactIndex, {
+                                        locator: { ...artifact.locator, pageId: e.target.value }
+                                      })}
+                                      className="mt-1 block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white text-xs"
+                                      placeholder="e.g., abc123def456"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-gray-700 dark:text-gray-300 text-xs">Database ID</label>
+                                    <input
+                                      type="text"
+                                      value={artifact.locator?.databaseId || ''}
+                                      onChange={(e) => updateArtifact(contractIndex, artifactIndex, {
+                                        locator: { ...artifact.locator, databaseId: e.target.value }
+                                      })}
+                                      className="mt-1 block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white text-xs"
+                                      placeholder="e.g., xyz789"
+                                    />
+                                  </div>
+                                </>
+                              )}
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -475,12 +591,464 @@ export default function TrackAForm({ formData, setFormData }: TrackAFormProps) {
                                 />
                               </div>
                             </div>
+                            <div>
+                              <label className="flex items-center mb-1">
+                                <input
+                                  type="checkbox"
+                                  checked={invariant.enabled !== false}
+                                  onChange={(e) => updateInvariant(contractIndex, invariantIndex, { enabled: e.target.checked })}
+                                  className="h-3 w-3 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                />
+                                <span className="ml-2 text-gray-700 dark:text-gray-300">Enabled</span>
+                              </label>
+                            </div>
+                            <div>
+                              <label className="block text-gray-700 dark:text-gray-300 mb-1">Config (JSON)</label>
+                              <textarea
+                                rows={3}
+                                value={typeof invariant.config === 'object' ? JSON.stringify(invariant.config, null, 2) : invariant.config || '{}'}
+                                onChange={(e) => {
+                                  try {
+                                    const parsed = JSON.parse(e.target.value);
+                                    updateInvariant(contractIndex, invariantIndex, { config: parsed });
+                                  } catch {
+                                    // Allow invalid JSON while typing
+                                    updateInvariant(contractIndex, invariantIndex, { config: e.target.value });
+                                  }
+                                }}
+                                className="mt-1 block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-xs font-mono"
+                                placeholder='{"threshold": 0.95, "ignoreFields": []}'
+                              />
+                            </div>
                           </div>
                         </div>
                       ))}
                     </div>
+
+                    {/* Enforcement Settings */}
+                    <div className="border-t border-gray-300 dark:border-gray-600 pt-4">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Enforcement Settings
+                      </label>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <label className="flex items-center p-2 border border-gray-200 dark:border-gray-600 rounded">
+                          <input
+                            type="checkbox"
+                            checked={contract.enforcement?.blockPR || false}
+                            onChange={(e) => updateContract(contractIndex, {
+                              enforcement: { ...contract.enforcement, blockPR: e.target.checked }
+                            })}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                          <span className="ml-2 text-gray-700 dark:text-gray-300">Block PR on violation</span>
+                        </label>
+                        <label className="flex items-center p-2 border border-gray-200 dark:border-gray-600 rounded">
+                          <input
+                            type="checkbox"
+                            checked={contract.enforcement?.requireApproval || false}
+                            onChange={(e) => updateContract(contractIndex, {
+                              enforcement: { ...contract.enforcement, requireApproval: e.target.checked }
+                            })}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                          <span className="ml-2 text-gray-700 dark:text-gray-300">Require approval</span>
+                        </label>
+                        <div>
+                          <label className="block text-gray-700 dark:text-gray-300 mb-1">Grace Period (hours)</label>
+                          <input
+                            type="number"
+                            value={contract.enforcement?.gracePeriodHours || 0}
+                            onChange={(e) => updateContract(contractIndex, {
+                              enforcement: { ...contract.enforcement, gracePeriodHours: parseInt(e.target.value) }
+                            })}
+                            className="block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-xs"
+                            min="0"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-700 dark:text-gray-300 mb-1">Notify Channels (comma-separated)</label>
+                          <input
+                            type="text"
+                            value={(contract.enforcement?.notifyChannels || []).join(', ')}
+                            onChange={(e) => updateContract(contractIndex, {
+                              enforcement: {
+                                ...contract.enforcement,
+                                notifyChannels: e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean)
+                              }
+                            })}
+                            className="block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-xs"
+                            placeholder="e.g., #platform-alerts"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Routing Settings */}
+                    <div className="border-t border-gray-300 dark:border-gray-600 pt-4">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Routing Settings
+                      </label>
+                      <div className="grid grid-cols-3 gap-3 text-xs">
+                        <div>
+                          <label className="block text-gray-700 dark:text-gray-300 mb-1">Assign to Team</label>
+                          <input
+                            type="text"
+                            value={contract.routing?.assignToTeam || ''}
+                            onChange={(e) => updateContract(contractIndex, {
+                              routing: { ...contract.routing, assignToTeam: e.target.value }
+                            })}
+                            className="block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-xs"
+                            placeholder="e.g., @platform-team"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-700 dark:text-gray-300 mb-1">Notify Slack Channel</label>
+                          <input
+                            type="text"
+                            value={contract.routing?.notifySlackChannel || ''}
+                            onChange={(e) => updateContract(contractIndex, {
+                              routing: { ...contract.routing, notifySlackChannel: e.target.value }
+                            })}
+                            className="block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-xs"
+                            placeholder="e.g., #contract-violations"
+                          />
+                        </div>
+                        <label className="flex items-center p-2 border border-gray-200 dark:border-gray-600 rounded">
+                          <input
+                            type="checkbox"
+                            checked={contract.routing?.createJiraTicket || false}
+                            onChange={(e) => updateContract(contractIndex, {
+                              routing: { ...contract.routing, createJiraTicket: e.target.checked }
+                            })}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                          <span className="ml-2 text-gray-700 dark:text-gray-300">Create Jira ticket</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Writeback Settings */}
+                    <div className="border-t border-gray-300 dark:border-gray-600 pt-4">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Writeback Settings
+                      </label>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <label className="flex items-center p-2 border border-gray-200 dark:border-gray-600 rounded">
+                          <input
+                            type="checkbox"
+                            checked={contract.writeback?.enabled || false}
+                            onChange={(e) => updateContract(contractIndex, {
+                              writeback: { ...contract.writeback, enabled: e.target.checked }
+                            })}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          />
+                          <span className="ml-2 text-gray-700 dark:text-gray-300">Enable writeback</span>
+                        </label>
+                        <div>
+                          <label className="block text-gray-700 dark:text-gray-300 mb-1">Target System</label>
+                          <select
+                            value={contract.writeback?.targetSystem || 'github'}
+                            onChange={(e) => updateContract(contractIndex, {
+                              writeback: { ...contract.writeback, targetSystem: e.target.value }
+                            })}
+                            className="block w-full rounded border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-xs"
+                            disabled={!contract.writeback?.enabled}
+                          >
+                            <option value="github">GitHub</option>
+                            <option value="confluence">Confluence</option>
+                            <option value="notion">Notion</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* Dictionaries */}
+          <div className="space-y-4">
+            <SectionHeader title="Dictionaries" section="dictionaries" />
+            {expandedSections.dictionaries && (
+              <div className="p-4 space-y-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Define reusable dictionaries for services, environments, teams, etc.
+                </p>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Dictionaries (JSON)
+                  </label>
+                  <textarea
+                    rows={8}
+                    value={typeof trackAConfig.dictionaries === 'object' ? JSON.stringify(trackAConfig.dictionaries, null, 2) : trackAConfig.dictionaries || '{}'}
+                    onChange={(e) => {
+                      try {
+                        const parsed = JSON.parse(e.target.value);
+                        updateTrackAConfig({ dictionaries: parsed });
+                      } catch {
+                        // Allow invalid JSON while typing
+                        updateTrackAConfig({ dictionaries: e.target.value });
+                      }
+                    }}
+                    className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm font-mono"
+                    placeholder={`{\n  "services": ["api", "web", "worker"],\n  "environments": ["dev", "staging", "prod"],\n  "teams": ["platform", "data", "ml"]\n}`}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Extraction Settings */}
+          <div className="space-y-4">
+            <SectionHeader title="Extraction Settings" section="extraction" />
+            {expandedSections.extraction && (
+              <div className="p-4 space-y-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Configure token limits and extraction settings per artifact type
+                </p>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Extraction Config (JSON)
+                  </label>
+                  <textarea
+                    rows={8}
+                    value={typeof trackAConfig.extraction === 'object' ? JSON.stringify(trackAConfig.extraction, null, 2) : trackAConfig.extraction || '{}'}
+                    onChange={(e) => {
+                      try {
+                        const parsed = JSON.parse(e.target.value);
+                        updateTrackAConfig({ extraction: parsed });
+                      } catch {
+                        // Allow invalid JSON while typing
+                        updateTrackAConfig({ extraction: e.target.value });
+                      }
+                    }}
+                    className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm font-mono"
+                    placeholder={`{\n  "tokenLimits": {\n    "openapi_spec": 50000,\n    "terraform_plan": 30000,\n    "github_readme": 10000\n  }\n}`}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Safety Settings */}
+          <div className="space-y-4">
+            <SectionHeader title="Safety Settings" section="safety" />
+            {expandedSections.safety && (
+              <div className="p-4 space-y-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Configure secret patterns, immutable sections, and other safety controls
+                </p>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Safety Config (JSON)
+                  </label>
+                  <textarea
+                    rows={8}
+                    value={typeof trackAConfig.safety === 'object' ? JSON.stringify(trackAConfig.safety, null, 2) : trackAConfig.safety || '{}'}
+                    onChange={(e) => {
+                      try {
+                        const parsed = JSON.parse(e.target.value);
+                        updateTrackAConfig({ safety: parsed });
+                      } catch {
+                        // Allow invalid JSON while typing
+                        updateTrackAConfig({ safety: e.target.value });
+                      }
+                    }}
+                    className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm font-mono"
+                    placeholder={`{\n  "secretPatterns": ["API_KEY", "SECRET", "PASSWORD"],\n  "immutableSections": ["security", "compliance"]\n}`}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Contract Policy */}
+          <div className="space-y-4">
+            <SectionHeader title="Contract Policy (Thresholds)" section="policy" />
+            {expandedSections.policy && (
+              <div className="p-4 space-y-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Configure policy thresholds and graceful degradation settings
+                </p>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Policy Name
+                    </label>
+                    <input
+                      type="text"
+                      value={trackAConfig.policy?.name || ''}
+                      onChange={(e) => updateTrackAConfig({
+                        policy: { ...trackAConfig.policy, name: e.target.value }
+                      })}
+                      className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                      placeholder="e.g., Default Contract Policy"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Mode
+                    </label>
+                    <select
+                      value={trackAConfig.policy?.mode || 'enforce'}
+                      onChange={(e) => updateTrackAConfig({
+                        policy: { ...trackAConfig.policy, mode: e.target.value }
+                      })}
+                      className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                    >
+                      <option value="enforce">Enforce</option>
+                      <option value="warn">Warn Only</option>
+                      <option value="monitor">Monitor Only</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Description
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={trackAConfig.policy?.description || ''}
+                    onChange={(e) => updateTrackAConfig({
+                      policy: { ...trackAConfig.policy, description: e.target.value }
+                    })}
+                    className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                    placeholder="Describe this policy..."
+                  />
+                </div>
+
+                <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                    Severity Thresholds (0.0 - 1.0)
+                  </label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs text-gray-600 dark:text-gray-400">Critical Threshold</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="1"
+                        value={trackAConfig.policy?.thresholds?.critical || 0.95}
+                        onChange={(e) => updateTrackAConfig({
+                          policy: {
+                            ...trackAConfig.policy,
+                            thresholds: { ...trackAConfig.policy?.thresholds, critical: parseFloat(e.target.value) }
+                          }
+                        })}
+                        className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 dark:text-gray-400">High Threshold</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="1"
+                        value={trackAConfig.policy?.thresholds?.high || 0.80}
+                        onChange={(e) => updateTrackAConfig({
+                          policy: {
+                            ...trackAConfig.policy,
+                            thresholds: { ...trackAConfig.policy?.thresholds, high: parseFloat(e.target.value) }
+                          }
+                        })}
+                        className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 dark:text-gray-400">Medium Threshold</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="1"
+                        value={trackAConfig.policy?.thresholds?.medium || 0.60}
+                        onChange={(e) => updateTrackAConfig({
+                          policy: {
+                            ...trackAConfig.policy,
+                            thresholds: { ...trackAConfig.policy?.thresholds, medium: parseFloat(e.target.value) }
+                          }
+                        })}
+                        className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 dark:text-gray-400">Low Threshold</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="1"
+                        value={trackAConfig.policy?.thresholds?.low || 0.40}
+                        onChange={(e) => updateTrackAConfig({
+                          policy: {
+                            ...trackAConfig.policy,
+                            thresholds: { ...trackAConfig.policy?.thresholds, low: parseFloat(e.target.value) }
+                          }
+                        })}
+                        className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Graceful Degradation
+                  </label>
+                  <label className="flex items-center p-3 border border-gray-200 dark:border-gray-600 rounded-md">
+                    <input
+                      type="checkbox"
+                      checked={trackAConfig.policy?.gracefulDegradation?.enabled || false}
+                      onChange={(e) => updateTrackAConfig({
+                        policy: {
+                          ...trackAConfig.policy,
+                          gracefulDegradation: { ...trackAConfig.policy?.gracefulDegradation, enabled: e.target.checked }
+                        }
+                      })}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                      Enable graceful degradation (soft-fail to WARN if external systems down)
+                    </span>
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Applies To (comma-separated surfaces)
+                  </label>
+                  <input
+                    type="text"
+                    value={(trackAConfig.policy?.appliesTo || []).join(', ')}
+                    onChange={(e) => updateTrackAConfig({
+                      policy: {
+                        ...trackAConfig.policy,
+                        appliesTo: e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean)
+                      }
+                    })}
+                    className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                    placeholder="e.g., api, infra, docs"
+                  />
+                </div>
+
+                <div>
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={trackAConfig.policy?.active !== false}
+                      onChange={(e) => updateTrackAConfig({
+                        policy: { ...trackAConfig.policy, active: e.target.checked }
+                      })}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">Policy Active</span>
+                  </label>
+                </div>
               </div>
             )}
           </div>
