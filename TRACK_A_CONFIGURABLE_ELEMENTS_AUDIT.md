@@ -161,4 +161,43 @@ This will ensure users have full control over Track A configuration without need
 - Day 3-4: Data migration scripts (ContractPack → WorkspacePolicyPack, DriftPlan → WorkspacePolicyPack)
 - Day 5: API endpoints for CRUD operations
 
+#### **Day 3-4: Data Migration Scripts** ✅ COMPLETE
+
+**Completed:**
+1. ✅ Created `migrate-contract-packs.ts` (260 lines)
+   - Transforms ContractPack → WorkspacePolicyPack with trackAEnabled
+   - Preserves ALL 56 configurable elements in trackAConfig JSON
+   - Generates version hash for audit trail
+   - Supports dry-run mode and workspace filtering
+   - Usage: `npm run migrate:contract-packs [--dry-run] [--workspace=<id>]`
+
+2. ✅ Created `migrate-drift-plans.ts` (257 lines)
+   - Transforms DriftPlan → WorkspacePolicyPack with trackBEnabled
+   - Preserves all drift remediation configuration
+   - Maintains scope, versioning, and metadata
+   - Supports dry-run mode and workspace filtering
+   - Usage: `npm run migrate:drift-plans [--dry-run] [--workspace=<id>]`
+
+3. ✅ Created `rollback-policy-packs.ts` (203 lines)
+   - Emergency rollback: WorkspacePolicyPack → ContractPack/DriftPlan
+   - Detects track type and rolls back appropriately
+   - Preserves all original configuration
+   - Supports dry-run mode and workspace filtering
+   - Usage: `npm run rollback:policy-packs [--dry-run] [--workspace=<id>]`
+
+4. ✅ Added npm scripts to `package.json`
+   - `migrate:contract-packs` - Run ContractPack migration
+   - `migrate:drift-plans` - Run DriftPlan migration
+   - `rollback:policy-packs` - Emergency rollback
+
+**Migration Features:**
+- **Dry-run mode**: Test migrations without making changes
+- **Workspace filtering**: Migrate specific workspaces only
+- **Version hashing**: SHA-256 hash for change detection
+- **Comprehensive logging**: Success/error counts and summaries
+- **Type-safe**: Full TypeScript compilation with Prisma types
+
+**Next Steps:**
+- Day 5: API endpoints for CRUD operations
+
 

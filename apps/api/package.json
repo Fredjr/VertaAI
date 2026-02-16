@@ -14,7 +14,10 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "migrate:contract-packs": "tsx src/scripts/migrate-contract-packs.ts",
+    "migrate:drift-plans": "tsx src/scripts/migrate-drift-plans.ts",
+    "rollback:policy-packs": "tsx src/scripts/rollback-policy-packs.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.3",
