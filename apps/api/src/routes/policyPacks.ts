@@ -13,11 +13,11 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { z } from 'zod';
 
-const router = Router();
+const router: Router = Router();
 const prisma = new PrismaClient();
 
 // ======================================================================
@@ -187,6 +187,10 @@ router.get('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, res
   try {
     const { workspaceId, id } = req.params;
 
+    if (!workspaceId || !id) {
+      return res.status(400).json({ error: 'Missing workspaceId or id' });
+    }
+
     const policyPack = await prisma.workspacePolicyPack.findUnique({
       where: {
         workspaceId_id: { workspaceId, id },
@@ -211,6 +215,11 @@ router.get('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, res
 router.post('/workspaces/:workspaceId/policy-packs', async (req: Request, res: Response) => {
   try {
     const { workspaceId } = req.params;
+
+    if (!workspaceId) {
+      return res.status(400).json({ error: 'Missing workspaceId' });
+    }
+
     const body = CreatePolicyPackSchema.parse(req.body);
 
     // Generate version hash
@@ -232,13 +241,13 @@ router.post('/workspaces/:workspaceId/policy-packs', async (req: Request, res: R
         repoAllowlist: body.repoAllowlist || [],
         pathGlobs: body.pathGlobs || [],
         trackAEnabled: body.trackAEnabled || false,
-        trackAConfig: body.trackAConfig || {},
+        trackAConfig: (body.trackAConfig || {}) as Prisma.InputJsonValue,
         trackBEnabled: body.trackBEnabled || false,
-        trackBConfig: body.trackBConfig || {},
-        approvalTiers: body.approvalTiers || {},
-        routing: body.routing || {},
+        trackBConfig: (body.trackBConfig || {}) as Prisma.InputJsonValue,
+        approvalTiers: (body.approvalTiers || {}) as Prisma.InputJsonValue,
+        routing: (body.routing || {}) as Prisma.InputJsonValue,
         testMode: body.testMode || false,
-        testModeConfig: body.testModeConfig || {},
+        testModeConfig: (body.testModeConfig || {}) as Prisma.InputJsonValue,
         version: 1,
         versionHash,
         createdBy: req.headers['x-user-id'] as string,
@@ -262,6 +271,11 @@ router.post('/workspaces/:workspaceId/policy-packs', async (req: Request, res: R
 router.put('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, res: Response) => {
   try {
     const { workspaceId, id } = req.params;
+
+    if (!workspaceId || !id) {
+      return res.status(400).json({ error: 'Missing workspaceId or id' });
+    }
+
     const body = UpdatePolicyPackSchema.parse(req.body);
 
     // Get existing policy pack
@@ -298,13 +312,13 @@ router.put('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, res
         repoAllowlist: body.repoAllowlist,
         pathGlobs: body.pathGlobs,
         trackAEnabled: body.trackAEnabled,
-        trackAConfig: newTrackAConfig,
+        trackAConfig: newTrackAConfig as Prisma.InputJsonValue,
         trackBEnabled: body.trackBEnabled,
-        trackBConfig: newTrackBConfig,
-        approvalTiers: newApprovalTiers,
-        routing: newRouting,
+        trackBConfig: newTrackBConfig as Prisma.InputJsonValue,
+        approvalTiers: newApprovalTiers as Prisma.InputJsonValue,
+        routing: newRouting as Prisma.InputJsonValue,
         testMode: body.testMode,
-        testModeConfig: body.testModeConfig,
+        testModeConfig: body.testModeConfig as Prisma.InputJsonValue,
         version: existing.version + 1,
         versionHash,
         parentId: existing.id,
@@ -329,6 +343,11 @@ router.put('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, res
 router.delete('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, res: Response) => {
   try {
     const { workspaceId, id } = req.params;
+
+    if (!workspaceId || !id) {
+      return res.status(400).json({ error: 'Missing workspaceId or id' });
+    }
+
     const { hard } = req.query;
 
     if (hard === 'true') {
@@ -361,6 +380,11 @@ router.delete('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, 
 router.post('/workspaces/:workspaceId/policy-packs/:id/test', async (req: Request, res: Response) => {
   try {
     const { workspaceId, id } = req.params;
+
+    if (!workspaceId || !id) {
+      return res.status(400).json({ error: 'Missing workspaceId or id' });
+    }
+
     const { prNumber, service, repo } = req.body;
 
     const policyPack = await prisma.workspacePolicyPack.findUnique({
