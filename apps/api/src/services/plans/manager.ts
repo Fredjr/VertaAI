@@ -101,26 +101,15 @@ export async function getDriftPlan(args: {
 
 /**
  * List all drift plans for a workspace
+ * P2 Migration: Now uses WorkspacePolicyPack via adapter layer
  */
 export async function listDriftPlans(args: {
   workspaceId: string;
   status?: 'active' | 'archived' | 'draft';
   scopeType?: 'workspace' | 'service' | 'repo';
 }): Promise<DriftPlan[]> {
-  const { workspaceId, status, scopeType } = args;
-
-  const plans = await prisma.driftPlan.findMany({
-    where: {
-      workspaceId,
-      ...(status && { status }),
-      ...(scopeType && { scopeType }),
-    },
-    orderBy: {
-      updatedAt: 'desc',
-    },
-  });
-
-  return plans as any[];
+  const { getDriftPlansAdapter } = await import('../policyPacks/adapter.js');
+  return getDriftPlansAdapter(args) as any;
 }
 
 /**

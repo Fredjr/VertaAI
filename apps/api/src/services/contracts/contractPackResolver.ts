@@ -9,7 +9,7 @@
  * - Layer 2: Customer config (defined per workspace)
  */
 
-import { prisma } from '../../lib/db.js';
+import { getContractPacksAdapter } from '../policyPacks/adapter.js';
 import type { Contract } from './types.js';
 import type { Surface } from '../contractGate/surfaceClassifier.js';
 
@@ -42,17 +42,8 @@ export async function resolveContractPacks(
   console.log(`[ContractPackResolver] Resolving packs for workspace ${workspaceId}`);
   console.log(`[ContractPackResolver] Surfaces touched: ${surfacesTouched.join(', ')}`);
 
-  // Fetch all ContractPacks for this workspace
-  const packs = await prisma.contractPack.findMany({
-    where: {
-      workspaceId,
-    },
-    select: {
-      id: true,
-      name: true,
-      contracts: true, // JSON array of Contract objects
-    },
-  });
+  // Fetch all ContractPacks for this workspace (using adapter for WorkspacePolicyPack)
+  const packs = await getContractPacksAdapter(workspaceId);
 
   console.log(`[ContractPackResolver] Found ${packs.length} contract packs`);
 

@@ -3,130 +3,55 @@
 // 5-step fallback hierarchy for plan resolution
 
 import { prisma } from '../../lib/db.js';
+import { resolveDriftPlanAdapter } from '../policyPacks/adapter.js';
 import { PlanResolutionResult, ResolvePlanArgs } from './types.js';
 
 /**
  * Resolve drift plan using 5-step fallback hierarchy
- * 
+ *
  * Resolution Steps:
  * 1. Exact match: workspace + scopeType=repo + scopeRef=repoFullName + docClass
  * 2. Repo match: workspace + scopeType=repo + scopeRef=repoFullName (any docClass)
  * 3. Service match: workspace + scopeType=service + scopeRef=serviceId
  * 4. Workspace default: workspace + scopeType=workspace
  * 5. No plan: Return null with coverage flags
+ *
+ * P2 Migration: Now uses WorkspacePolicyPack via adapter layer
  */
 export async function resolveDriftPlan(args: ResolvePlanArgs): Promise<PlanResolutionResult> {
   const { workspaceId, serviceId, repoFullName, docClass } = args;
 
-  // Step 1: Try exact match (repo + docClass)
-  if (repoFullName && docClass) {
-    const plan = await prisma.driftPlan.findFirst({
-      where: {
-        workspaceId,
-        scopeType: 'repo',
-        scopeRef: repoFullName,
-        docClass,
-        status: 'active',
-      },
-      orderBy: {
-        updatedAt: 'desc', // Get most recently updated plan
-      },
-    });
-
-    if (plan) {
-      return {
-        plan: plan as any,
-        coverageFlags: {
-          hasPlan: true,
-          planScope: 'repo',
-          resolutionMethod: 'exact_match',
-        },
-      };
-    }
-  }
-
-  // Step 2: Try repo-level match (any docClass)
-  if (repoFullName) {
-    const plan = await prisma.driftPlan.findFirst({
-      where: {
-        workspaceId,
-        scopeType: 'repo',
-        scopeRef: repoFullName,
-        status: 'active',
-      },
-      orderBy: {
-        updatedAt: 'desc',
-      },
-    });
-
-    if (plan) {
-      return {
-        plan: plan as any,
-        coverageFlags: {
-          hasPlan: true,
-          planScope: 'repo',
-          resolutionMethod: 'repo_match',
-        },
-      };
-    }
-  }
-
-  // Step 3: Try service-level match
-  if (serviceId) {
-    const plan = await prisma.driftPlan.findFirst({
-      where: {
-        workspaceId,
-        scopeType: 'service',
-        scopeRef: serviceId,
-        status: 'active',
-      },
-      orderBy: {
-        updatedAt: 'desc',
-      },
-    });
-
-    if (plan) {
-      return {
-        plan: plan as any,
-        coverageFlags: {
-          hasPlan: true,
-          planScope: 'service',
-          resolutionMethod: 'service_match',
-        },
-      };
-    }
-  }
-
-  // Step 4: Fallback to workspace default
-  const defaultPlan = await prisma.driftPlan.findFirst({
-    where: {
-      workspaceId,
-      scopeType: 'workspace',
-      status: 'active',
-    },
-    orderBy: {
-      updatedAt: 'desc',
-    },
+  // Use adapter to query WorkspacePolicyPack instead of DriftPlan
+  const result = await resolveDriftPlanAdapter({
+    workspaceId,
+    serviceId,
+    repoFullName,
+    docClass,
   });
 
-  if (defaultPlan) {
-    return {
-      plan: defaultPlan as any,
-      coverageFlags: {
-        hasPlan: true,
-        planScope: 'workspace',
-        resolutionMethod: 'workspace_default',
-      },
-    };
-  }
+  // Map adapter result to PlanResolutionResult format
+  const resolutionMethodMap: Record<string, string> = {
+    exact: 'exact_match',
+    repo: 'repo_match',
+    service: 'service_match',
+    workspace: 'workspace_default',
+    none: 'none',
+  };
 
-  // Step 5: No plan found
+  const scopeMap: Record<string, string> = {
+    exact: 'repo',
+    repo: 'repo',
+    service: 'service',
+    workspace: 'workspace',
+    none: 'none',
+  };
+
   return {
-    plan: null,
+    plan: result.plan as any,
     coverageFlags: {
-      hasPlan: false,
-      planScope: 'none',
-      resolutionMethod: 'none',
+      hasPlan: result.plan !== null,
+      planScope: scopeMap[result.resolutionMethod] as any,
+      resolutionMethod: (resolutionMethodMap[result.resolutionMethod] || 'none') as any,
     },
   };
 }
@@ -220,11 +145,10 @@ export async function resolveThresholds(args: {
 }> {
   const { workspaceId, planId, sourceType } = args;
 
-  // Step 1: Try plan-specific thresholds
+  // Step 1: Try plan-specific thresholds (using adapter for WorkspacePolicyPack)
   if (planId) {
-    const plan = await prisma.driftPlan.findUnique({
-      where: { workspaceId_id: { workspaceId, id: planId } },
-    });
+    const { getDriftPlanByIdAdapter } = await import('../policyPacks/adapter.js');
+    const plan = await getDriftPlanByIdAdapter(workspaceId, planId);
 
     if (plan && plan.thresholds && typeof plan.thresholds === 'object') {
       const thresholds = plan.thresholds as any;
