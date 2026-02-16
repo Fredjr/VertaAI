@@ -105,13 +105,27 @@ export const EVIDENCE_REQUIREMENTS: Record<string, EvidenceRequirement[]> = {
         const hasBreakingSection = /## Breaking Changes/i.test(pr.body);
         const hasBreakingLabel = pr.labels.includes('breaking-change');
         const hasNoBreakingNote = /no breaking changes/i.test(pr.body);
-        
+
+        // Check if OpenAPI/API files were modified
+        const apiFiles = pr.files.filter(f =>
+          f.filename.includes('openapi') ||
+          f.filename.includes('swagger') ||
+          f.filename.endsWith('.yaml') ||
+          f.filename.endsWith('.yml') ||
+          f.filename.includes('/api/') ||
+          f.filename.includes('routes')
+        );
+
+        const reason = hasBreakingSection || hasNoBreakingNote ? undefined :
+          apiFiles.length > 0
+            ? `API files modified (${apiFiles.map(f => f.filename).join(', ')}). Add "## Breaking Changes" section to PR description or "no breaking changes" note.`
+            : 'Add "## Breaking Changes" section to PR description or "no breaking changes" note.';
+
         return {
           satisfied: hasBreakingSection || hasBreakingLabel || hasNoBreakingNote,
-          evidence: hasBreakingSection ? 'Breaking changes section found' : 
+          evidence: hasBreakingSection ? 'Breaking changes section found' :
                     hasNoBreakingNote ? 'Explicitly marked as no breaking changes' : undefined,
-          reason: hasBreakingSection || hasNoBreakingNote ? undefined : 
-                  'Missing breaking changes documentation',
+          reason,
         };
       },
     },
@@ -125,21 +139,51 @@ export const EVIDENCE_REQUIREMENTS: Record<string, EvidenceRequirement[]> = {
       required: true,
       checkFn: (pr) => {
         // Check if test files were modified
-        const hasTestChanges = pr.files.some(f => 
+        const hasTestChanges = pr.files.some(f =>
           /test|spec|__tests__|\.test\.|\.spec\./i.test(f.filename)
         );
-        
+
         // Check for explicit "no tests needed" note
         const hasTestExemption = /no tests needed/i.test(pr.body) ||
                                  /tests: none/i.test(pr.body) ||
                                  /\[x\] no tests required/i.test(pr.body);
-        
+
+        // Generate specific test file suggestions based on changed files
+        let suggestedTestFiles: string[] = [];
+        if (!hasTestChanges && !hasTestExemption) {
+          const sourceFiles = pr.files.filter(f =>
+            !f.filename.includes('test') &&
+            !f.filename.includes('spec') &&
+            (f.filename.endsWith('.ts') || f.filename.endsWith('.js') ||
+             f.filename.endsWith('.tsx') || f.filename.endsWith('.jsx') ||
+             f.filename.endsWith('.py'))
+          );
+
+          suggestedTestFiles = sourceFiles.slice(0, 3).map(f => {
+            const dir = f.filename.substring(0, f.filename.lastIndexOf('/') + 1);
+            const basename = f.filename.substring(f.filename.lastIndexOf('/') + 1);
+            const nameWithoutExt = basename.substring(0, basename.lastIndexOf('.'));
+            const ext = basename.substring(basename.lastIndexOf('.'));
+
+            // Suggest test file in same directory or __tests__ subdirectory
+            if (ext === '.py') {
+              return `${dir}test_${nameWithoutExt}.py`;
+            } else {
+              return `${dir}${nameWithoutExt}.test${ext}`;
+            }
+          });
+        }
+
+        const reason = hasTestChanges || hasTestExemption ? undefined :
+          suggestedTestFiles.length > 0
+            ? `No test changes found. Consider adding tests: ${suggestedTestFiles.join(', ')}. Or add "no tests needed" to PR description.`
+            : 'No test changes and no exemption note provided';
+
         return {
           satisfied: hasTestChanges || hasTestExemption,
-          evidence: hasTestChanges ? 'Test files modified' : 
+          evidence: hasTestChanges ? 'Test files modified' :
                     hasTestExemption ? 'Test exemption noted' : undefined,
-          reason: hasTestChanges || hasTestExemption ? undefined : 
-                  'No test changes and no exemption note provided',
+          reason,
         };
       },
     },

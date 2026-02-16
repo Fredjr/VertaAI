@@ -11,11 +11,11 @@ curl -X POST "https://vertaai-api-production.up.railway.app/test/webhooks/github
   -H "X-GitHub-Event: pull_request" \
   -d '{
     "action": "opened",
-    "number": 3,
+    "number": 6,
     "pull_request": {
-      "number": 3,
-      "title": "Add new API endpoint for user management",
-      "body": "This PR adds a new DELETE endpoint for users",
+      "number": 6,
+      "title": "Add rate limiting and request throttling",
+      "body": "This PR implements rate limiting middleware to prevent API abuse. Adds Redis-based rate limiter with configurable limits per endpoint.",
       "user": {"login": "augment-bot"},
       "labels": [],
       "base": {
@@ -27,8 +27,8 @@ curl -X POST "https://vertaai-api-production.up.railway.app/test/webhooks/github
         }
       },
       "head": {
-        "ref": "feature/delete-user-endpoint",
-        "sha": "abc123def456"
+        "ref": "feature/rate-limiting",
+        "sha": "1dc78fec1b07140408e487e3210fd3d42df0c5e3"
       },
       "merged": false,
       "merged_at": null,

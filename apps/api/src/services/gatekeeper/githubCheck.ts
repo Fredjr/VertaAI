@@ -25,6 +25,9 @@ export interface GatekeeperCheckInput {
   deltaSyncFindings?: DeltaSyncFinding[];
   impactBand?: 'low' | 'medium' | 'high' | 'critical';
   correlatedSignalsCount?: number;
+  domains?: string[]; // All detected domains
+  analysisStartTime?: Date; // When analysis started
+  analysisDuration?: number; // Duration in milliseconds
 }
 
 /**
@@ -136,7 +139,37 @@ function formatSummary(input: GatekeeperCheckInput): string {
  */
 function formatDetails(input: GatekeeperCheckInput): string {
   const sections: string[] = [];
-  
+
+  // Analysis Metadata section (NEW)
+  sections.push('## 📊 Analysis Summary\n');
+
+  // Agent Detection (NEW - prominently displayed)
+  if (input.agentDetected && input.agentConfidence !== undefined) {
+    sections.push(`🤖 **Agent Detection:** Detected as agent-authored (${(input.agentConfidence * 100).toFixed(0)}% confidence)`);
+  } else {
+    sections.push(`👤 **Agent Detection:** Human-authored`);
+  }
+
+  // Detected Domains (NEW - show ALL domains, not just high-risk)
+  if (input.domains && input.domains.length > 0) {
+    sections.push(`🏷️ **Detected Domains:** ${input.domains.join(', ')}`);
+  } else {
+    sections.push(`🏷️ **Detected Domains:** none`);
+  }
+
+  // Timestamp (NEW)
+  if (input.analysisStartTime) {
+    const timestamp = input.analysisStartTime.toISOString();
+    sections.push(`⏰ **Analysis Time:** ${timestamp}`);
+  }
+
+  // Duration (NEW)
+  if (input.analysisDuration !== undefined) {
+    sections.push(`⏱️ **Duration:** ${input.analysisDuration}ms`);
+  }
+
+  sections.push(''); // Empty line
+
   // Risk Factors section
   if (input.riskFactors.length > 0) {
     sections.push('## 🎯 Risk Factors\n');
@@ -149,7 +182,7 @@ function formatDetails(input: GatekeeperCheckInput): string {
   } else {
     sections.push('## ✅ No Significant Risk Factors\n');
   }
-  
+
   // Missing Evidence section
   if (input.missingEvidence.length > 0) {
     sections.push('## ❌ Missing Required Evidence\n');
@@ -158,7 +191,7 @@ function formatDetails(input: GatekeeperCheckInput): string {
     }
     sections.push('');
   }
-  
+
   // Optional Evidence section
   if (input.optionalEvidence.length > 0) {
     sections.push('## 💡 Optional Evidence (Recommended)\n');
@@ -184,7 +217,7 @@ function formatDetails(input: GatekeeperCheckInput): string {
 
   // Next Steps section
   sections.push('## 📋 Next Steps\n');
-  
+
   if (input.riskTier === 'BLOCK') {
     sections.push('1. Address all missing required evidence');
     sections.push('2. Request manual review from a senior engineer');
@@ -199,7 +232,7 @@ function formatDetails(input: GatekeeperCheckInput): string {
   } else {
     sections.push('✅ No action required - safe to merge');
   }
-  
+
   return sections.join('\n');
 }
 

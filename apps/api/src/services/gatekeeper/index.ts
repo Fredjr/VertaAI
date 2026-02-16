@@ -63,8 +63,9 @@ export interface GatekeeperResult {
  * Run the Agent PR Gatekeeper on a PR
  */
 export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperResult> {
+  const analysisStartTime = new Date();
   console.log(`[Gatekeeper] Running gatekeeper for ${input.owner}/${input.repo}#${input.prNumber}`);
-  
+
   // Step 1: Detect if PR is agent-authored
   const agentDetection = detectAgentAuthoredPR({
     author: input.author,
@@ -209,6 +210,8 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
   
   // Step 8: Create GitHub Check with all findings
   try {
+    const analysisDuration = Date.now() - analysisStartTime.getTime();
+
     await createGatekeeperCheck({
       owner: input.owner,
       repo: input.repo,
@@ -225,9 +228,12 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
       deltaSyncFindings: deltaSyncResult.findings,
       impactBand,
       correlatedSignalsCount,
+      domains, // NEW: Pass all detected domains
+      analysisStartTime, // NEW: Pass analysis start time
+      analysisDuration, // NEW: Pass analysis duration
     });
 
-    console.log(`[Gatekeeper] GitHub Check created successfully`);
+    console.log(`[Gatekeeper] GitHub Check created successfully (${analysisDuration}ms)`);
   } catch (error) {
     console.error(`[Gatekeeper] Failed to create GitHub Check:`, error);
     throw error;
