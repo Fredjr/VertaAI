@@ -107,6 +107,12 @@ function formatSummary(input: GatekeeperCheckInput): string {
   lines.push(`**Risk Tier:** ${input.riskTier}`);
   lines.push(`**Risk Score:** ${(input.riskScore * 100).toFixed(0)}%`);
 
+  // Show domains in summary for quick visibility
+  if (input.domains && input.domains.length > 0) {
+    const domainList = input.domains.join(', ');
+    lines.push(`**Domains:** ${domainList}`);
+  }
+
   if (input.agentDetected && input.agentConfidence !== undefined) {
     lines.push(`**Agent Detection:** ${(input.agentConfidence * 100).toFixed(0)}% confidence`);
   }
@@ -114,6 +120,11 @@ function formatSummary(input: GatekeeperCheckInput): string {
   if (input.impactBand) {
     const emoji = getSeverityEmoji(input.impactBand);
     lines.push(`**Impact:** ${emoji} ${input.impactBand}`);
+  }
+
+  // Show missing evidence count in summary
+  if (input.missingEvidence && input.missingEvidence.length > 0) {
+    lines.push(`**Missing Evidence:** ${input.missingEvidence.length} item(s)`);
   }
 
   if (input.correlatedSignalsCount !== undefined && input.correlatedSignalsCount > 0) {
