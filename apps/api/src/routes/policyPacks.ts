@@ -60,11 +60,11 @@ const TrackAConfigSchema = z.object({
     }),
     routing: z.object({
       method: z.enum(['contract', 'codeowners', 'service_owner', 'fallback']),
-      fallbackChannel: z.string().optional(),
+      fallbackChannel: z.string().nullable().optional(),
     }),
     writeback: z.object({
       enabled: z.boolean(),
-      autoApproveThreshold: z.number().optional(),
+      autoApproveThreshold: z.number().nullable().optional(),
       requiresApproval: z.boolean(),
       targetArtifacts: z.array(z.string()),
     }),
