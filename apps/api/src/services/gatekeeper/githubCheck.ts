@@ -14,6 +14,7 @@ export interface GatekeeperCheckInput {
   repo: string;
   headSha: string;
   installationId: number;
+  prNumber?: number; // PR number for posting comments
   riskTier: RiskTier;
   riskScore: number;
   riskFactors: RiskFactor[];
@@ -310,4 +311,131 @@ function formatAnnotations(findings: DeltaSyncFinding[]): Array<{
   }
 
   return annotations;
+}
+
+/**
+ * Post a PR comment with gatekeeper summary
+ */
+export async function postGatekeeperComment(input: GatekeeperCheckInput): Promise<void> {
+  if (!input.prNumber) {
+    console.log('[Gatekeeper] No PR number provided, skipping comment');
+    return;
+  }
+
+  const octokit = await getInstallationOctokit(input.installationId);
+
+  const emoji = getRiskTierEmoji(input.riskTier);
+  const impactEmoji = input.impactBand ? getSeverityEmoji(input.impactBand) : '';
+
+  const commentBody = formatPRComment(input, emoji, impactEmoji);
+
+  try {
+    await octokit.rest.issues.createComment({
+      owner: input.owner,
+      repo: input.repo,
+      issue_number: input.prNumber,
+      body: commentBody,
+    });
+
+    console.log(`[Gatekeeper] Posted PR comment on ${input.owner}/${input.repo}#${input.prNumber}`);
+  } catch (error) {
+    console.error('[Gatekeeper] Failed to post PR comment:', error);
+  }
+}
+
+/**
+ * Format PR comment body
+ */
+function formatPRComment(input: GatekeeperCheckInput, emoji: string, impactEmoji: string): string {
+  const lines: string[] = [];
+
+  // Header
+  lines.push(`## ${emoji} VertaAI Agent PR Gatekeeper`);
+  lines.push('');
+
+  // Risk Summary Box
+  lines.push('### 📊 Risk Assessment');
+  lines.push('');
+  lines.push('| Metric | Value |');
+  lines.push('|--------|-------|');
+  lines.push(`| **Risk Tier** | ${input.riskTier} |`);
+  lines.push(`| **Risk Score** | ${(input.riskScore * 100).toFixed(0)}% |`);
+
+  if (input.domains && input.domains.length > 0) {
+    lines.push(`| **Domains** | ${input.domains.join(', ')} |`);
+  }
+
+  if (input.impactBand) {
+    lines.push(`| **Impact** | ${impactEmoji} ${input.impactBand} |`);
+  }
+
+  if (input.agentDetected) {
+    const confidence = input.agentConfidence ? ` (${(input.agentConfidence * 100).toFixed(0)}% confidence)` : '';
+    lines.push(`| **Agent Detected** | 🤖 Yes${confidence} |`);
+  }
+
+  lines.push('');
+
+  // Recommendation
+  lines.push(`**Recommendation:** ${input.recommendation}`);
+  lines.push('');
+
+  // Missing Evidence (if any)
+  if (input.missingEvidence && input.missingEvidence.length > 0) {
+    lines.push('### ❌ Missing Required Evidence');
+    lines.push('');
+    for (const evidence of input.missingEvidence) {
+      lines.push(`- ${evidence}`);
+    }
+    lines.push('');
+  }
+
+  // Risk Factors
+  if (input.riskFactors && input.riskFactors.length > 0) {
+    lines.push('### 🎯 Risk Factors');
+    lines.push('');
+    for (const factor of input.riskFactors) {
+      const factorEmoji = getSeverityEmoji(factor.severity);
+      const weight = (factor.weight * 100).toFixed(0);
+      lines.push(`- ${factorEmoji} **${factor.name}** (${factor.severity}) - Weight: ${weight}%`);
+      lines.push(`  - ${factor.description}`);
+    }
+    lines.push('');
+  }
+
+  // Next Steps
+  lines.push('### 📋 Next Steps');
+  lines.push('');
+  lines.push('1. Review the risk factors above');
+  lines.push('2. Address any missing evidence requirements');
+  if (input.riskTier === 'BLOCK') {
+    lines.push('3. ⚠️ **This PR is blocked** - resolve critical issues before merging');
+  } else if (input.riskTier === 'WARN') {
+    lines.push('3. Consider getting approval from a domain expert');
+  }
+  lines.push('');
+
+  // Footer
+  lines.push('---');
+  lines.push('*This analysis was performed by [VertaAI Drift Detector](https://github.com/apps/vertaai-drift-detector)*');
+
+  return lines.join('\n');
+}
+
+/**
+ * Get emoji for risk tier
+ */
+function getRiskTierEmoji(tier: RiskTier): string {
+  switch (tier) {
+    case 'PASS':
+      return '✅';
+    case 'INFO':
+      return 'ℹ️';
+    case 'WARN':
+      return '⚠️';
+    case 'BLOCK':
+      return '🛑';
+    default:
+      return '❓';
+  }
 }

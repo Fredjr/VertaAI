@@ -12,7 +12,7 @@
 import { detectAgentAuthoredPR, type PRContext as AgentPRContext } from './agentDetector.js';
 import { checkEvidenceRequirements, type PRContext as EvidencePRContext } from './evidenceChecker.js';
 import { calculateRiskTier } from './riskTier.js';
-import { createGatekeeperCheck } from './githubCheck.js';
+import { createGatekeeperCheck, postGatekeeperComment } from './githubCheck.js';
 import { detectDomainsFromSource } from '../baseline/patterns.js';
 import { analyzeDeltaSync, type DeltaSyncFinding } from './deltaSync.js';
 import { computeImpactAssessment } from '../evidence/impactAssessment.js';
@@ -212,11 +212,12 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
   try {
     const analysisDuration = Date.now() - analysisStartTime.getTime();
 
-    await createGatekeeperCheck({
+    const checkInput = {
       owner: input.owner,
       repo: input.repo,
       headSha: input.headSha,
       installationId: input.installationId,
+      prNumber: input.prNumber, // NEW: Pass PR number for comments
       riskTier: riskTierResult.tier,
       riskScore: riskTierResult.score,
       riskFactors: riskTierResult.factors,
@@ -231,9 +232,17 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
       domains, // NEW: Pass all detected domains
       analysisStartTime, // NEW: Pass analysis start time
       analysisDuration, // NEW: Pass analysis duration
-    });
+    };
 
+    // Create GitHub Check
+    await createGatekeeperCheck(checkInput);
     console.log(`[Gatekeeper] GitHub Check created successfully (${analysisDuration}ms)`);
+
+    // Post PR comment for WARN and BLOCK tiers
+    if (riskTierResult.tier === 'WARN' || riskTierResult.tier === 'BLOCK') {
+      await postGatekeeperComment(checkInput);
+      console.log(`[Gatekeeper] PR comment posted for ${riskTierResult.tier} tier`);
+    }
   } catch (error) {
     console.error(`[Gatekeeper] Failed to create GitHub Check:`, error);
     throw error;
