@@ -46,7 +46,7 @@ model Workspace {
 
   // YAML DSL Migration - Workspace Defaults (Sprint 3)
   // Stores workspace-level configuration (approval semantics, artifact registry, etc.)
-  workspaceDefaultsYaml String? @db.Text @map("workspace_defaults_yaml")
+  workspaceDefaultsYaml String? @map("workspace_defaults_yaml") @db.Text
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -113,9 +113,9 @@ model SignalEvent {
   slackClusterId String? @map("slack_cluster_id")
   messageCount   Int?    @map("message_count")
 
-  workspace            Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  driftCandidates      DriftCandidate[]
-  contractResolutions  ContractResolution[] // NEW: Contract Integrity & Readiness
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  driftCandidates     DriftCandidate[]
+  contractResolutions ContractResolution[] // NEW: Contract Integrity & Readiness
 
   @@id([workspaceId, id])
   @@index([workspaceId, sourceType, occurredAt(sort: Desc)])
@@ -139,15 +139,15 @@ model DriftCandidate {
   repo       String?
 
   // Drift classification
-  driftType       String?  @map("drift_type") // 'instruction', 'process', 'ownership', 'coverage', 'environment_tooling'
-  driftDomains    String[] @map("drift_domains")
-  hasCoverageGap  Boolean  @default(false) @map("has_coverage_gap") // Gap #2: Coverage as orthogonal dimension - can be true for ANY drift type
+  driftType      String?  @map("drift_type") // 'instruction', 'process', 'ownership', 'coverage', 'environment_tooling'
+  driftDomains   String[] @map("drift_domains")
+  hasCoverageGap Boolean  @default(false) @map("has_coverage_gap") // Gap #2: Coverage as orthogonal dimension - can be true for ANY drift type
 
   // Phase 1 Day 1: Deterministic drift classification
-  comparisonResult      Json?    @map("comparison_result")       // Complete comparison result from deterministic comparison
-  classificationMethod  String?  @map("classification_method")   // 'deterministic' | 'llm' - which method was used
-  llmDriftType          String?  @map("llm_drift_type")          // Original LLM classification (for audit trail)
-  llmConfidence         Float?   @map("llm_confidence")          // Original LLM confidence (for audit trail)
+  comparisonResult     Json?   @map("comparison_result") // Complete comparison result from deterministic comparison
+  classificationMethod String? @map("classification_method") // 'deterministic' | 'llm' - which method was used
+  llmDriftType         String? @map("llm_drift_type") // Original LLM classification (for audit trail)
+  llmConfidence        Float?  @map("llm_confidence") // Original LLM confidence (for audit trail)
 
   // Evidence & scoring
   evidenceSummary   String? @map("evidence_summary")
@@ -165,16 +165,16 @@ model DriftCandidate {
   evidenceBundle Json? @map("evidence_bundle")
 
   // NEW: Impact Assessment (Phase 1 - Multi-source impact)
-  impactScore        Float?  @map("impact_score")        // 0-1 scale
-  impactBand         String? @map("impact_band")         // 'low', 'medium', 'high', 'critical'
-  impactJson         Json?   @map("impact_json")         // Complete impact assessment details
-  consequenceText    String? @map("consequence_text")    // Human-readable consequence
-  impactAssessedAt   DateTime? @map("impact_assessed_at") // When impact was assessed
+  impactScore      Float?    @map("impact_score") // 0-1 scale
+  impactBand       String?   @map("impact_band") // 'low', 'medium', 'high', 'critical'
+  impactJson       Json?     @map("impact_json") // Complete impact assessment details
+  consequenceText  String?   @map("consequence_text") // Human-readable consequence
+  impactAssessedAt DateTime? @map("impact_assessed_at") // When impact was assessed
 
   // NEW: Fingerprints for suppression (Phase 1 - Fatigue reduction)
-  fingerprintStrict  String? @map("fingerprint_strict")  // Exact match fingerprint
-  fingerprintMedium  String? @map("fingerprint_medium")  // Normalized token fingerprint
-  fingerprintBroad   String? @map("fingerprint_broad")   // High-level pattern fingerprint
+  fingerprintStrict String? @map("fingerprint_strict") // Exact match fingerprint
+  fingerprintMedium String? @map("fingerprint_medium") // Normalized token fingerprint
+  fingerprintBroad  String? @map("fingerprint_broad") // High-level pattern fingerprint
 
   // Document targeting
   docCandidates    Json     @default("[]") @map("doc_candidates")
@@ -235,18 +235,18 @@ model DriftCandidate {
   traceId String? @map("trace_id") // End-to-end trace ID for logging and debugging
 
   // Plan tracking (Gap #6: DriftPlan as True Control-Plane)
-  activePlanId      String? @map("active_plan_id")      // Which plan was active when this drift was processed
+  activePlanId      String? @map("active_plan_id") // Which plan was active when this drift was processed
   activePlanVersion Int?    @map("active_plan_version") // Plan version at processing time
-  activePlanHash    String? @map("active_plan_hash")    // Plan hash for reproducibility
+  activePlanHash    String? @map("active_plan_hash") // Plan hash for reproducibility
 
   // Cluster tracking (Gap #9: Cluster-First Drift Triage)
   clusterId String? @map("cluster_id") // Which cluster this drift belongs to (null if individual notification)
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  workspace         Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  signalEvent       SignalEvent         @relation(fields: [workspaceId, signalEventId], references: [workspaceId, id], onDelete: Cascade)
-  cluster           DriftCluster?       @relation(fields: [workspaceId, clusterId], references: [workspaceId, id], onDelete: SetNull)
+  workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  signalEvent       SignalEvent        @relation(fields: [workspaceId, signalEventId], references: [workspaceId, id], onDelete: Cascade)
+  cluster           DriftCluster?      @relation(fields: [workspaceId, clusterId], references: [workspaceId, id], onDelete: SetNull)
   patchProposals    PatchProposal[]
   integrityFindings IntegrityFinding[] // NEW: Contract Integrity & Readiness
 
@@ -269,14 +269,14 @@ model DriftCluster {
   id          String @default(uuid())
 
   // Cluster key (used for grouping similar drifts)
-  service            String  // Service name (e.g., 'api-service', 'web-app')
-  driftType          String  @map("drift_type") // 'instruction', 'process', 'ownership', 'coverage', 'environment'
-  fingerprintPattern String  @map("fingerprint_pattern") // High-level pattern (e.g., 'kubectl-command', 'deployment-steps')
+  service            String // Service name (e.g., 'api-service', 'web-app')
+  driftType          String @map("drift_type") // 'instruction', 'process', 'ownership', 'coverage', 'environment'
+  fingerprintPattern String @map("fingerprint_pattern") // High-level pattern (e.g., 'kubectl-command', 'deployment-steps')
 
   // Cluster metadata
-  status     String   @default("pending") // 'pending', 'notified', 'closed'
-  driftCount Int      @default(0) @map("drift_count") // Number of drifts in this cluster
-  createdAt  DateTime @default(now()) @map("created_at")
+  status     String    @default("pending") // 'pending', 'notified', 'closed'
+  driftCount Int       @default(0) @map("drift_count") // Number of drifts in this cluster
+  createdAt  DateTime  @default(now()) @map("created_at")
   closedAt   DateTime? @map("closed_at") // When cluster was closed (after notification or expiry)
   notifiedAt DateTime? @map("notified_at") // When cluster notification was sent
 
@@ -285,22 +285,22 @@ model DriftCluster {
   slackChannel   String? @map("slack_channel") // Slack channel where notification was sent
 
   // Cluster summary (for Slack message)
-  clusterSummary String? @map("cluster_summary") @db.Text // Human-readable summary of cluster
+  clusterSummary String?  @map("cluster_summary") @db.Text // Human-readable summary of cluster
   driftIds       String[] @default([]) @map("drift_ids") // Array of drift IDs in this cluster
 
   // Bulk action tracking
-  bulkActionStatus String? @map("bulk_action_status") // 'approved', 'rejected', 'snoozed', null
+  bulkActionStatus String?   @map("bulk_action_status") // 'approved', 'rejected', 'snoozed', null
   bulkActionAt     DateTime? @map("bulk_action_at") // When bulk action was taken
-  bulkActionBy     String? @map("bulk_action_by") // User who took bulk action
+  bulkActionBy     String?   @map("bulk_action_by") // User who took bulk action
 
   // Relations
   workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   drifts    DriftCandidate[]
 
+  @@id([workspaceId, id])
   // Composite unique constraint: one active cluster per {workspace, service, driftType, pattern}
   // This ensures we don't create duplicate clusters for the same drift pattern
   @@unique([workspaceId, service, driftType, fingerprintPattern, status], name: "unique_active_cluster")
-  @@id([workspaceId, id])
   @@index([workspaceId, status])
   @@index([workspaceId, service])
   @@index([createdAt])
@@ -359,18 +359,18 @@ model PatchProposal {
 
 // NEW: Drift Suppression Model (Phase 1 - Fatigue reduction)
 model DriftSuppression {
-  workspaceId        String   @map("workspace_id")
-  id                 String   @default(cuid()) @map("id")
-  fingerprint        String   @map("fingerprint")
-  fingerprintLevel   String   @map("fingerprint_level") // 'strict', 'medium', 'broad'
-  suppressionType    String   @map("suppression_type")  // 'false_positive', 'snooze', 'permanent'
-  reason             String?  @map("reason")
-  createdBy          String?  @map("created_by")
+  workspaceId        String    @map("workspace_id")
+  id                 String    @default(cuid()) @map("id")
+  fingerprint        String    @map("fingerprint")
+  fingerprintLevel   String    @map("fingerprint_level") // 'strict', 'medium', 'broad'
+  suppressionType    String    @map("suppression_type") // 'false_positive', 'snooze', 'permanent'
+  reason             String?   @map("reason")
+  createdBy          String?   @map("created_by")
   expiresAt          DateTime? @map("expires_at")
-  falsePositiveCount Int      @default(0) @map("false_positive_count")
+  falsePositiveCount Int       @default(0) @map("false_positive_count")
   lastSeenAt         DateTime? @map("last_seen_at")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   // Relations
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -395,13 +395,13 @@ model DriftHistory {
 
   // Time window tracking
   windowStart DateTime @map("window_start") // Start of accumulation window
-  windowEnd   DateTime @map("window_end")   // End of accumulation window (null = active)
+  windowEnd   DateTime @map("window_end") // End of accumulation window (null = active)
 
   // Accumulation metrics
-  driftCount          Int      @default(0) @map("drift_count")           // Number of drifts in this window
-  skippedDriftCount   Int      @default(0) @map("skipped_drift_count")   // Number of low-materiality drifts skipped
-  totalMateriality    Float    @default(0) @map("total_materiality")     // Sum of materiality scores
-  averageMateriality  Float    @default(0) @map("average_materiality")   // Average materiality score
+  driftCount         Int   @default(0) @map("drift_count") // Number of drifts in this window
+  skippedDriftCount  Int   @default(0) @map("skipped_drift_count") // Number of low-materiality drifts skipped
+  totalMateriality   Float @default(0) @map("total_materiality") // Sum of materiality scores
+  averageMateriality Float @default(0) @map("average_materiality") // Average materiality score
 
   // Drift type breakdown (JSON array of {driftType, count})
   driftTypeBreakdown Json @default("[]") @map("drift_type_breakdown")
@@ -410,10 +410,10 @@ model DriftHistory {
   accumulatedDriftIds String[] @map("accumulated_drift_ids")
 
   // Bundling status
-  status          String    @default("accumulating") // 'accumulating', 'bundled', 'expired'
-  bundledAt       DateTime? @map("bundled_at")       // When drifts were bundled
-  bundledDriftId  String?   @map("bundled_drift_id") // ID of the bundled drift candidate
-  bundleTrigger   String?   @map("bundle_trigger")   // 'threshold_reached', 'manual', 'window_expired'
+  status         String    @default("accumulating") // 'accumulating', 'bundled', 'expired'
+  bundledAt      DateTime? @map("bundled_at") // When drifts were bundled
+  bundledDriftId String?   @map("bundled_drift_id") // ID of the bundled drift candidate
+  bundleTrigger  String?   @map("bundle_trigger") // 'threshold_reached', 'manual', 'window_expired'
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -529,9 +529,9 @@ model AuditEvent {
 
 // Contract Pack (workspace-level contract configuration)
 model ContractPack {
-  workspaceId String @map("workspace_id")
-  id          String @default(uuid())
-  version     String @default("v1")
+  workspaceId String  @map("workspace_id")
+  id          String  @default(uuid())
+  version     String  @default("v1")
   name        String
   description String?
 
@@ -563,34 +563,54 @@ model WorkspacePolicyPack {
   // Metadata
   name        String
   description String?
-  status      String @default("active")  // 'active', 'draft', 'archived'
+  status      PackStatus @default(DRAFT) // Enhanced: Now uses enum
+
+  // PHASE 1.2: Enhanced metadata fields
+  owners Json? // { teams: string[], users: string[] }
+  labels Json? // { [key: string]: string }
+
+  // PHASE 1.2: Audit trail
+  createdBy String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String?  @map("updated_by")
+
+  // PHASE 1.2: Version notes
+  versionNotes String? @map("version_notes") @db.Text
 
   // Scope (shared by both tracks)
-  scopeType String   // 'workspace', 'service', 'repo'
-  scopeRef  String?  @map("scope_ref") // service ID or repo full name
+  scopeType String // 'workspace', 'service', 'repo'
+  scopeRef  String? @map("scope_ref") // service ID or repo full name
+
+  // PHASE 1.3: Scope precedence and merging
+  scopePriority      Int            @default(50) @map("scope_priority") // 0-100, higher = higher priority
+  scopeMergeStrategy MergeStrategy? @default(MOST_RESTRICTIVE) @map("scope_merge_strategy")
+
+  // PHASE 1.4: Pack-level defaults
+  defaults Json? @map("defaults") // Default values for rules (timeouts, severity, etc.)
 
   // Scope filters (DEPRECATED - use YAML scope.branches instead)
-  repoAllowlist String[] @default([]) @map("repo_allowlist")  // ['owner/repo1', 'owner/repo2']
-  pathGlobs     String[] @default([]) @map("path_globs")      // ['openapi.yaml', 'src/**/*.ts']
+  repoAllowlist String[] @default([]) @map("repo_allowlist") // ['owner/repo1', 'owner/repo2']
+  pathGlobs     String[] @default([]) @map("path_globs") // ['openapi.yaml', 'src/**/*.ts']
 
   // Track A: YAML/DSL-Based Policy Pack (NEW - Migration Plan v5.0)
-  trackAEnabled             Boolean  @default(false) @map("track_a_enabled")
-  trackAConfigYamlDraft     String?  @db.Text @map("track_a_config_yaml_draft")     // Editable draft YAML
-  trackAConfigYamlPublished String?  @db.Text @map("track_a_config_yaml_published") // Published YAML (used by gatekeeper)
-  trackAPackHashPublished   String?  @map("track_a_pack_hash_published")            // Full SHA-256 hash (64 chars)
-  packStatus                String   @default("draft") @map("pack_status")          // 'draft' | 'published'
+  trackAEnabled             Boolean   @default(false) @map("track_a_enabled")
+  trackAConfigYamlDraft     String?   @map("track_a_config_yaml_draft") @db.Text // Editable draft YAML
+  trackAConfigYamlPublished String?   @map("track_a_config_yaml_published") @db.Text // Published YAML (used by gatekeeper)
+  trackAPackHashPublished   String?   @map("track_a_pack_hash_published") // Full SHA-256 hash (64 chars)
+  packStatus                String    @default("draft") @map("pack_status") // 'draft' | 'published'
   publishedAt               DateTime? @map("published_at")
-  publishedBy               String?  @map("published_by")
+  publishedBy               String?   @map("published_by")
 
   // CRITICAL: Denormalized metadata for uniqueness validation + selection (Gap #2)
   // Extracted from YAML at publish time to enable DB-level queries without parsing
   // NULL for drafts, required for published packs
-  packMetadataId      String? @map("pack_metadata_id")       // From pack.metadata.id
-  packMetadataVersion String? @map("pack_metadata_version")  // From pack.metadata.version
-  packMetadataName    String? @map("pack_metadata_name")     // From pack.metadata.name (for display)
+  packMetadataId      String? @map("pack_metadata_id") // From pack.metadata.id
+  packMetadataVersion String? @map("pack_metadata_version") // From pack.metadata.version
+  packMetadataName    String? @map("pack_metadata_name") // From pack.metadata.name (for display)
 
   // Track A (LEGACY): JSON-based config - DEPRECATED, use YAML fields above
-  trackAConfig  Json? @map("track_a_config")
+  trackAConfig Json? @map("track_a_config")
   // DEPRECATED Structure: {
   //   surfaces: ['api', 'infra', 'docs'],
   //   contracts: [{ contractId, name, description, scope, artifacts, invariants, enforcement, routing, writeback }],
@@ -604,7 +624,7 @@ model WorkspacePolicyPack {
 
   // Track B: Drift + Remediation
   trackBEnabled Boolean @default(false) @map("track_b_enabled")
-  trackBConfig  Json @default("{}") @map("track_b_config")
+  trackBConfig  Json    @default("{}") @map("track_b_config")
   // Structure: {
   //   primaryDoc: { system: 'confluence', id: '123', title: 'Runbook', url: '', class: 'runbook' },
   //   inputSources: [{ type: 'github_pr', enabled: true, config: {} }],
@@ -631,8 +651,8 @@ model WorkspacePolicyPack {
   // }
 
   // Shared: Test Mode
-  testMode Boolean @default(false) @map("test_mode")
-  testModeConfig Json @default("{}") @map("test_mode_config")
+  testMode       Boolean @default(false) @map("test_mode")
+  testModeConfig Json    @default("{}") @map("test_mode_config")
   // Structure: {
   //   enabled: true,
   //   dryRun: true,
@@ -641,35 +661,31 @@ model WorkspacePolicyPack {
   // }
 
   // Versioning
-  version     Int    @default(1)
-  versionHash String @map("version_hash")
+  version     Int     @default(1)
+  versionHash String  @map("version_hash")
   parentId    String? @map("parent_id")
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  createdBy String? @map("created_by")
-  updatedBy String? @map("updated_by")
-
+  // Relations
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@id([workspaceId, id])
+  @@unique([workspaceId, scopeType, scopeRef, name])
+  // Prevent duplicate pack versions at same scope
+  @@unique([workspaceId, scopeType, scopeRef, packMetadataId, packMetadataVersion])
   @@index([workspaceId])
   @@index([status])
   @@index([workspaceId, status])
   @@index([scopeType, scopeRef])
-  @@index([packMetadataId, packMetadataVersion])  // For uniqueness checks
-  @@index([packStatus])  // For published pack queries
-  @@unique([workspaceId, scopeType, scopeRef, name])
-  // Prevent duplicate pack versions at same scope
-  @@unique([workspaceId, scopeType, scopeRef, packMetadataId, packMetadataVersion])
+  @@index([packMetadataId, packMetadataVersion]) // For uniqueness checks
+  @@index([packStatus]) // For published pack queries
   @@map("workspace_policy_packs")
 }
 
 // Contract Policy (workspace-level enforcement policy)
 // Defines how contract violations should be handled
 model ContractPolicy {
-  workspaceId String @map("workspace_id")
-  id          String @default(uuid())
+  workspaceId String  @map("workspace_id")
+  id          String  @default(uuid())
   name        String
   description String?
 
@@ -1063,7 +1079,7 @@ model DriftPlan {
   // Plan metadata
   name        String
   description String?
-  status      String @default("active") // 'active', 'archived', 'draft'
+  status      String  @default("active") // 'active', 'archived', 'draft'
 
   // Scope definition (5-step resolution hierarchy)
   scopeType String // 'workspace', 'service', 'repo'
@@ -1087,14 +1103,14 @@ model DriftPlan {
   writeback      Json @default("{}") // { enabled: true, requiresApproval: false, ... }
 
   // Gap #6 Part 2: Control-Plane Fields
-  docTargeting   Json @default("{}") @map("doc_targeting") // { strategy: 'primary_first' | 'all_parallel', maxDocsPerDrift: 3, priorityOrder: ['confluence', 'notion'] }
-  sourceCursors  Json @default("{}") @map("source_cursors") // { github_pr: { lastProcessedAt: '2024-01-01T00:00:00Z', lastPrNumber: 123 }, ... }
-  budgets        Json @default("{}") // { maxDriftsPerDay: 50, maxDriftsPerWeek: 200, maxSlackNotificationsPerHour: 5 }
-  noiseControls  Json @default("{}") @map("noise_controls") // { ignorePatterns: ['WIP:', 'draft:'], ignorePaths: ['test/**'], ignoreAuthors: ['bot'] }
+  docTargeting  Json @default("{}") @map("doc_targeting") // { strategy: 'primary_first' | 'all_parallel', maxDocsPerDrift: 3, priorityOrder: ['confluence', 'notion'] }
+  sourceCursors Json @default("{}") @map("source_cursors") // { github_pr: { lastProcessedAt: '2024-01-01T00:00:00Z', lastPrNumber: 123 }, ... }
+  budgets       Json @default("{}") // { maxDriftsPerDay: 50, maxDriftsPerWeek: 200, maxSlackNotificationsPerHour: 5 }
+  noiseControls Json @default("{}") @map("noise_controls") // { ignorePatterns: ['WIP:', 'draft:'], ignorePaths: ['test/**'], ignoreAuthors: ['bot'] }
 
   // Versioning for reproducibility
-  version     Int    @default(1) // Incremented on each update
-  versionHash String @map("version_hash") // SHA-256 hash of plan content for reproducibility
+  version     Int     @default(1) // Incremented on each update
+  versionHash String  @map("version_hash") // SHA-256 hash of plan content for reproducibility
   parentId    String? @map("parent_id") // Reference to previous version (for version history)
 
   // Template reference (if created from template)
@@ -1140,7 +1156,7 @@ model PlanRun {
 
   // Routing decision (captured at execution time)
   routingAction String @map("routing_action") // 'auto_approve', 'slack_notify', 'digest_only', 'ignore'
-  confidence    Float  // Confidence score at execution time
+  confidence    Float // Confidence score at execution time
 
   // Thresholds used (snapshot for reproducibility)
   thresholdsUsed Json @map("thresholds_used") // { autoApprove: 0.98, slackNotify: 0.40, ... }
@@ -1167,16 +1183,16 @@ model CoverageSnapshot {
   snapshotAt  DateTime @map("snapshot_at") // Timestamp of snapshot
 
   // Mapping Coverage Metrics
-  totalServices           Int @default(0) @map("total_services") // Total unique services seen
-  servicesMapped          Int @default(0) @map("services_mapped") // Services with doc mappings
-  totalRepos              Int @default(0) @map("total_repos") // Total unique repos seen
-  reposMapped             Int @default(0) @map("repos_mapped") // Repos with doc mappings
-  mappingCoveragePercent  Float @default(0) @map("mapping_coverage_percent") // Overall mapping coverage
+  totalServices          Int   @default(0) @map("total_services") // Total unique services seen
+  servicesMapped         Int   @default(0) @map("services_mapped") // Services with doc mappings
+  totalRepos             Int   @default(0) @map("total_repos") // Total unique repos seen
+  reposMapped            Int   @default(0) @map("repos_mapped") // Repos with doc mappings
+  mappingCoveragePercent Float @default(0) @map("mapping_coverage_percent") // Overall mapping coverage
 
   // Processing Coverage Metrics
-  totalSignals            Int @default(0) @map("total_signals") // Total signals in period
-  signalsProcessed        Int @default(0) @map("signals_processed") // Signals that created drift candidates
-  signalsIgnored          Int @default(0) @map("signals_ignored") // Signals ignored (no mapping, filtered, etc.)
+  totalSignals              Int   @default(0) @map("total_signals") // Total signals in period
+  signalsProcessed          Int   @default(0) @map("signals_processed") // Signals that created drift candidates
+  signalsIgnored            Int   @default(0) @map("signals_ignored") // Signals ignored (no mapping, filtered, etc.)
   processingCoveragePercent Float @default(0) @map("processing_coverage_percent") // Signals processed / total
 
   // Source Health Metrics (JSON structure)
@@ -1214,38 +1230,38 @@ model AuditTrail {
   timestamp   DateTime @default(now())
 
   // Event classification
-  eventType   String   @map("event_type") // 'state_transition', 'evidence_created', 'plan_changed', 'approval', 'rejection', etc.
-  category    String   @default("system") // 'system', 'user', 'integration', 'compliance'
-  severity    String   @default("info") // 'debug', 'info', 'warning', 'error', 'critical'
+  eventType String @map("event_type") // 'state_transition', 'evidence_created', 'plan_changed', 'approval', 'rejection', etc.
+  category  String @default("system") // 'system', 'user', 'integration', 'compliance'
+  severity  String @default("info") // 'debug', 'info', 'warning', 'error', 'critical'
 
   // Entity being audited
-  entityType  String   @map("entity_type") // 'drift_candidate', 'patch_proposal', 'drift_plan', 'evidence_bundle', etc.
-  entityId    String   @map("entity_id")
+  entityType String @map("entity_type") // 'drift_candidate', 'patch_proposal', 'drift_plan', 'evidence_bundle', etc.
+  entityId   String @map("entity_id")
 
   // Actor who triggered the event
-  actorType   String   @map("actor_type") // 'system', 'user', 'integration', 'agent'
-  actorId     String   @map("actor_id") // User email, agent name, integration ID, etc.
+  actorType String @map("actor_type") // 'system', 'user', 'integration', 'agent'
+  actorId   String @map("actor_id") // User email, agent name, integration ID, etc.
 
   // State transition details (for drift candidates)
-  fromState   String?  @map("from_state") // Previous state (if state transition)
-  toState     String?  @map("to_state") // New state (if state transition)
+  fromState String? @map("from_state") // Previous state (if state transition)
+  toState   String? @map("to_state") // New state (if state transition)
 
   // Change details
-  changes     Json     @default("{}") // Structured diff of what changed
-  metadata    Json     @default("{}") // Additional context (error details, user input, etc.)
+  changes  Json @default("{}") // Structured diff of what changed
+  metadata Json @default("{}") // Additional context (error details, user input, etc.)
 
   // Evidence bundle tracking
   evidenceBundleHash String? @map("evidence_bundle_hash") // SHA-256 hash of evidence bundle (if applicable)
   impactBand         String? @map("impact_band") // Impact band at time of event (if applicable)
 
   // Plan version tracking
-  planId             String? @map("plan_id") // DriftPlan ID (if applicable)
-  planVersionHash    String? @map("plan_version_hash") // SHA-256 hash of plan version (if applicable)
+  planId          String? @map("plan_id") // DriftPlan ID (if applicable)
+  planVersionHash String? @map("plan_version_hash") // SHA-256 hash of plan version (if applicable)
 
   // Compliance flags
-  requiresRetention  Boolean @default(false) @map("requires_retention") // Flag for compliance retention
-  retentionUntil     DateTime? @map("retention_until") // Retention expiry date
-  complianceTag      String? @map("compliance_tag") // SOX, SOC2, ISO27001, GDPR, etc.
+  requiresRetention Boolean   @default(false) @map("requires_retention") // Flag for compliance retention
+  retentionUntil    DateTime? @map("retention_until") // Retention expiry date
+  complianceTag     String?   @map("compliance_tag") // SOX, SOC2, ISO27001, GDPR, etc.
 
   // Immutability - once created, never updated
   // No updatedAt field - audit trails are append-only
@@ -1262,4 +1278,24 @@ model AuditTrail {
   @@index([evidenceBundleHash])
   @@index([planVersionHash])
   @@map("audit_trails")
+}
+
+// ======================================================================
+// ENUMS
+// ======================================================================
+
+// PHASE 1.2: Pack status enum
+enum PackStatus {
+  DRAFT // Pack is being edited
+  IN_REVIEW // Pack is under review
+  ACTIVE // Pack is published and active
+  DEPRECATED // Pack is deprecated but still visible
+  ARCHIVED // Pack is archived and hidden
+}
+
+// PHASE 1.3: Scope merge strategy enum
+enum MergeStrategy {
+  MOST_RESTRICTIVE // Take the most restrictive rule from all applicable packs
+  HIGHEST_PRIORITY // Use rules from highest priority pack only
+  EXPLICIT // Require explicit conflict resolution
 }

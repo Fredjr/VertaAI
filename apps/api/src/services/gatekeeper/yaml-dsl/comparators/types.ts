@@ -117,6 +117,12 @@ export interface PRContext {
     checkRuns?: any[];
     teamMemberships?: Map<string, string[]>;
   };
+
+  // PHASE 2.1: Resolved facts from fact catalog
+  // Facts are resolved once at the start of evaluation and cached here
+  // This allows comparators to access fact values without re-resolving
+  facts?: Record<string, any>;
+  factCatalogVersion?: string;
 }
 
 export interface GitHubFile {

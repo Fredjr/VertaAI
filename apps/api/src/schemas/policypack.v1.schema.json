@@ -1,0 +1,522 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://policy.verta.ai/schemas/policypack.v1.json",
+  "title": "PolicyPack v1",
+  "description": "Verta AI Policy Pack YAML Schema - Track A (Contract Integrity Gate)",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "scope", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "verta.ai/v1",
+      "description": "API version for the policy pack"
+    },
+    "kind": {
+      "type": "string",
+      "const": "PolicyPack",
+      "description": "Resource kind"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "comparators": {
+      "$ref": "#/$defs/comparators"
+    },
+    "artifacts": {
+      "$ref": "#/$defs/artifacts"
+    },
+    "rules": {
+      "type": "array",
+      "description": "List of policy rules",
+      "items": {
+        "$ref": "#/$defs/rule"
+      },
+      "minItems": 1
+    },
+    "evaluation": {
+      "$ref": "#/$defs/evaluation"
+    },
+    "routing": {
+      "$ref": "#/$defs/routing"
+    },
+    "spawnTrackB": {
+      "$ref": "#/$defs/spawnTrackB"
+    }
+  },
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["id", "name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the pack",
+          "pattern": "^[a-z0-9-_.]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "description": "Semantic version",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.-]+)?(\\+[a-zA-Z0-9.-]+)?$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Pack description"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Tags for categorization",
+          "items": {
+            "type": "string"
+          }
+        },
+        "packMode": {
+          "type": "string",
+          "enum": ["observe", "enforce"],
+          "description": "Pack mode: observe (monitor only) or enforce (block)"
+        },
+        "strictness": {
+          "type": "string",
+          "enum": ["permissive", "balanced", "strict"],
+          "description": "Strictness level"
+        },
+        "owner": {
+          "type": "string",
+          "description": "Pack owner (team or user)"
+        },
+        "defaultsRef": {
+          "type": "string",
+          "description": "Reference to workspace defaults"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["DRAFT", "IN_REVIEW", "ACTIVE", "DEPRECATED", "ARCHIVED"],
+          "description": "Pack status"
+        },
+        "owners": {
+          "type": "array",
+          "description": "Pack owners (teams and users)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "team": { "type": "string" },
+              "user": { "type": "string" }
+            }
+          }
+        },
+        "labels": {
+          "type": "object",
+          "description": "Key-value labels for categorization",
+          "additionalProperties": { "type": "string" }
+        },
+        "audit": {
+          "type": "object",
+          "description": "Audit trail information",
+          "properties": {
+            "createdBy": { "type": "string" },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" },
+            "updatedBy": { "type": "string" }
+          }
+        },
+        "notes": {
+          "type": "string",
+          "description": "Version notes or changelog"
+        },
+        "scopePriority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 50,
+          "description": "Scope priority (0-100, higher = higher priority)"
+        },
+        "scopeMergeStrategy": {
+          "type": "string",
+          "enum": ["MOST_RESTRICTIVE", "HIGHEST_PRIORITY", "EXPLICIT"],
+          "default": "MOST_RESTRICTIVE",
+          "description": "How to merge rules when multiple packs apply"
+        },
+        "defaults": {
+          "type": "object",
+          "description": "Pack-level default values inherited by all rules",
+          "additionalProperties": false,
+          "properties": {
+            "timeouts": {
+              "type": "object",
+              "properties": {
+                "comparatorTimeout": { "type": "integer", "minimum": 0 },
+                "totalEvaluationTimeout": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "severity": {
+              "type": "object",
+              "properties": {
+                "defaultLevel": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+                "escalationThreshold": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "approvals": {
+              "type": "object",
+              "properties": {
+                "minCount": { "type": "integer", "minimum": 0 },
+                "requiredTeams": { "type": "array", "items": { "type": "string" } },
+                "requiredUsers": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "obligations": {
+              "type": "object",
+              "properties": {
+                "defaultDecisionOnFail": { "type": "string", "enum": ["block", "warn", "pass"] },
+                "defaultSeverity": { "type": "string", "enum": ["low", "medium", "high", "critical"] }
+              }
+            },
+            "triggers": {
+              "type": "object",
+              "properties": {
+                "defaultPrEvents": {
+                  "type": "array",
+                  "items": { "type": "string", "enum": ["opened", "synchronize", "reopened", "labeled"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["workspace", "service", "repo"],
+          "description": "Scope type"
+        },
+        "ref": {
+          "type": "string",
+          "description": "Service name or repo (owner/repo)"
+        },
+        "branches": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "include": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Branch patterns to include (glob)"
+            },
+            "exclude": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Branch patterns to exclude (glob)"
+            }
+          }
+        },
+        "repos": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "include": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "exclude": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "prEvents": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["opened", "synchronize", "reopened", "labeled"]
+          }
+        },
+        "actorSignals": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "detectAgentAuthorship": { "type": "boolean" },
+            "agentPatterns": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "botUsers": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "comparators": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "library": {
+          "type": "string",
+          "description": "Version pin for comparator library"
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requiredTypes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "definitions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["kind"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["openapi", "readme", "runbook", "backstage", "dashboard", "terraform", "custom"]
+              },
+              "matchAny": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "path": { "type": "string" },
+              "required": { "type": "boolean" },
+              "validators": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["id", "name", "trigger", "obligations"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-_.]+$"
+        },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "trigger": {
+          "$ref": "#/$defs/trigger"
+        },
+        "obligations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/obligation"
+          },
+          "minItems": 1
+        },
+        "skipIf": {
+          "$ref": "#/$defs/skipIf"
+        },
+        "excludePaths": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "anyChangedPaths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allChangedPaths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "anyFileExtensions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allOf": {
+          "type": "array",
+          "items": {}
+        },
+        "anyOf": {
+          "type": "array",
+          "items": {}
+        },
+        "always": { "type": "boolean" },
+        "anyChangedPathsRef": { "type": "string" }
+      }
+    },
+    "obligation": {
+      "type": "object",
+      "required": ["decisionOnFail"],
+      "additionalProperties": false,
+      "properties": {
+        "comparator": { "type": "string" },
+        "comparatorId": { "type": "string" },
+        "params": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "decisionOnFail": {
+          "type": "string",
+          "enum": ["pass", "warn", "block"]
+        },
+        "decisionOnUnknown": {
+          "type": "string",
+          "enum": ["pass", "warn", "block"]
+        },
+        "message": { "type": "string" },
+        "severity": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"]
+        }
+      },
+      "oneOf": [
+        { "required": ["comparator"] },
+        { "required": ["comparatorId"] }
+      ]
+    },
+    "skipIf": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allChangedPaths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "prBodyContains": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "externalDependencyMode": {
+          "type": "string",
+          "enum": ["soft_fail", "hard_fail"]
+        },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxTotalMs": { "type": "number" },
+            "perComparatorTimeoutMs": { "type": "number" },
+            "maxGitHubApiCalls": { "type": "number" }
+          }
+        },
+        "unknownArtifactMode": {
+          "type": "string",
+          "enum": ["warn", "block", "pass"]
+        },
+        "maxFindings": { "type": "number" },
+        "maxEvidenceSnippetsPerFinding": { "type": "number" }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "github": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "checkRunName": { "type": "string" },
+            "conclusionMapping": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "pass": {
+                  "type": "string",
+                  "enum": ["success", "neutral"]
+                },
+                "warn": {
+                  "type": "string",
+                  "enum": ["success", "neutral", "action_required"]
+                },
+                "block": {
+                  "type": "string",
+                  "enum": ["failure", "action_required"]
+                }
+              }
+            },
+            "postSummaryComment": { "type": "boolean" },
+            "annotateFiles": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "spawnTrackB": {
+      "type": "object",
+      "required": ["enabled"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "when": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "onDecision": {
+                "type": "string",
+                "enum": ["pass", "warn", "block"]
+              }
+            }
+          }
+        },
+        "createRemediationCase": { "type": "boolean" },
+        "remediationDefaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "priority": {
+              "type": "string",
+              "enum": ["low", "medium", "high", "critical"]
+            },
+            "targetSystems": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "approvalChannelRef": { "type": "string" }
+          }
+        },
+        "grouping": {
+          "type": "object",
+          "required": ["strategy", "maxPerPR"],
+          "additionalProperties": false,
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "enum": ["by-drift-type-and-service", "by-rule", "by-finding-code"]
+            },
+            "maxPerPR": { "type": "number" }
+          }
+        }
+      }
+    }
+  }
+}
+

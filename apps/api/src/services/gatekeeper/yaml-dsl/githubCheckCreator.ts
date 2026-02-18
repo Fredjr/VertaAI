@@ -7,6 +7,7 @@
 
 import type { PackEvaluationResult } from './packEvaluator.js';
 import type { PackYAML } from './packValidator.js';
+import type { PackResult } from './yamlGatekeeperIntegration.js';
 import { getInstallationOctokit } from '../../../lib/github.js';
 
 export interface CheckCreationInput {
@@ -15,47 +16,86 @@ export interface CheckCreationInput {
   headSha: string;
   installationId: number;
   prNumber: number;
-  packResult: PackEvaluationResult;
-  pack: PackYAML;  // CRITICAL FIX (Gap #3): Need pack to read conclusionMapping
+  packResult: PackEvaluationResult;  // DEPRECATED: Use packResults instead
+  pack: PackYAML;  // DEPRECATED: Use packResults instead
+  // PHASE 3 FIX: Multi-pack support
+  packResults?: PackResult[];
+  globalDecision?: 'pass' | 'warn' | 'block';
 }
 
 /**
  * Create GitHub Check with pack evaluation results
+ * PHASE 3 FIX: Now supports multi-pack results
  */
 export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Promise<void> {
   const octokit = await getInstallationOctokit(input.installationId);
 
-  // CRITICAL FIX (Gap #3): Use pack's conclusionMapping configuration
-  // This determines branch protection behavior for WARN decisions
-  const conclusionMapping = input.pack.routing?.github?.conclusionMapping || {
-    pass: 'success' as const,
-    warn: 'success' as const,  // Default: WARN doesn't block merges
-    block: 'failure' as const,
-  };
+  // PHASE 3 FIX: Support both single-pack and multi-pack modes
+  const isMultiPack = input.packResults && input.packResults.length > 0;
 
-  const conclusion = conclusionMapping[input.packResult.decision];
+  if (isMultiPack) {
+    // Multi-pack mode
+    const decision = input.globalDecision!;
 
-  // Build check output
-  const title = buildCheckTitle(input.packResult);
-  const summary = buildCheckSummary(input.packResult);
-  const text = buildCheckText(input.packResult);
+    // Use first pack's conclusionMapping (all packs should have same routing config)
+    const conclusionMapping = input.packResults![0].pack.routing?.github?.conclusionMapping || {
+      pass: 'success' as const,
+      warn: 'success' as const,
+      block: 'failure' as const,
+    };
 
-  // Create check
-  await octokit.rest.checks.create({
-    owner: input.owner,
-    repo: input.repo,
-    name: 'VertaAI Policy Pack',
-    head_sha: input.headSha,
-    status: 'completed',
-    conclusion,
-    output: {
-      title,
-      summary,
-      text,
-    },
-  });
+    const conclusion = conclusionMapping[decision];
 
-  console.log(`[YAMLGatekeeperCheck] Created check with conclusion: ${conclusion}`);
+    // Build check output for multi-pack
+    const title = buildMultiPackCheckTitle(decision, input.packResults!);
+    const summary = buildMultiPackCheckSummary(decision, input.packResults!);
+    const text = buildMultiPackCheckText(input.packResults!);
+
+    await octokit.rest.checks.create({
+      owner: input.owner,
+      repo: input.repo,
+      name: 'VertaAI Policy Pack',
+      head_sha: input.headSha,
+      status: 'completed',
+      conclusion,
+      output: {
+        title,
+        summary,
+        text,
+      },
+    });
+
+    console.log(`[YAMLGatekeeperCheck] Created multi-pack check with conclusion: ${conclusion} (${input.packResults!.length} packs)`);
+  } else {
+    // Single-pack mode (backward compatibility)
+    const conclusionMapping = input.pack.routing?.github?.conclusionMapping || {
+      pass: 'success' as const,
+      warn: 'success' as const,
+      block: 'failure' as const,
+    };
+
+    const conclusion = conclusionMapping[input.packResult.decision];
+
+    const title = buildCheckTitle(input.packResult);
+    const summary = buildCheckSummary(input.packResult);
+    const text = buildCheckText(input.packResult);
+
+    await octokit.rest.checks.create({
+      owner: input.owner,
+      repo: input.repo,
+      name: 'VertaAI Policy Pack',
+      head_sha: input.headSha,
+      status: 'completed',
+      conclusion,
+      output: {
+        title,
+        summary,
+        text,
+      },
+    });
+
+    console.log(`[YAMLGatekeeperCheck] Created check with conclusion: ${conclusion}`);
+  }
 }
 
 function buildCheckTitle(result: PackEvaluationResult): string {
@@ -160,5 +200,99 @@ function formatFinding(finding: any): string {
   }
 
   return lines.join('\n') + '\n';
+}
+
+// PHASE 3 FIX: Multi-pack check building functions
+
+function buildMultiPackCheckTitle(decision: 'pass' | 'warn' | 'block', packResults: PackResult[]): string {
+  if (decision === 'pass') {
+    return `✅ All policy checks passed (${packResults.length} pack${packResults.length > 1 ? 's' : ''})`;
+  }
+
+  if (decision === 'warn') {
+    const totalWarnings = packResults.reduce((sum, pr) =>
+      sum + pr.result.findings.filter(f => f.decisionOnFail === 'warn').length, 0
+    );
+    return `⚠️ ${totalWarnings} warning(s) found across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`;
+  }
+
+  const totalBlocking = packResults.reduce((sum, pr) =>
+    sum + pr.result.findings.filter(f => f.decisionOnFail === 'block').length, 0
+  );
+  return `❌ ${totalBlocking} blocking issue(s) found across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`;
+}
+
+function buildMultiPackCheckSummary(decision: 'pass' | 'warn' | 'block', packResults: PackResult[]): string {
+  const totalFindings = packResults.reduce((sum, pr) => sum + pr.result.findings.length, 0);
+  const totalRules = packResults.reduce((sum, pr) => sum + pr.result.triggeredRules.length, 0);
+  const totalTime = packResults.reduce((sum, pr) => sum + pr.result.evaluationTimeMs, 0);
+
+  const lines = [
+    `**Global Decision:** ${decision.toUpperCase()}`,
+    `**Packs Evaluated:** ${packResults.length}`,
+    `**Total Findings:** ${totalFindings}`,
+    `**Total Rules Triggered:** ${totalRules}`,
+    `**Total Evaluation Time:** ${totalTime}ms`,
+    '',
+    '## Pack Results',
+  ];
+
+  for (const packResult of packResults) {
+    const emoji = packResult.result.decision === 'pass' ? '✅' :
+                  packResult.result.decision === 'warn' ? '⚠️' : '❌';
+    lines.push(`- ${emoji} **${packResult.pack.metadata.name}** v${packResult.pack.metadata.version} (${packResult.packSource}): ${packResult.result.decision.toUpperCase()}`);
+    lines.push(`  - Findings: ${packResult.result.findings.length}, Rules: ${packResult.result.triggeredRules.length}, Time: ${packResult.result.evaluationTimeMs}ms`);
+  }
+
+  return lines.join('\n');
+}
+
+function buildMultiPackCheckText(packResults: PackResult[]): string {
+  const sections: string[] = [];
+
+  // Group findings by pack
+  for (const packResult of packResults) {
+    const { pack, result } = packResult;
+
+    if (result.findings.length === 0) {
+      continue;  // Skip packs with no findings
+    }
+
+    sections.push(`# ${pack.metadata.name} v${pack.metadata.version}`);
+    sections.push('');
+
+    const blockFindings = result.findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult.status === 'fail');
+    const warnFindings = result.findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult.status === 'fail');
+    const unknownFindings = result.findings.filter(f => f.comparatorResult.status === 'unknown');
+
+    if (blockFindings.length > 0) {
+      sections.push('## ❌ Blocking Issues\n');
+      for (const finding of blockFindings) {
+        sections.push(formatFinding(finding));
+      }
+    }
+
+    if (warnFindings.length > 0) {
+      sections.push('## ⚠️ Warnings\n');
+      for (const finding of warnFindings) {
+        sections.push(formatFinding(finding));
+      }
+    }
+
+    if (unknownFindings.length > 0) {
+      sections.push('## ❓ Unable to Evaluate\n');
+      for (const finding of unknownFindings) {
+        sections.push(formatFinding(finding));
+      }
+    }
+
+    sections.push('---\n');
+  }
+
+  if (sections.length === 0) {
+    return 'No policy violations found across all packs. All checks passed! 🎉';
+  }
+
+  return sections.join('\n');
 }
 

@@ -9,6 +9,7 @@ import slackInteractionsRouter from './routes/slack-interactions.js';
 import confluenceOAuthRouter from './routes/confluence-oauth.js';
 import notionOAuthRouter from './routes/notion-oauth.js';
 import githubOAuthRouter from './routes/github-oauth.js';
+import githubRouter from './routes/github.js';
 import onboardingRouter from './routes/onboarding.js';
 import slackChannelsRouter from './routes/slack-channels.js';
 import jobsRouter from './routes/jobs.js';
@@ -79,6 +80,9 @@ app.use('/auth/notion', notionOAuthRouter);
 
 // GitHub OAuth routes (multi-tenant GitHub App installation)
 app.use('/auth/github', githubOAuthRouter);
+
+// GitHub API routes (repos, branches, status)
+app.use('/api', githubRouter);
 
 // Onboarding API routes (setup status, webhook URLs, doc mappings)
 app.use('/api/workspaces', onboardingRouter);

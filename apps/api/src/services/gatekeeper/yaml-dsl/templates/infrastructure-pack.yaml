@@ -1,0 +1,231 @@
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.infrastructure.v1
+  name: Infrastructure Pack
+  version: 1.0.0
+  description: IaC validation and runbook enforcement for infrastructure changes.
+  packMode: enforce
+  strictness: balanced
+  owner: platform-team
+  tags:
+    - infrastructure
+    - terraform
+    - iac
+    - runbooks
+
+scope:
+  type: workspace
+  ref: null
+  branches:
+    include: ["main", "master", "production"]
+    exclude: []
+  repos:
+    include: []
+    exclude: []
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: true
+
+comparators:
+  library: verta.comparators.v1
+
+artifacts:
+  requiredTypes:
+    - terraform
+    - runbook
+  definitions:
+    - id: terraform-artifact
+      kind: terraform
+      matchAny:
+        - "**/*.tf"
+        - "**/terraform/**/*.tf"
+        - "infrastructure/**/*.tf"
+      serviceScope: null
+    - id: runbook-artifact
+      kind: runbook
+      matchAny:
+        - "**/RUNBOOK.md"
+        - "**/runbook.md"
+        - "docs/runbook.md"
+        - "docs/operations.md"
+      serviceScope: null
+    - id: backstage-artifact
+      kind: backstage
+      matchAny:
+        - "**/catalog-info.yaml"
+        - "**/.backstage/catalog-info.yaml"
+      serviceScope: null
+
+rules:
+  - id: terraform-changes-require-approval
+    name: Terraform Changes Require Platform Approval
+    description: Infrastructure changes require platform team review
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "**/*.tf"
+        - "**/terraform/**"
+        - "infrastructure/**"
+    obligations:
+      - comparator: APPROVER_IN_ALLOWED_SET
+        params:
+          allowedApprovers: ["platform-team", "infrastructure-team"]
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Infrastructure changes require platform-team or infrastructure-team approval"
+      - comparator: MIN_APPROVALS
+        params:
+          minCount: 2
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Infrastructure changes require at least 2 approvals"
+    skipIf:
+      labels: ["emergency-infra"]
+    excludePaths:
+      - "test/**"
+      - "examples/**"
+
+  - id: terraform-valid-schema
+    name: Terraform Files Valid
+    description: Terraform files must be syntactically valid
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "**/*.tf"
+    obligations:
+      - comparator: ARTIFACT_VALID_SCHEMA
+        params:
+          artifactId: terraform-artifact
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Terraform syntax validation failed. Run 'terraform validate' locally."
+    skipIf:
+      labels: []
+    excludePaths:
+      - "test/**"
+
+  - id: infra-changes-require-runbook-update
+    name: Infrastructure Changes Require Runbook Update
+    description: Significant infra changes should update operational runbook
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "**/*.tf"
+        - "infrastructure/**"
+        - "k8s/**"
+        - "**/*.yaml"
+    obligations:
+      - comparator: ARTIFACT_UPDATED
+        params:
+          artifactId: runbook-artifact
+          withinCommits: 5
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "Infrastructure changed. Consider updating RUNBOOK.md with operational impact."
+    skipIf:
+      labels: ["skip-runbook", "minor-change"]
+    excludePaths:
+      - "**/*.test.*"
+      - "test/**"
+
+  - id: require-runbook-for-services
+    name: Require Runbook for Services
+    description: Services must have operational runbooks
+    enabled: true
+    trigger:
+      anyChangedPathsRef: service-paths
+    obligations:
+      - comparator: ARTIFACT_PRESENT
+        params:
+          artifactId: runbook-artifact
+        severity: high
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "Service is missing RUNBOOK.md. Add operational documentation."
+    skipIf:
+      labels: ["library", "not-a-service"]
+    excludePaths: []
+
+  - id: backstage-catalog-valid
+    name: Backstage Catalog Valid
+    description: Backstage catalog-info.yaml must be valid
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "**/catalog-info.yaml"
+        - "**/.backstage/catalog-info.yaml"
+    obligations:
+      - comparator: BACKSTAGE_VALID
+        params: {}
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "Backstage catalog validation failed. Fix schema errors."
+    skipIf:
+      labels: []
+    excludePaths: []
+
+  - id: require-checkruns-for-infra
+    name: Require CI Checks for Infrastructure
+    description: Infrastructure changes must pass terraform plan/validate
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "**/*.tf"
+        - "infrastructure/**"
+    obligations:
+      - comparator: CHECKRUNS_REQUIRED
+        params:
+          requiredChecks: ["terraform-plan", "terraform-validate"]
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Infrastructure changes require terraform-plan and terraform-validate checks"
+    skipIf:
+      labels: []
+    excludePaths:
+      - "test/**"
+
+evaluation:
+  externalDependencyMode: soft_fail
+  unknownArtifactMode: soft_fail
+  budgets:
+    totalTimeoutSeconds: 120
+    perComparatorTimeoutSeconds: 30
+    maxApiCalls: 50
+  maxFindings: 100
+  maxEvidenceSnippetsPerFinding: 3
+
+routing:
+  github:
+    checkRunName: "VertaAI Infrastructure Gate"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: failure
+    postSummaryComment: true
+    annotateFiles: true
+
+spawnTrackB:
+  enabled: true
+  when: on_warn_or_block
+  createRemediationCase: true
+  remediationDefaults:
+    targetSystems:
+      - github_readme
+      - confluence
+    approvalChannelRef: platform-approvals
+    autoApplyThreshold: never  # Infrastructure changes always require manual review
+  grouping:
+    byService: true
+    byDriftType: true
+    maxDriftsPerBatch: 5
+

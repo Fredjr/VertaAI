@@ -72,15 +72,17 @@ export default function ApprovalTiersForm({ formData, setFormData }: ApprovalTie
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-          Approval Tiers & Routing
-        </h2>
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          Configure approval tiers for contract violations and drift findings
-        </p>
-      </div>
+    <div className="space-y-8">
+      {/* Section 1: Approval Tiers */}
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+            Approval Tiers
+          </h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            Configure approval tiers for contract violations and drift findings
+          </p>
+        </div>
 
       {/* Tier Selection */}
       <div>
@@ -189,6 +191,157 @@ export default function ApprovalTiersForm({ formData, setFormData }: ApprovalTie
             ))}
           </div>
         )}
+      </div>
+      </div>
+
+      {/* Section 2: GitHub Check Configuration */}
+      <div className="space-y-6 border-t border-gray-200 dark:border-gray-700 pt-8">
+        <div>
+          <h2 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+            GitHub Check Configuration
+          </h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            Configure how policy pack results are displayed in GitHub
+          </p>
+        </div>
+
+        {/* Check Run Name */}
+        <div>
+          <label htmlFor="checkRunName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Check Run Name *
+          </label>
+          <input
+            type="text"
+            id="checkRunName"
+            value={formData.checkRunName || 'Policy Pack Validation'}
+            onChange={(e) => setFormData({ ...formData, checkRunName: e.target.value })}
+            className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+            placeholder="e.g., Policy Pack Validation"
+          />
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            The name that will appear in GitHub's Checks tab
+          </p>
+        </div>
+
+        {/* Post Summary Comment */}
+        <div className="flex items-start">
+          <div className="flex items-center h-5">
+            <input
+              type="checkbox"
+              id="postSummaryComment"
+              checked={formData.postSummaryComment !== false}
+              onChange={(e) => setFormData({ ...formData, postSummaryComment: e.target.checked })}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+            />
+          </div>
+          <div className="ml-3">
+            <label htmlFor="postSummaryComment" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Post Summary Comment
+            </label>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Post a comment on the PR with a summary of policy pack results
+            </p>
+          </div>
+        </div>
+
+        {/* Annotate Files */}
+        <div className="flex items-start">
+          <div className="flex items-center h-5">
+            <input
+              type="checkbox"
+              id="annotateFiles"
+              checked={formData.annotateFiles !== false}
+              onChange={(e) => setFormData({ ...formData, annotateFiles: e.target.checked })}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+            />
+          </div>
+          <div className="ml-3">
+            <label htmlFor="annotateFiles" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Annotate Files
+            </label>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Add inline annotations to files with policy violations
+            </p>
+          </div>
+        </div>
+
+        {/* Conclusion Mapping */}
+        <div className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg space-y-4">
+          <h3 className="text-sm font-medium text-gray-900 dark:text-white">
+            Conclusion Mapping
+          </h3>
+          <p className="text-xs text-gray-600 dark:text-gray-400">
+            Map policy pack decisions to GitHub check conclusions
+          </p>
+
+          {/* Block Decision */}
+          <div>
+            <label htmlFor="conclusionBlock" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              When decision is BLOCK
+            </label>
+            <select
+              id="conclusionBlock"
+              value={formData.conclusionMapping?.block || 'failure'}
+              onChange={(e) => setFormData({
+                ...formData,
+                conclusionMapping: {
+                  ...formData.conclusionMapping,
+                  block: e.target.value,
+                },
+              })}
+              className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+            >
+              <option value="failure">Failure (prevents merge)</option>
+              <option value="neutral">Neutral (informational)</option>
+              <option value="action_required">Action Required</option>
+            </select>
+          </div>
+
+          {/* Warn Decision */}
+          <div>
+            <label htmlFor="conclusionWarn" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              When decision is WARN
+            </label>
+            <select
+              id="conclusionWarn"
+              value={formData.conclusionMapping?.warn || 'neutral'}
+              onChange={(e) => setFormData({
+                ...formData,
+                conclusionMapping: {
+                  ...formData.conclusionMapping,
+                  warn: e.target.value,
+                },
+              })}
+              className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+            >
+              <option value="neutral">Neutral (informational)</option>
+              <option value="failure">Failure (prevents merge)</option>
+              <option value="action_required">Action Required</option>
+            </select>
+          </div>
+
+          {/* Pass Decision */}
+          <div>
+            <label htmlFor="conclusionPass" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              When decision is PASS
+            </label>
+            <select
+              id="conclusionPass"
+              value={formData.conclusionMapping?.pass || 'success'}
+              onChange={(e) => setFormData({
+                ...formData,
+                conclusionMapping: {
+                  ...formData.conclusionMapping,
+                  pass: e.target.value,
+                },
+              })}
+              className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+            >
+              <option value="success">Success</option>
+              <option value="neutral">Neutral</option>
+            </select>
+          </div>
+        </div>
       </div>
     </div>
   );

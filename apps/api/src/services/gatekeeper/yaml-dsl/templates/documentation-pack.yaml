@@ -1,0 +1,207 @@
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.documentation.v1
+  name: Documentation Pack
+  version: 1.0.0
+  description: Enforce documentation standards for README, API specs, and runbooks.
+  packMode: enforce
+  strictness: balanced
+  owner: platform-team
+  tags:
+    - documentation
+    - readme
+    - openapi
+    - runbooks
+
+scope:
+  type: workspace
+  ref: null
+  branches:
+    include: ["main", "master", "develop"]
+    exclude: []
+  repos:
+    include: []
+    exclude: []
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: false
+
+comparators:
+  library: verta.comparators.v1
+
+artifacts:
+  requiredTypes:
+    - readme
+    - openapi
+  definitions:
+    - id: readme-artifact
+      kind: readme
+      matchAny:
+        - "README.md"
+        - "readme.md"
+        - "docs/README.md"
+      serviceScope: null
+    - id: openapi-artifact
+      kind: openapi
+      matchAny:
+        - "**/*.openapi.yaml"
+        - "**/*.openapi.json"
+        - "**/openapi.yaml"
+        - "**/openapi.json"
+        - "docs/api/*.yaml"
+      serviceScope: null
+    - id: runbook-artifact
+      kind: runbook
+      matchAny:
+        - "**/RUNBOOK.md"
+        - "**/runbook.md"
+        - "docs/runbook.md"
+      serviceScope: null
+
+rules:
+  - id: require-readme
+    name: Require README Present
+    description: Every repo must have a README.md file
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: ARTIFACT_PRESENT
+        params:
+          artifactId: readme-artifact
+        severity: high
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "README.md is missing. Please add documentation for this repository."
+    skipIf:
+      labels: []
+    excludePaths: []
+
+  - id: readme-updated-with-code
+    name: README Updated with Code Changes
+    description: Significant code changes should update README
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "src/**"
+        - "lib/**"
+        - "api/**"
+    obligations:
+      - comparator: ARTIFACT_UPDATED
+        params:
+          artifactId: readme-artifact
+          withinCommits: 5
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "Consider updating README.md to reflect code changes"
+    skipIf:
+      labels: ["skip-docs", "minor-change"]
+    excludePaths:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+
+  - id: openapi-valid
+    name: OpenAPI Spec Valid
+    description: OpenAPI specs must be valid YAML/JSON
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "**/*.openapi.yaml"
+        - "**/*.openapi.json"
+        - "**/openapi.yaml"
+        - "**/openapi.json"
+    obligations:
+      - comparator: OPENAPI_VALID
+        params: {}
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "OpenAPI spec validation failed. Fix schema errors before merging."
+    skipIf:
+      labels: []
+    excludePaths:
+      - "test/**"
+      - "examples/**"
+
+  - id: api-changes-require-openapi-update
+    name: API Changes Require OpenAPI Update
+    description: Changes to API code should update OpenAPI spec
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "src/api/**"
+        - "src/routes/**"
+        - "src/controllers/**"
+        - "api/**"
+    obligations:
+      - comparator: ARTIFACT_UPDATED
+        params:
+          artifactId: openapi-artifact
+          withinCommits: 3
+        severity: high
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "API code changed. Please update OpenAPI spec to reflect changes."
+    skipIf:
+      labels: ["skip-openapi", "internal-only"]
+    excludePaths:
+      - "**/*.test.*"
+
+  - id: runbook-present-for-services
+    name: Runbook Present for Services
+    description: Services should have operational runbooks
+    enabled: true
+    trigger:
+      anyChangedPathsRef: service-paths
+    obligations:
+      - comparator: ARTIFACT_PRESENT
+        params:
+          artifactId: runbook-artifact
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "Consider adding a RUNBOOK.md for operational guidance"
+    skipIf:
+      labels: ["library", "not-a-service"]
+    excludePaths: []
+
+evaluation:
+  externalDependencyMode: soft_fail
+  unknownArtifactMode: soft_fail
+  budgets:
+    totalTimeoutSeconds: 90
+    perComparatorTimeoutSeconds: 20
+    maxApiCalls: 40
+  maxFindings: 100
+  maxEvidenceSnippetsPerFinding: 3
+
+routing:
+  github:
+    checkRunName: "VertaAI Documentation Gate"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: failure
+    postSummaryComment: true
+    annotateFiles: true
+
+spawnTrackB:
+  enabled: true
+  when: on_warn_or_block
+  createRemediationCase: true
+  remediationDefaults:
+    targetSystems:
+      - github_readme
+      - confluence
+    approvalChannelRef: docs-approvals
+    autoApplyThreshold: low  # Auto-apply low-confidence doc fixes
+  grouping:
+    byService: true
+    byDriftType: true
+    maxDriftsPerBatch: 10
+

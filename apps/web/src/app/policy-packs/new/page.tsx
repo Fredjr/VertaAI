@@ -8,6 +8,8 @@ import Link from 'next/link';
 
 // Import form sections
 import OverviewForm from './sections/OverviewForm';
+import ScopeForm from './sections/ScopeForm';
+import PackDefaultsForm from './sections/PackDefaultsForm';
 import TrackAFormYAML from './sections/TrackAFormYAML';
 import TrackBForm from './sections/TrackBForm';
 import ApprovalTiersForm from './sections/ApprovalTiersForm';
@@ -16,10 +18,19 @@ interface PolicyPackFormData {
   // Overview
   name: string;
   description: string;
+  owner?: string;
+  packMode?: 'observe' | 'enforce';
+  strictness?: 'permissive' | 'balanced' | 'strict';
   status: 'active' | 'draft' | 'archived';
+
+  // Scope
   scopeType: 'workspace' | 'service' | 'repo';
   scopeRef: string;
   repoAllowlist: string[];
+  reposInclude?: string[];
+  reposExclude?: string[];
+  branchesInclude?: string[];
+  branchesExclude?: string[];
   pathGlobs: string[];
 
   // Track A
@@ -49,10 +60,17 @@ function NewPolicyPackContent() {
   const [formData, setFormData] = useState<PolicyPackFormData>({
     name: '',
     description: '',
+    owner: '',
+    packMode: 'observe',
+    strictness: 'balanced',
     status: 'draft',
     scopeType: 'workspace',
     scopeRef: '',
     repoAllowlist: [],
+    reposInclude: [],
+    reposExclude: [],
+    branchesInclude: [],
+    branchesExclude: [],
     pathGlobs: [],
     trackAEnabled: false,
     trackAConfig: {},
@@ -65,10 +83,12 @@ function NewPolicyPackContent() {
   });
 
   const steps = [
-    { id: 1, name: 'Overview', component: OverviewForm },
-    { id: 2, name: 'Track A: YAML Policy Pack', component: TrackAFormYAML },
-    { id: 3, name: 'Track B: Drift Remediation', component: TrackBForm },
-    { id: 4, name: 'Approval & Routing', component: ApprovalTiersForm },
+    { id: 1, name: 'Overview & Identity', component: OverviewForm },
+    { id: 2, name: 'Scope Configuration', component: ScopeForm },
+    { id: 3, name: 'Pack Defaults', component: PackDefaultsForm },
+    { id: 4, name: 'Policy Authoring', component: TrackAFormYAML },
+    { id: 5, name: 'Drift Remediation', component: TrackBForm },
+    { id: 6, name: 'Approval & Routing', component: ApprovalTiersForm },
   ];
 
   const currentStepData = steps.find(s => s.id === currentStep);

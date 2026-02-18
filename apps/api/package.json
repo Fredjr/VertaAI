@@ -30,6 +30,8 @@
     "@upstash/qstash": "^2.8.4",
     "@upstash/redis": "^1.36.1",
     "@vertaai/shared": "workspace:*",
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
     "bullmq": "^5.7.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
@@ -46,6 +48,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/ajv": "^1.0.4",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
     "@types/diff": "^5.2.3",

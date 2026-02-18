@@ -10,6 +10,8 @@ import semver from 'semver';
 import { minimatch } from 'minimatch';
 import type { PackYAML } from './packValidator.js';
 import type { PrismaClient } from '@prisma/client';
+// PHASE 2.4: Auto-enhance packs with fact-based conditions
+import { enhancePackWithConditions } from './packEnhancer.js';
 
 export interface SelectedPack {
   pack: PackYAML;
@@ -22,6 +24,7 @@ export interface SelectedPack {
 /**
  * Select applicable pack for a PR
  * CRITICAL: Precedence is repo > service > workspace
+ * DEPRECATED: Use selectApplicablePacks() for multi-pack support
  */
 export async function selectApplicablePack(
   prisma: PrismaClient,
@@ -30,6 +33,22 @@ export async function selectApplicablePack(
   repo: string,
   branch: string
 ): Promise<SelectedPack | null> {
+  const packs = await selectApplicablePacks(prisma, workspaceId, owner, repo, branch);
+  return packs.length > 0 ? packs[0] : null;
+}
+
+/**
+ * PHASE 2 FIX: Select ALL applicable packs for a PR (multi-pack support)
+ * Returns packs in precedence order: repo > service > workspace
+ * Within each level, returns all applicable packs (not just one)
+ */
+export async function selectApplicablePacks(
+  prisma: PrismaClient,
+  workspaceId: string,
+  owner: string,
+  repo: string,
+  branch: string
+): Promise<SelectedPack[]> {
   const fullRepo = `${owner}/${repo}`;
 
   // 1. Find all published packs for this workspace
@@ -43,7 +62,7 @@ export async function selectApplicablePack(
   });
 
   if (allPacks.length === 0) {
-    return null;
+    return [];
   }
 
   // 2. Parse and filter packs by scope
@@ -54,7 +73,11 @@ export async function selectApplicablePack(
   for (const dbPack of allPacks) {
     try {
       const yaml = require('yaml');
-      const pack: PackYAML = yaml.parse(dbPack.trackAConfigYamlPublished!);
+      let pack: PackYAML = yaml.parse(dbPack.trackAConfigYamlPublished!);
+
+      // PHASE 2.4: Auto-enhance pack with fact-based conditions
+      // This adds _autoCondition to obligations with translatable comparators
+      pack = enhancePackWithConditions(pack);
 
       // Check if pack applies to this PR
       if (!packApplies(pack, fullRepo, branch)) {
@@ -81,23 +104,27 @@ export async function selectApplicablePack(
     }
   }
 
-  // 3. Apply precedence
+  // 3. PHASE 2 FIX: Return ALL applicable packs in precedence order
+  // Precedence: repo > service > workspace
+  // Within each level, return all packs (sorted by version)
+  const result: SelectedPack[] = [];
+
   if (repoPacks.length > 0) {
-    const selected = selectBestPack(repoPacks);
-    return { ...selected, source: 'repo' };
+    const sorted = sortPacksByVersion(repoPacks);
+    result.push(...sorted.map(p => ({ ...p, source: 'repo' as const })));
   }
 
   if (servicePacks.length > 0) {
-    const selected = selectBestPack(servicePacks);
-    return { ...selected, source: 'service' };
+    const sorted = sortPacksByVersion(servicePacks);
+    result.push(...sorted.map(p => ({ ...p, source: 'service' as const })));
   }
 
   if (workspacePacks.length > 0) {
-    const selected = selectBestPack(workspacePacks);
-    return { ...selected, source: 'workspace' };
+    const sorted = sortPacksByVersion(workspacePacks);
+    result.push(...sorted.map(p => ({ ...p, source: 'workspace' as const })));
   }
 
-  return null;
+  return result;
 }
 
 /**
@@ -130,10 +157,21 @@ function packApplies(pack: PackYAML, fullRepo: string, branch: string): boolean 
 /**
  * Select best pack from candidates using semver + publishedAt
  * CRITICAL FIX (Gap #3): Use publishedAt as tie-breaker, NOT updatedAt or packHash
+ * DEPRECATED: Use sortPacksByVersion() for multi-pack support
  */
 function selectBestPack(
   packs: Array<{ pack: PackYAML; packHash: string; dbId: string; publishedAt: Date | null }>
 ): { pack: PackYAML; packHash: string; dbId: string; publishedAt: Date | null } {
+  return sortPacksByVersion(packs)[0];
+}
+
+/**
+ * PHASE 2 FIX: Sort packs by version (descending) with publishedAt tie-breaker
+ * Returns ALL packs sorted, not just the best one
+ */
+function sortPacksByVersion(
+  packs: Array<{ pack: PackYAML; packHash: string; dbId: string; publishedAt: Date | null }>
+): Array<{ pack: PackYAML; packHash: string; dbId: string; publishedAt: Date | null }> {
   return packs.sort((a, b) => {
     // Sort by semver (descending)
     const versionCompare = semver.rcompare(a.pack.metadata.version, b.pack.metadata.version);
@@ -147,6 +185,6 @@ function selectBestPack(
 
     // Fallback: if publishedAt is missing (shouldn't happen for published packs), use pack hash
     return a.packHash.localeCompare(b.packHash);
-  })[0];
+  });
 }
 

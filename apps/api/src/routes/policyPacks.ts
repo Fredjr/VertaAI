@@ -19,6 +19,7 @@ import { z } from 'zod';
 import { parsePackYAML, validatePackYAML } from '../services/gatekeeper/yaml-dsl/packValidator.js';
 import { computePackHashFull } from '../services/gatekeeper/yaml-dsl/canonicalize.js';
 import { parseWorkspaceDefaults, validateWorkspaceDefaults } from '../services/gatekeeper/yaml-dsl/workspaceDefaultsSchema.js';
+import { loadAllTemplates, getTemplateById, getTemplateMetadata } from '../services/gatekeeper/yaml-dsl/templateRegistry.js';
 import yaml from 'yaml';
 
 const router: Router = Router();
@@ -883,6 +884,44 @@ router.put('/workspaces/:workspaceId/defaults', async (req: Request, res: Respon
   } catch (error: any) {
     console.error('[PolicyPacks] Update defaults error:', error);
     res.status(500).json({ error: error.message || 'Failed to update workspace defaults' });
+  }
+});
+
+// ======================================================================
+// TEMPLATE ENDPOINTS
+// ======================================================================
+
+/**
+ * GET /api/workspaces/:workspaceId/policy-packs/templates
+ * Get all available pack templates (metadata only)
+ */
+router.get('/workspaces/:workspaceId/policy-packs/templates', async (req: Request, res: Response) => {
+  try {
+    const templates = getTemplateMetadata();
+    res.json({ templates });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Get templates error:', error);
+    res.status(500).json({ error: error.message || 'Failed to load templates' });
+  }
+});
+
+/**
+ * GET /api/workspaces/:workspaceId/policy-packs/templates/:templateId
+ * Get a specific template with full YAML content
+ */
+router.get('/workspaces/:workspaceId/policy-packs/templates/:templateId', async (req: Request, res: Response) => {
+  try {
+    const { templateId } = req.params;
+    const template = getTemplateById(templateId);
+
+    if (!template) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    res.json({ template });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Get template error:', error);
+    res.status(500).json({ error: error.message || 'Failed to load template' });
   }
 });
 

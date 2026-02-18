@@ -1,0 +1,157 @@
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.enforce-core.v1
+  name: Enforce Core Pack
+  version: 1.0.0
+  description: Basic enforcement for secrets and approvals. Blocks PRs that violate critical policies.
+  packMode: enforce
+  strictness: balanced
+  owner: platform-team
+  tags:
+    - enforce
+    - security
+    - approvals
+    - starter
+
+scope:
+  type: workspace
+  ref: null
+  branches:
+    include: ["main", "master", "release/*"]
+    exclude: ["feature/*", "dev/*"]
+  repos:
+    include: []
+    exclude: []
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: true
+
+comparators:
+  library: verta.comparators.v1
+
+artifacts:
+  requiredTypes: []
+  definitions: []
+
+rules:
+  - id: block-secrets
+    name: Block Secrets in Diff
+    description: Block PRs containing potential secrets
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: NO_SECRETS_IN_DIFF
+        params: {}
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Potential secret detected in diff. Remove before merging."
+    skipIf:
+      labels: ["security-override"]
+    excludePaths: []
+
+  - id: require-approvals
+    name: Require Minimum Approvals
+    description: Require at least 1 approval from a human reviewer
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: MIN_APPROVALS
+        params:
+          minCount: 1
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "PR requires at least 1 approval before merging"
+      - comparator: HUMAN_APPROVAL_PRESENT
+        params: {}
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "PR requires at least 1 human approval (not bot)"
+    skipIf:
+      labels: ["skip-approval", "hotfix"]
+    excludePaths: []
+
+  - id: require-pr-template
+    name: Require PR Template Fields
+    description: Ensure PR template is filled out
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: PR_TEMPLATE_FIELD_PRESENT
+        params:
+          fieldName: "Testing Done"
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "Please fill out 'Testing Done' section in PR description"
+      - comparator: PR_TEMPLATE_FIELD_PRESENT
+        params:
+          fieldName: "Breaking Changes"
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "Please fill out 'Breaking Changes' section in PR description"
+    skipIf:
+      labels: ["skip-template"]
+    excludePaths: []
+
+  - id: sensitive-paths-approval
+    name: Sensitive Paths Require Approval
+    description: Changes to sensitive paths require platform team approval
+    enabled: true
+    trigger:
+      anyChangedPathsRef: sensitive-paths
+    obligations:
+      - comparator: SENSITIVE_PATH_REQUIRES_APPROVAL
+        params:
+          requiredTeam: "platform-team"
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Changes to sensitive paths require platform-team approval"
+    skipIf:
+      labels: ["platform-approved"]
+    excludePaths: []
+
+evaluation:
+  externalDependencyMode: soft_fail
+  unknownArtifactMode: soft_fail
+  budgets:
+    totalTimeoutSeconds: 90
+    perComparatorTimeoutSeconds: 20
+    maxApiCalls: 40
+  maxFindings: 100
+  maxEvidenceSnippetsPerFinding: 3
+
+routing:
+  github:
+    checkRunName: "VertaAI Enforce Core"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: failure
+    postSummaryComment: true
+    annotateFiles: true
+
+spawnTrackB:
+  enabled: false
+  when: never
+  createRemediationCase: false
+  remediationDefaults:
+    targetSystems: []
+    approvalChannelRef: null
+    autoApplyThreshold: never
+  grouping:
+    byService: false
+    byDriftType: false
+    maxDriftsPerBatch: 10
+

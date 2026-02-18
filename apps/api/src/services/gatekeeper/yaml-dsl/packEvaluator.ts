@@ -1,7 +1,7 @@
 /**
  * Pack Evaluation Engine
  * Migration Plan v5.0 - Sprint 2
- * 
+ *
  * Evaluates pack rules against PR context
  */
 
@@ -10,12 +10,20 @@ import { comparatorRegistry } from './comparators/registry.js';
 import type { PackYAML } from './packValidator.js';
 import type { PRContext, ComparatorResult, FindingCode } from './comparators/types.js';
 import { ComparatorId } from './types.js';
+// PHASE 2.1: Import fact resolution
+import { resolveAllFacts } from './facts/resolver.js';
+import { factCatalog } from './facts/catalog.js';
+// PHASE 2.3: Import condition evaluation
+import { evaluateCondition, evaluateConditions } from './conditions/evaluator.js';
+import type { Condition, ConditionEvaluationResult } from './conditions/types.js';
 
 export interface Finding {
   ruleId: string;
   ruleName: string;
   obligationIndex: number;
-  comparatorResult: ComparatorResult;
+  // PHASE 2.3: Support both comparator and condition results
+  comparatorResult?: ComparatorResult;
+  conditionResult?: ConditionEvaluationResult;
   decisionOnFail: 'pass' | 'warn' | 'block';
   decisionOnUnknown?: 'pass' | 'warn' | 'block';
 }
@@ -28,6 +36,7 @@ export interface EngineFingerprint {
   evaluatorVersion: string;  // Git SHA or semantic version of evaluator code
   comparatorVersions: Record<string, string>;  // Version of each comparator used
   timestamp: string;  // ISO timestamp of evaluation
+  factCatalogVersion?: string;  // PHASE 2.1: Version of fact catalog used
 }
 
 export interface PackEvaluationResult {
@@ -72,12 +81,27 @@ export class PackEvaluator {
       startTime: Date.now(),
     };
 
-    // Initialize cache
-    context.cache = {
-      approvals: undefined,
-      checkRuns: undefined,
-      teamMemberships: new Map(),
-    };
+    // Initialize cache if not already present
+    if (!context.cache) {
+      context.cache = {
+        approvals: undefined,
+        checkRuns: undefined,
+        teamMemberships: new Map(),
+      };
+    }
+
+    // PHASE 2.1: Resolve all facts upfront and attach to context
+    // This allows comparators to access fact values without re-resolving
+    try {
+      const factResolution = resolveAllFacts(context);
+      context.facts = factResolution.facts;
+      context.factCatalogVersion = factResolution.catalogVersion;
+    } catch (error: any) {
+      console.warn(`[PackEvaluator] Failed to resolve facts:`, error.message);
+      // Continue evaluation even if fact resolution fails
+      context.facts = {};
+      context.factCatalogVersion = factCatalog.getVersion();
+    }
 
     // Evaluate each rule
     for (const rule of pack.rules) {
@@ -104,41 +128,120 @@ export class PackEvaluator {
       for (let i = 0; i < rule.obligations.length; i++) {
         const obligation = rule.obligations[i];
 
-        // CRITICAL FIX (Gap #1): Track comparator usage for fingerprint
-        usedComparators.add(obligation.comparatorId);
+        // PHASE 2.3: Support both comparator-based and condition-based obligations
+        const comparatorId = obligation.comparator || obligation.comparatorId;
+        const condition = obligation.condition;
+        const conditions = obligation.conditions;
+        // PHASE 2.4: Auto-generated condition from comparator (hybrid mode)
+        const autoCondition = (obligation as any)._autoCondition;
+
+        // Validate obligation has either comparator or condition
+        if (!comparatorId && !condition && !conditions) {
+          console.error(`[PackEvaluator] Obligation missing comparator/condition:`, obligation);
+          continue;
+        }
 
         try {
-          // CRITICAL FIX (Gap #5): Use filtered context for obligations too
-          const result = await comparatorRegistry.evaluate(
-            obligation.comparatorId,
-            effectiveContext,
-            obligation.params || {}
-          );
+          // COMPARATOR-BASED OBLIGATION (with optional auto-condition for hybrid mode)
+          if (comparatorId) {
+            // CRITICAL FIX (Gap #1): Track comparator usage for fingerprint
+            usedComparators.add(comparatorId);
 
-          findings.push({
-            ruleId: rule.id,
-            ruleName: rule.name,
-            obligationIndex: i,
-            comparatorResult: result,
-            decisionOnFail: obligation.decisionOnFail,
-            decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
-          });
+            // CRITICAL FIX (Gap #5): Use filtered context for obligations too
+            const result = await comparatorRegistry.evaluate(
+              comparatorId,
+              effectiveContext,
+              obligation.params || {}
+            );
+
+            // PHASE 2.4: If auto-condition exists, also evaluate it for comparison
+            let autoConditionResult: ConditionEvaluationResult | undefined;
+            if (autoCondition) {
+              const conditionContext = {
+                facts: effectiveContext.facts || {},
+                factCatalogVersion: effectiveContext.factCatalogVersion || factCatalog.getVersion(),
+              };
+              autoConditionResult = evaluateCondition(autoCondition as Condition, conditionContext);
+            }
+
+            findings.push({
+              ruleId: rule.id,
+              ruleName: rule.name,
+              obligationIndex: i,
+              comparatorResult: result,
+              // PHASE 2.4: Include auto-condition result for hybrid visibility
+              conditionResult: autoConditionResult,
+              decisionOnFail: obligation.decisionOnFail,
+              decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
+            });
+          }
+          // CONDITION-BASED OBLIGATION
+          else if (condition || conditions) {
+            // Build condition context from resolved facts
+            const conditionContext = {
+              facts: effectiveContext.facts || {},
+              factCatalogVersion: effectiveContext.factCatalogVersion || factCatalog.getVersion(),
+            };
+
+            // Evaluate single condition or multiple conditions
+            const conditionsToEvaluate = condition ? [condition] : (conditions || []);
+            const conditionResults = conditionsToEvaluate.map(c =>
+              evaluateCondition(c as Condition, conditionContext)
+            );
+
+            // Aggregate results: all conditions must be satisfied
+            const allSatisfied = conditionResults.every(r => r.satisfied);
+            const hasError = conditionResults.some(r => r.error);
+
+            findings.push({
+              ruleId: rule.id,
+              ruleName: rule.name,
+              obligationIndex: i,
+              conditionResult: {
+                satisfied: allSatisfied,
+                condition: conditionsToEvaluate.length === 1
+                  ? conditionsToEvaluate[0] as Condition
+                  : { operator: 'AND', conditions: conditionsToEvaluate } as Condition,
+                childResults: conditionResults.length > 1 ? conditionResults : undefined,
+                error: hasError ? conditionResults.find(r => r.error)?.error : undefined,
+              },
+              decisionOnFail: obligation.decisionOnFail,
+              decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
+            });
+          }
         } catch (error: any) {
           console.error(`[PackEvaluator] Error evaluating obligation:`, error);
-          findings.push({
-            ruleId: rule.id,
-            ruleName: rule.name,
-            obligationIndex: i,
-            comparatorResult: {
-              comparatorId: obligation.comparatorId,
-              status: 'unknown',
-              evidence: [],
-              reasonCode: 'UNKNOWN_ERROR' as FindingCode,
-              message: error.message,
-            },
-            decisionOnFail: obligation.decisionOnFail,
-            decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
-          });
+
+          // Create error finding based on obligation type
+          if (comparatorId) {
+            findings.push({
+              ruleId: rule.id,
+              ruleName: rule.name,
+              obligationIndex: i,
+              comparatorResult: {
+                comparatorId,
+                status: 'unknown',
+                evidence: [],
+                reasonCode: 'UNKNOWN_ERROR' as FindingCode,
+                message: error.message,
+              },
+              decisionOnFail: obligation.decisionOnFail,
+              decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
+            });
+          } else {
+            findings.push({
+              ruleId: rule.id,
+              ruleName: rule.name,
+              obligationIndex: i,
+              conditionResult: {
+                satisfied: false,
+                condition: (condition || conditions?.[0]) as Condition,
+                error: error.message,
+              },
+              decisionOnFail: obligation.decisionOnFail,
+              decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
+            });
+          }
         }
 
         // Check budget
@@ -156,7 +259,8 @@ export class PackEvaluator {
     const budgetExhausted = evaluationTimeMs > context.budgets.maxTotalMs;
 
     // CRITICAL FIX (Gap #1): Build engine fingerprint for determinism over time
-    const engineFingerprint = buildEngineFingerprint(usedComparators);
+    // PHASE 2.1: Include fact catalog version in fingerprint
+    const engineFingerprint = buildEngineFingerprint(usedComparators, context.factCatalogVersion);
 
     return {
       decision,
@@ -174,8 +278,12 @@ export class PackEvaluator {
 /**
  * CRITICAL FIX (Gap #1): Build engine fingerprint for reproducibility
  * Ensures same pack + same PR = same decision even if comparator code changes
+ * PHASE 2.1: Include fact catalog version for fact-based conditions
  */
-function buildEngineFingerprint(usedComparators: Set<ComparatorId>): EngineFingerprint {
+function buildEngineFingerprint(
+  usedComparators: Set<ComparatorId>,
+  factCatalogVersion?: string
+): EngineFingerprint {
   const comparatorVersions: Record<string, string> = {};
 
   for (const comparatorId of usedComparators) {
@@ -189,6 +297,7 @@ function buildEngineFingerprint(usedComparators: Set<ComparatorId>): EngineFinge
     evaluatorVersion: process.env.GIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || 'dev',
     comparatorVersions,
     timestamp: new Date().toISOString(),
+    factCatalogVersion,  // PHASE 2.1: Track fact catalog version
   };
 }
 
@@ -215,12 +324,18 @@ function shouldSkipRule(skipIf: any, context: PRContext): boolean {
  * CRITICAL FIX (Gap #4): Evaluate trigger conditions with composable semantics
  *
  * Trigger evaluation follows this order:
- * 1. Evaluate ALL required conditions (allChangedPaths) - must ALL pass
- * 2. Evaluate ANY conditions (anyChangedPaths, anyFileExtensions) - at least ONE must pass
+ * 1. Check if trigger.always is true (always triggers)
+ * 2. Evaluate ALL required conditions (allChangedPaths) - must ALL pass
+ * 3. Evaluate ANY conditions (anyChangedPaths, anyFileExtensions, anyChangedPathsRef) - at least ONE must pass
  *
  * This prevents early returns from breaking allOf/anyOf composition
  */
 function evaluateTrigger(trigger: any, context: PRContext): boolean {
+  // PHASE 1 FIX: Support trigger.always
+  if (trigger.always === true) {
+    return true;
+  }
+
   // Step 1: Evaluate ALL required conditions (AND preconditions)
   // If any allChangedPaths is defined, ALL patterns must match at least one file
   if (trigger.allChangedPaths && trigger.allChangedPaths.length > 0) {
@@ -247,6 +362,19 @@ function evaluateTrigger(trigger: any, context: PRContext): boolean {
     anyConditions.push(matches);
   }
 
+  // PHASE 1 FIX: Support anyChangedPathsRef (reference to workspace defaults paths)
+  if (trigger.anyChangedPathsRef && context.defaults?.paths) {
+    const referencedPaths = context.defaults.paths[trigger.anyChangedPathsRef];
+    if (referencedPaths && referencedPaths.length > 0) {
+      const matches = context.files.some(file =>
+        referencedPaths.some((pattern: string) =>
+          minimatch(file.filename, pattern, { dot: true })
+        )
+      );
+      anyConditions.push(matches);
+    }
+  }
+
   // anyFileExtensions (OR semantics)
   if (trigger.anyFileExtensions && trigger.anyFileExtensions.length > 0) {
     const matches = context.files.some(file =>
@@ -264,19 +392,34 @@ function evaluateTrigger(trigger: any, context: PRContext): boolean {
 /**
  * Compute final decision from findings
  * CRITICAL: BLOCK > WARN > PASS
+ * PHASE 2.3: Support both comparator-based and condition-based findings
  */
 function computeDecision(findings: Finding[]): 'pass' | 'warn' | 'block' {
   let hasWarn = false;
 
   for (const finding of findings) {
-    const { comparatorResult, decisionOnFail, decisionOnUnknown } = finding;
+    const { comparatorResult, conditionResult, decisionOnFail, decisionOnUnknown } = finding;
 
     let decision: 'pass' | 'warn' | 'block' = 'pass';
 
-    if (comparatorResult.status === 'fail') {
-      decision = decisionOnFail;
-    } else if (comparatorResult.status === 'unknown') {
-      decision = decisionOnUnknown || 'warn';
+    // COMPARATOR-BASED FINDING
+    if (comparatorResult) {
+      if (comparatorResult.status === 'fail') {
+        decision = decisionOnFail;
+      } else if (comparatorResult.status === 'unknown') {
+        decision = decisionOnUnknown || 'warn';
+      }
+    }
+    // CONDITION-BASED FINDING
+    else if (conditionResult) {
+      if (conditionResult.error) {
+        // Error in condition evaluation → treat as unknown
+        decision = decisionOnUnknown || 'warn';
+      } else if (!conditionResult.satisfied) {
+        // Condition not satisfied → treat as fail
+        decision = decisionOnFail;
+      }
+      // else: condition satisfied → decision remains 'pass'
     }
 
     if (decision === 'block') {

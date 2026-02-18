@@ -1,0 +1,210 @@
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.security-focused.v1
+  name: Security-Focused Pack
+  version: 1.0.0
+  description: Comprehensive security checks including secrets, hardcoded URLs, and security team approvals.
+  packMode: enforce
+  strictness: strict
+  owner: security-team
+  tags:
+    - security
+    - secrets
+    - compliance
+    - strict
+
+scope:
+  type: workspace
+  ref: null
+  branches:
+    include: ["main", "master", "release/*", "production"]
+    exclude: []
+  repos:
+    include: []
+    exclude: []
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: true
+    agentPatterns:
+      - "dependabot"
+      - "renovate"
+      - "github-actions"
+
+comparators:
+  library: verta.comparators.v1
+
+artifacts:
+  requiredTypes: []
+  definitions: []
+
+rules:
+  - id: block-secrets-strict
+    name: Block Secrets (Strict)
+    description: Strict secret detection with no exceptions
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: NO_SECRETS_IN_DIFF
+        params: {}
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: block  # Strict mode: block on unknown
+        message: "CRITICAL: Potential secret detected. Contact security team immediately."
+    skipIf:
+      labels: []  # No skip conditions in strict mode
+    excludePaths: []
+
+  - id: block-hardcoded-urls
+    name: Block Hardcoded URLs
+    description: Prevent hardcoded production URLs in code
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "**/*.ts"
+        - "**/*.js"
+        - "**/*.py"
+        - "**/*.java"
+        - "**/*.go"
+    obligations:
+      - comparator: NO_HARDCODED_URLS
+        params: {}
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Hardcoded URL detected. Use environment variables instead."
+    skipIf:
+      labels: []
+    excludePaths:
+      - "test/**"
+      - "**/*.test.*"
+      - "**/*.spec.*"
+
+  - id: require-security-approval
+    name: Require Security Team Approval
+    description: Security-sensitive changes require security team review
+    enabled: true
+    trigger:
+      anyOf:
+        - anyChangedPathsRef: sensitive-paths
+        - anyChangedPaths:
+            - "**/auth/**"
+            - "**/security/**"
+            - "**/crypto/**"
+            - "**/.env*"
+            - "**/secrets/**"
+    obligations:
+      - comparator: APPROVER_IN_ALLOWED_SET
+        params:
+          allowedApprovers: ["security-team"]
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: block
+        message: "Security-sensitive changes require security-team approval"
+    skipIf:
+      labels: []
+    excludePaths: []
+
+  - id: require-human-approvals
+    name: Require Multiple Human Approvals
+    description: Require at least 2 human approvals for production branches
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: MIN_APPROVALS
+        params:
+          minCount: 2
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Production branches require at least 2 approvals"
+      - comparator: HUMAN_APPROVAL_PRESENT
+        params: {}
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "At least one approval must be from a human (not bot)"
+    skipIf:
+      labels: ["emergency-hotfix"]
+    excludePaths: []
+
+  - id: no-commented-code
+    name: No Commented Code
+    description: Prevent large blocks of commented code
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "**/*.ts"
+        - "**/*.js"
+        - "**/*.py"
+        - "**/*.java"
+    obligations:
+      - comparator: NO_COMMENTED_CODE
+        params: {}
+        severity: low
+        decisionOnFail: warn
+        decisionOnUnknown: pass
+        message: "Large block of commented code detected. Remove or document why it's needed."
+    skipIf:
+      labels: ["allow-commented-code"]
+    excludePaths:
+      - "test/**"
+      - "examples/**"
+
+  - id: require-checkruns-passed
+    name: Require All CI Checks to Pass
+    description: All required CI checks must pass before merge
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: CHECKRUNS_PASSED
+        params:
+          requiredChecks: ["build", "test", "lint"]
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "All required CI checks must pass before merging"
+    skipIf:
+      labels: []
+    excludePaths: []
+
+evaluation:
+  externalDependencyMode: hard_fail  # Strict mode: fail if external deps down
+  unknownArtifactMode: hard_fail
+  budgets:
+    totalTimeoutSeconds: 120
+    perComparatorTimeoutSeconds: 30
+    maxApiCalls: 60
+  maxFindings: 200
+  maxEvidenceSnippetsPerFinding: 5
+
+routing:
+  github:
+    checkRunName: "VertaAI Security Gate"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: action_required  # Strict mode: require action
+    postSummaryComment: true
+    annotateFiles: true
+
+spawnTrackB:
+  enabled: true
+  when: on_block_only
+  createRemediationCase: true
+  remediationDefaults:
+    targetSystems:
+      - github_readme
+    approvalChannelRef: security-approvals
+    autoApplyThreshold: never  # Security changes always require manual approval
+  grouping:
+    byService: true
+    byDriftType: true
+    maxDriftsPerBatch: 5
+

@@ -72,6 +72,13 @@ export const WorkspaceDefaultsSchema = z.object({
   actorSignals: z.object({
     agentPatterns: z.array(z.string()).optional(),
   }).optional(),
+
+  // PHASE 2 FIX: Add routing configuration from spec
+  routing: z.object({
+    slack: z.object({
+      approvalsChannel: z.string().optional(),
+    }).optional(),
+  }).optional(),
 });
 
 export type WorkspaceDefaults = z.infer<typeof WorkspaceDefaultsSchema>;

@@ -77,9 +77,24 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
     if (yamlResult) {
       console.log(`[Gatekeeper] Using YAML pack (${yamlResult.packSource}): ${yamlResult.decision}`);
 
-      // CRITICAL FIX (Gap #3): Create GitHub Check with pack and full result
-      // This ensures conclusionMapping is read from pack configuration
-      if (yamlResult.pack && yamlResult.fullResult) {
+      // PHASE 3 FIX: Create GitHub Check with multi-pack support
+      // Prefer packResults (multi-pack) over pack/fullResult (single-pack)
+      if (yamlResult.packResults && yamlResult.packResults.length > 0) {
+        await createYAMLGatekeeperCheck({
+          owner: input.owner,
+          repo: input.repo,
+          headSha: input.headSha,
+          installationId: input.installationId,
+          prNumber: input.prNumber,
+          // Multi-pack fields
+          packResults: yamlResult.packResults,
+          globalDecision: yamlResult.decision,
+          // Backward compatibility fields
+          packResult: yamlResult.fullResult!,
+          pack: yamlResult.pack!,
+        });
+      } else if (yamlResult.pack && yamlResult.fullResult) {
+        // Fallback to single-pack mode (backward compatibility)
         await createYAMLGatekeeperCheck({
           owner: input.owner,
           repo: input.repo,
@@ -90,7 +105,7 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
           pack: yamlResult.pack,
         });
       } else {
-        console.warn('[Gatekeeper] YAML result missing pack or fullResult, skipping GitHub Check creation');
+        console.warn('[Gatekeeper] YAML result missing pack data, skipping GitHub Check creation');
       }
 
       // Map YAML decision to legacy GatekeeperResult format

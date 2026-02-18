@@ -60,14 +60,88 @@ export interface PackYAML {
   spawnTrackB?: SpawnTrackBConfig;
 }
 
+// PHASE 1.2: Pack status enum
+export enum PackStatus {
+  DRAFT = 'DRAFT',
+  IN_REVIEW = 'IN_REVIEW',
+  ACTIVE = 'ACTIVE',
+  DEPRECATED = 'DEPRECATED',
+  ARCHIVED = 'ARCHIVED'
+}
+
+// PHASE 1.2: Pack owner interface
+export interface PackOwner {
+  team?: string;
+  user?: string;
+}
+
+// PHASE 1.3: Merge strategy enum
+export type MergeStrategy = 'MOST_RESTRICTIVE' | 'HIGHEST_PRIORITY' | 'EXPLICIT';
+
+// PHASE 1.4: Pack-level defaults interface
+export interface PackDefaults {
+  // Timeout defaults
+  timeouts?: {
+    comparatorTimeout?: number;      // Default timeout per comparator (ms)
+    totalEvaluationTimeout?: number; // Default total evaluation timeout (ms)
+  };
+
+  // Severity defaults
+  severity?: {
+    defaultLevel?: 'low' | 'medium' | 'high' | 'critical';
+    escalationThreshold?: number;
+  };
+
+  // Approval defaults
+  approvals?: {
+    minCount?: number;
+    requiredTeams?: string[];
+    requiredUsers?: string[];
+  };
+
+  // Obligation defaults
+  obligations?: {
+    defaultDecisionOnFail?: 'block' | 'warn' | 'pass';
+    defaultSeverity?: 'low' | 'medium' | 'high' | 'critical';
+  };
+
+  // Trigger defaults
+  triggers?: {
+    defaultPrEvents?: ('opened' | 'synchronize' | 'reopened' | 'labeled')[];
+  };
+}
+
 export interface PackMetadata {
   id: string;
   name: string;
   version: string;  // Semver
   description?: string;
   tags?: string[];
-  packMode?: 'enforce' | 'warn_only' | 'audit_only';
-  strictness?: 'strict' | 'lenient';
+  // PHASE 1 FIX: Align enum values with spec
+  packMode?: 'observe' | 'enforce';
+  strictness?: 'permissive' | 'balanced' | 'strict';
+  // PHASE 1 FIX: Add missing fields from spec
+  owner?: string;
+  defaultsRef?: string;
+
+  // PHASE 1.2: Enhanced metadata fields
+  status?: PackStatus;
+  owners?: PackOwner[];
+  labels?: Record<string, string>;
+  audit?: {
+    createdBy?: string;
+    createdAt?: string;
+    updatedAt?: string;
+    updatedBy?: string;
+  };
+  notes?: string;
+
+  // PHASE 1.3: Scope precedence
+  scopePriority?: number;        // 0-100, higher = higher priority (default: 50)
+  scopeMergeStrategy?: MergeStrategy;  // How to merge with other packs (default: MOST_RESTRICTIVE)
+
+  // PHASE 1.4: Pack-level defaults
+  defaults?: PackDefaults;       // Default values inherited by all rules in this pack
 }
 
 export interface PackScope {
@@ -77,8 +151,19 @@ export interface PackScope {
     include?: string[];  // Glob patterns
     exclude?: string[];
   };
-  prEvents?: ('opened' | 'synchronize' | 'reopened')[];
-  actorSignals?: string[];  // e.g., ['agent-authored', 'bot']
+  // PHASE 1 FIX: Add repos configuration from spec
+  repos?: {
+    include?: string[];
+    exclude?: string[];
+  };
+  // PHASE 1 FIX: Add labeled event support
+  prEvents?: ('opened' | 'synchronize' | 'reopened' | 'labeled')[];
+  // PHASE 1 FIX: Change actorSignals to object structure per spec
+  actorSignals?: {
+    detectAgentAuthorship?: boolean;
+    agentPatterns?: string[];
+    botUsers?: string[];
+  };
 }
 
 export interface ArtifactDefinitions {
@@ -87,9 +172,11 @@ export interface ArtifactDefinitions {
 }
 
 export interface ArtifactDefinition {
-  type: string;
+  // PHASE 1 FIX: Rename 'type' to 'kind' per spec
+  kind: 'openapi' | 'readme' | 'runbook' | 'backstage' | 'dashboard' | 'terraform' | 'custom';
   path?: string;
-  glob?: string;
+  // PHASE 1 FIX: Rename 'glob' to 'matchAny' per spec
+  matchAny?: string[];
   required?: boolean;
   validators?: string[];
 }
@@ -98,9 +185,12 @@ export interface Rule {
   id: string;
   name: string;
   description?: string;
+  // PHASE 1 FIX: Add enabled field from spec
+  enabled?: boolean;
   trigger: Trigger;
   obligations: Obligation[];
   skipIf?: SkipCondition;
+  excludePaths?: string[];
 }
 
 export interface Trigger {
@@ -109,14 +199,21 @@ export interface Trigger {
   anyFileExtensions?: string[];
   allOf?: Trigger[];
   anyOf?: Trigger[];
+  // PHASE 1 FIX: Add always and anyChangedPathsRef from spec
+  always?: boolean;
+  anyChangedPathsRef?: string;  // Reference to workspace defaults paths
 }
 
 export interface Obligation {
-  comparatorId: ComparatorId;
+  // PHASE 1 FIX: Support both 'comparator' (spec) and 'comparatorId' (legacy)
+  comparator?: ComparatorId;
+  comparatorId?: ComparatorId;
   params?: Record<string, any>;
   decisionOnFail: 'pass' | 'warn' | 'block';
   decisionOnUnknown?: 'pass' | 'warn' | 'block';
   message?: string;
+  // PHASE 1 FIX: Add severity field from spec
+  severity?: 'low' | 'medium' | 'high' | 'critical';
 }
 
 export interface SkipCondition {
@@ -126,13 +223,17 @@ export interface SkipCondition {
 }
 
 export interface EvaluationConfig {
-  externalDependencyMode?: 'fail_open' | 'fail_closed';
+  // PHASE 1 FIX: Align enum values with spec (soft_fail/hard_fail)
+  externalDependencyMode?: 'soft_fail' | 'hard_fail';
   budgets?: {
     maxTotalMs?: number;
     perComparatorTimeoutMs?: number;
     maxGitHubApiCalls?: number;
   };
   unknownArtifactMode?: 'warn' | 'block' | 'pass';
+  // PHASE 2 FIX: Add maxFindings and maxEvidenceSnippetsPerFinding from spec
+  maxFindings?: number;
+  maxEvidenceSnippetsPerFinding?: number;
 }
 
 export interface RoutingConfig {
@@ -143,6 +244,9 @@ export interface RoutingConfig {
       warn: 'success' | 'neutral' | 'action_required';
       block: 'failure' | 'action_required';
     };
+    // PHASE 2 FIX: Add postSummaryComment and annotateFiles from spec
+    postSummaryComment?: boolean;
+    annotateFiles?: boolean;
   };
 }
 
@@ -152,6 +256,9 @@ export interface SpawnTrackBConfig {
   createRemediationCase?: boolean;
   remediationDefaults?: {
     priority?: 'low' | 'medium' | 'high' | 'critical';
+    // PHASE 2 FIX: Add targetSystems and approvalChannelRef from spec
+    targetSystems?: string[];
+    approvalChannelRef?: string;
   };
   grouping?: {
     strategy: 'by-drift-type-and-service' | 'by-rule' | 'by-finding-code';

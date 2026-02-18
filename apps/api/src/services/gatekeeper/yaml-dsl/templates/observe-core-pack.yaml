@@ -1,0 +1,149 @@
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.observe-core.v1
+  name: Observe Core Pack
+  version: 1.0.0
+  description: Monitor-only mode for initial rollout. Observes key signals without blocking PRs.
+  packMode: observe
+  strictness: permissive
+  owner: platform-team
+  tags:
+    - observe
+    - monitor
+    - rollout
+    - starter
+
+scope:
+  type: workspace
+  ref: null
+  branches:
+    include: ["main", "master", "develop"]
+    exclude: []
+  repos:
+    include: []
+    exclude: []
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: true
+
+comparators:
+  library: verta.comparators.v1
+
+artifacts:
+  requiredTypes: []
+  definitions: []
+
+rules:
+  - id: observe-secrets
+    name: Observe Secret Patterns
+    description: Monitor for potential secrets in diff (no blocking)
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: NO_SECRETS_IN_DIFF
+        params: {}
+        severity: high
+        decisionOnFail: pass  # Observe only - never block
+        decisionOnUnknown: pass
+        message: "Potential secret detected (observation only)"
+    skipIf:
+      labels: []
+    excludePaths: []
+
+  - id: observe-approvals
+    name: Observe Approval Patterns
+    description: Monitor approval behavior without enforcement
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: MIN_APPROVALS
+        params:
+          minCount: 1
+        severity: medium
+        decisionOnFail: pass  # Observe only
+        decisionOnUnknown: pass
+        message: "PR has fewer than 1 approval (observation only)"
+    skipIf:
+      labels: ["skip-approval"]
+    excludePaths: []
+
+  - id: observe-pr-template
+    name: Observe PR Template Usage
+    description: Monitor PR template field completion
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: PR_TEMPLATE_FIELD_PRESENT
+        params:
+          fieldName: "Testing Done"
+        severity: low
+        decisionOnFail: pass  # Observe only
+        decisionOnUnknown: pass
+        message: "PR template field 'Testing Done' not found (observation only)"
+    skipIf:
+      labels: []
+    excludePaths: []
+
+  - id: observe-api-changes
+    name: Observe API Contract Changes
+    description: Monitor OpenAPI spec updates
+    enabled: true
+    trigger:
+      anyChangedPaths:
+        - "**/*.openapi.yaml"
+        - "**/*.openapi.json"
+        - "**/openapi.yaml"
+        - "**/openapi.json"
+    obligations:
+      - comparator: OPENAPI_VALID
+        params: {}
+        severity: medium
+        decisionOnFail: pass  # Observe only
+        decisionOnUnknown: pass
+        message: "OpenAPI spec validation failed (observation only)"
+    skipIf:
+      labels: []
+    excludePaths:
+      - "test/**"
+      - "examples/**"
+
+evaluation:
+  externalDependencyMode: soft_fail
+  unknownArtifactMode: soft_fail
+  budgets:
+    totalTimeoutSeconds: 60
+    perComparatorTimeoutSeconds: 15
+    maxApiCalls: 30
+  maxFindings: 50
+  maxEvidenceSnippetsPerFinding: 2
+
+routing:
+  github:
+    checkRunName: "VertaAI Observe Core"
+    conclusionMapping:
+      pass: success
+      warn: success  # Never fail in observe mode
+      block: success  # Never fail in observe mode
+    postSummaryComment: true
+    annotateFiles: false
+
+spawnTrackB:
+  enabled: false
+  when: never
+  createRemediationCase: false
+  remediationDefaults:
+    targetSystems: []
+    approvalChannelRef: null
+    autoApplyThreshold: never
+  grouping:
+    byService: false
+    byDriftType: false
+    maxDriftsPerBatch: 10
+
