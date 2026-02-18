@@ -48,7 +48,7 @@ export const PackYAMLSchema = z.object({
     id: z.string(),
     name: z.string(),
     description: z.string().optional(),
-    
+
     trigger: z.object({
       anyChangedPaths: z.array(z.string()).optional(),
       allChangedPaths: z.array(z.string()).optional(),
@@ -70,6 +70,9 @@ export const PackYAMLSchema = z.object({
       labels: z.array(z.string()).optional(),
       prBodyContains: z.array(z.string()).optional(),
     }).optional(),
+
+    // CRITICAL FIX (Gap #5): excludePaths to filter files before trigger evaluation
+    excludePaths: z.array(z.string()).optional(),
   })),
 
   evaluation: z.object({

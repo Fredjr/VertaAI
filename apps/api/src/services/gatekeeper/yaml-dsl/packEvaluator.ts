@@ -9,6 +9,7 @@ import { minimatch } from 'minimatch';
 import { comparatorRegistry } from './comparators/registry.js';
 import type { PackYAML } from './packValidator.js';
 import type { PRContext, ComparatorResult, FindingCode } from './comparators/types.js';
+import { ComparatorId } from './types.js';
 
 export interface Finding {
   ruleId: string;
@@ -19,6 +20,16 @@ export interface Finding {
   decisionOnUnknown?: 'pass' | 'warn' | 'block';
 }
 
+/**
+ * CRITICAL: Engine fingerprint for determinism over time (Gap #1 - Second Audit)
+ * Ensures same pack + same PR = same decision even if comparator code changes
+ */
+export interface EngineFingerprint {
+  evaluatorVersion: string;  // Git SHA or semantic version of evaluator code
+  comparatorVersions: Record<string, string>;  // Version of each comparator used
+  timestamp: string;  // ISO timestamp of evaluation
+}
+
 export interface PackEvaluationResult {
   decision: 'pass' | 'warn' | 'block';
   findings: Finding[];
@@ -27,6 +38,9 @@ export interface PackEvaluationResult {
   packSource: string;
   evaluationTimeMs: number;
   budgetExhausted: boolean;
+
+  // CRITICAL FIX (Gap #1): Engine fingerprint for reproducibility
+  engineFingerprint: EngineFingerprint;
 }
 
 export class PackEvaluator {
@@ -39,6 +53,9 @@ export class PackEvaluator {
     const startTime = Date.now();
     const findings: Finding[] = [];
     const triggeredRules: string[] = [];
+
+    // CRITICAL FIX (Gap #1): Track which comparators are used for fingerprint
+    const usedComparators = new Set<ComparatorId>();
 
     // Initialize budgets
     const budgets = pack.evaluation?.budgets || {
@@ -69,21 +86,32 @@ export class PackEvaluator {
         continue;
       }
 
-      // Evaluate trigger
-      if (!evaluateTrigger(rule.trigger, context)) {
+      // CRITICAL FIX (Gap #5): Apply excludePaths BEFORE trigger evaluation
+      // This prevents rules from triggering on files they should ignore
+      let effectiveContext = context;
+      if (rule.excludePaths && rule.excludePaths.length > 0) {
+        effectiveContext = filterExcludedFiles(context, rule.excludePaths);
+      }
+
+      // Evaluate trigger (using filtered context)
+      if (!evaluateTrigger(rule.trigger, effectiveContext)) {
         continue;
       }
 
       triggeredRules.push(rule.id);
 
-      // Evaluate obligations
+      // Evaluate obligations (using same filtered context)
       for (let i = 0; i < rule.obligations.length; i++) {
         const obligation = rule.obligations[i];
 
+        // CRITICAL FIX (Gap #1): Track comparator usage for fingerprint
+        usedComparators.add(obligation.comparatorId);
+
         try {
+          // CRITICAL FIX (Gap #5): Use filtered context for obligations too
           const result = await comparatorRegistry.evaluate(
             obligation.comparatorId,
-            context,
+            effectiveContext,
             obligation.params || {}
           );
 
@@ -127,6 +155,9 @@ export class PackEvaluator {
     const evaluationTimeMs = Date.now() - startTime;
     const budgetExhausted = evaluationTimeMs > context.budgets.maxTotalMs;
 
+    // CRITICAL FIX (Gap #1): Build engine fingerprint for determinism over time
+    const engineFingerprint = buildEngineFingerprint(usedComparators);
+
     return {
       decision,
       findings,
@@ -135,8 +166,30 @@ export class PackEvaluator {
       packSource,
       evaluationTimeMs,
       budgetExhausted,
+      engineFingerprint,
     };
   }
+}
+
+/**
+ * CRITICAL FIX (Gap #1): Build engine fingerprint for reproducibility
+ * Ensures same pack + same PR = same decision even if comparator code changes
+ */
+function buildEngineFingerprint(usedComparators: Set<ComparatorId>): EngineFingerprint {
+  const comparatorVersions: Record<string, string> = {};
+
+  for (const comparatorId of usedComparators) {
+    const version = comparatorRegistry.getVersion(comparatorId);
+    if (version) {
+      comparatorVersions[comparatorId] = version;
+    }
+  }
+
+  return {
+    evaluatorVersion: process.env.GIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || 'dev',
+    comparatorVersions,
+    timestamp: new Date().toISOString(),
+  };
 }
 
 /**
@@ -159,9 +212,31 @@ function shouldSkipRule(skipIf: any, context: PRContext): boolean {
 }
 
 /**
- * Evaluate trigger conditions
+ * CRITICAL FIX (Gap #4): Evaluate trigger conditions with composable semantics
+ *
+ * Trigger evaluation follows this order:
+ * 1. Evaluate ALL required conditions (allChangedPaths) - must ALL pass
+ * 2. Evaluate ANY conditions (anyChangedPaths, anyFileExtensions) - at least ONE must pass
+ *
+ * This prevents early returns from breaking allOf/anyOf composition
  */
 function evaluateTrigger(trigger: any, context: PRContext): boolean {
+  // Step 1: Evaluate ALL required conditions (AND preconditions)
+  // If any allChangedPaths is defined, ALL patterns must match at least one file
+  if (trigger.allChangedPaths && trigger.allChangedPaths.length > 0) {
+    const allMatch = trigger.allChangedPaths.every((pattern: string) =>
+      context.files.some(file => minimatch(file.filename, pattern, { dot: true }))
+    );
+    if (!allMatch) {
+      // Precondition failed - rule doesn't trigger
+      return false;
+    }
+  }
+
+  // Step 2: Evaluate ANY conditions (OR semantics)
+  // Collect all OR conditions
+  const anyConditions: boolean[] = [];
+
   // anyChangedPaths (OR semantics)
   if (trigger.anyChangedPaths && trigger.anyChangedPaths.length > 0) {
     const matches = context.files.some(file =>
@@ -169,26 +244,21 @@ function evaluateTrigger(trigger: any, context: PRContext): boolean {
         minimatch(file.filename, pattern, { dot: true })
       )
     );
-    if (matches) return true;
+    anyConditions.push(matches);
   }
 
-  // allChangedPaths (AND semantics)
-  if (trigger.allChangedPaths && trigger.allChangedPaths.length > 0) {
-    const allMatch = trigger.allChangedPaths.every((pattern: string) =>
-      context.files.some(file => minimatch(file.filename, pattern, { dot: true }))
-    );
-    if (allMatch) return true;
-  }
-
-  // anyFileExtensions
+  // anyFileExtensions (OR semantics)
   if (trigger.anyFileExtensions && trigger.anyFileExtensions.length > 0) {
     const matches = context.files.some(file =>
       trigger.anyFileExtensions.some((ext: string) => file.filename.endsWith(ext))
     );
-    if (matches) return true;
+    anyConditions.push(matches);
   }
 
-  return false;
+  // Step 3: Final decision
+  // If no ANY conditions defined, trigger passes (all preconditions passed)
+  // If ANY conditions defined, at least one must be true
+  return anyConditions.length > 0 ? anyConditions.some(c => c) : true;
 }
 
 /**
@@ -218,5 +288,18 @@ function computeDecision(findings: Finding[]): 'pass' | 'warn' | 'block' {
   }
 
   return hasWarn ? 'warn' : 'pass';
+}
+
+/**
+ * CRITICAL FIX (Gap #5): Filter excluded files from context
+ * Prevents rules from triggering on files they should ignore
+ */
+function filterExcludedFiles(context: PRContext, excludePaths: string[]): PRContext {
+  return {
+    ...context,
+    files: context.files.filter(file =>
+      !excludePaths.some(glob => minimatch(file.filename, glob, { dot: true }))
+    ),
+  };
 }
 

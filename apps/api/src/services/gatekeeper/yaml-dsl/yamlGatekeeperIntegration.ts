@@ -7,11 +7,12 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { selectApplicablePack } from './packSelector.js';
-import { PackEvaluator } from './packEvaluator.js';
+import { PackEvaluator, type PackEvaluationResult } from './packEvaluator.js';
 import { loadWorkspaceDefaults } from './workspaceDefaultsLoader.js';
 import { BudgetedGitHubClient } from './comparators/types.js';
 import type { PRContext } from './comparators/types.js';
 import type { GatekeeperInput } from '../index.js';
+import type { PackYAML } from './packValidator.js';
 
 export interface YAMLGatekeeperResult {
   decision: 'pass' | 'warn' | 'block';
@@ -21,6 +22,10 @@ export interface YAMLGatekeeperResult {
   findings: any[];
   triggeredRules: string[];
   evaluationTimeMs: number;
+
+  // CRITICAL FIX (Gap #3): Include pack and full result for GitHub Check creation
+  pack?: PackYAML;
+  fullResult?: PackEvaluationResult;
 }
 
 /**
@@ -128,6 +133,10 @@ export async function runYAMLGatekeeper(
     findings: result.findings,
     triggeredRules: result.triggeredRules,
     evaluationTimeMs: Date.now() - startTime,
+
+    // CRITICAL FIX (Gap #3): Include pack and full result for GitHub Check creation
+    pack: selectedPack.pack,
+    fullResult: result,
   };
 }
 

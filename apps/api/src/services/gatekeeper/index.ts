@@ -77,23 +77,21 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
     if (yamlResult) {
       console.log(`[Gatekeeper] Using YAML pack (${yamlResult.packSource}): ${yamlResult.decision}`);
 
-      // Create GitHub Check with YAML results
-      await createYAMLGatekeeperCheck({
-        owner: input.owner,
-        repo: input.repo,
-        headSha: input.headSha,
-        installationId: input.installationId,
-        prNumber: input.prNumber,
-        packResult: {
-          decision: yamlResult.decision,
-          findings: yamlResult.findings,
-          triggeredRules: yamlResult.triggeredRules,
-          packHash: yamlResult.packHash!,
-          packSource: yamlResult.packSource!,
-          evaluationTimeMs: yamlResult.evaluationTimeMs,
-          budgetExhausted: false,
-        },
-      });
+      // CRITICAL FIX (Gap #3): Create GitHub Check with pack and full result
+      // This ensures conclusionMapping is read from pack configuration
+      if (yamlResult.pack && yamlResult.fullResult) {
+        await createYAMLGatekeeperCheck({
+          owner: input.owner,
+          repo: input.repo,
+          headSha: input.headSha,
+          installationId: input.installationId,
+          prNumber: input.prNumber,
+          packResult: yamlResult.fullResult,
+          pack: yamlResult.pack,
+        });
+      } else {
+        console.warn('[Gatekeeper] YAML result missing pack or fullResult, skipping GitHub Check creation');
+      }
 
       // Map YAML decision to legacy GatekeeperResult format
       const riskTierMap = {

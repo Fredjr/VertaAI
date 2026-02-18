@@ -40,14 +40,38 @@ export class ComparatorRegistry {
       };
     }
 
+    // CRITICAL FIX (Gap #2): Create fresh AbortController per comparator
+    // Prevents cascading aborts after first timeout
+    const comparatorAbortController = new AbortController();
+    const scopedContext: PRContext = {
+      ...context,
+      abortController: comparatorAbortController,
+    };
+
+    let timeoutId: NodeJS.Timeout | null = null;
+
     try {
       // Apply per-comparator timeout
       const timeoutMs = context.budgets.perComparatorTimeoutMs;
+
+      const timeoutPromise = new Promise<ComparatorResult>((resolve) => {
+        timeoutId = setTimeout(() => {
+          // Abort only this comparator's work
+          comparatorAbortController.abort();
+
+          resolve({
+            comparatorId,
+            status: 'unknown',
+            evidence: [],
+            reasonCode: FindingCode.TIMEOUT_EXCEEDED,
+            message: `Comparator timed out after ${timeoutMs}ms`,
+          });
+        }, timeoutMs);
+      });
+
       const result = await Promise.race([
-        comparator.evaluate(context, params),
-        new Promise<ComparatorResult>((_, reject) =>
-          setTimeout(() => reject(new Error('TIMEOUT_EXCEEDED')), timeoutMs)
-        ),
+        comparator.evaluate(scopedContext, params),
+        timeoutPromise,
       ]);
 
       return result;
@@ -95,6 +119,11 @@ export class ComparatorRegistry {
         reasonCode: FindingCode.UNKNOWN_ERROR,
         message: `Error: ${error.message}`,
       };
+    } finally {
+      // CRITICAL FIX (Gap #2): Clear timeout to prevent timer leak
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
   }
 

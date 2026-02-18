@@ -6,6 +6,7 @@
  */
 
 import type { PackEvaluationResult } from './packEvaluator.js';
+import type { PackYAML } from './packValidator.js';
 import { getInstallationOctokit } from '../../../lib/github.js';
 
 export interface CheckCreationInput {
@@ -15,6 +16,7 @@ export interface CheckCreationInput {
   installationId: number;
   prNumber: number;
   packResult: PackEvaluationResult;
+  pack: PackYAML;  // CRITICAL FIX (Gap #3): Need pack to read conclusionMapping
 }
 
 /**
@@ -23,14 +25,15 @@ export interface CheckCreationInput {
 export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Promise<void> {
   const octokit = await getInstallationOctokit(input.installationId);
 
-  // Map decision to GitHub Check conclusion
-  const conclusionMap = {
+  // CRITICAL FIX (Gap #3): Use pack's conclusionMapping configuration
+  // This determines branch protection behavior for WARN decisions
+  const conclusionMapping = input.pack.routing?.github?.conclusionMapping || {
     pass: 'success' as const,
-    warn: 'neutral' as const,
+    warn: 'success' as const,  // Default: WARN doesn't block merges
     block: 'failure' as const,
   };
 
-  const conclusion = conclusionMap[input.packResult.decision];
+  const conclusion = conclusionMapping[input.packResult.decision];
 
   // Build check output
   const title = buildCheckTitle(input.packResult);
@@ -72,7 +75,7 @@ function buildCheckTitle(result: PackEvaluationResult): string {
 }
 
 function buildCheckSummary(result: PackEvaluationResult): string {
-  const { decision, findings, triggeredRules, packHash, packSource, evaluationTimeMs } = result;
+  const { decision, findings, triggeredRules, packHash, packSource, evaluationTimeMs, engineFingerprint } = result;
 
   const lines = [
     `**Decision:** ${decision.toUpperCase()}`,
@@ -81,6 +84,10 @@ function buildCheckSummary(result: PackEvaluationResult): string {
     `**Rules Triggered:** ${triggeredRules.length}`,
     `**Findings:** ${findings.length}`,
     `**Evaluation Time:** ${evaluationTimeMs}ms`,
+    '',
+    // CRITICAL FIX (Gap #1): Include engine fingerprint for audit trail
+    `**Engine Version:** \`${engineFingerprint.evaluatorVersion}\``,
+    `**Comparators Used:** ${Object.keys(engineFingerprint.comparatorVersions).length}`,
   ];
 
   return lines.join('\n');
