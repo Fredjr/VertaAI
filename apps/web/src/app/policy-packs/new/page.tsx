@@ -8,7 +8,7 @@ import Link from 'next/link';
 
 // Import form sections
 import OverviewForm from './sections/OverviewForm';
-import TrackAForm from './sections/TrackAForm';
+import TrackAFormYAML from './sections/TrackAFormYAML';
 import TrackBForm from './sections/TrackBForm';
 import ApprovalTiersForm from './sections/ApprovalTiersForm';
 
@@ -25,6 +25,8 @@ interface PolicyPackFormData {
   // Track A
   trackAEnabled: boolean;
   trackAConfig: any;
+  trackAConfigYamlDraft?: string;
+  workspaceId?: string;
 
   // Track B
   trackBEnabled: boolean;
@@ -54,6 +56,8 @@ function NewPolicyPackContent() {
     pathGlobs: [],
     trackAEnabled: false,
     trackAConfig: {},
+    trackAConfigYamlDraft: '',
+    workspaceId: workspaceId,
     trackBEnabled: false,
     trackBConfig: {},
     approvalTiers: {},
@@ -62,7 +66,7 @@ function NewPolicyPackContent() {
 
   const steps = [
     { id: 1, name: 'Overview', component: OverviewForm },
-    { id: 2, name: 'Track A: Contract Integrity', component: TrackAForm },
+    { id: 2, name: 'Track A: YAML Policy Pack', component: TrackAFormYAML },
     { id: 3, name: 'Track B: Drift Remediation', component: TrackBForm },
     { id: 4, name: 'Approval & Routing', component: ApprovalTiersForm },
   ];

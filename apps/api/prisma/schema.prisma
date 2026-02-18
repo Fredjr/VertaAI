@@ -44,6 +44,10 @@ model Workspace {
   // JSON structure: { enabledDriftTypes: string[], enabledInputSources: string[], enabledOutputTargets: string[], outputTargetPriority: string[] }
   workflowPreferences Json @default("{}") @map("workflow_preferences")
 
+  // YAML DSL Migration - Workspace Defaults (Sprint 3)
+  // Stores workspace-level configuration (approval semantics, artifact registry, etc.)
+  workspaceDefaultsYaml String? @db.Text @map("workspace_defaults_yaml")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -565,14 +569,29 @@ model WorkspacePolicyPack {
   scopeType String   // 'workspace', 'service', 'repo'
   scopeRef  String?  @map("scope_ref") // service ID or repo full name
 
-  // Scope filters
+  // Scope filters (DEPRECATED - use YAML scope.branches instead)
   repoAllowlist String[] @default([]) @map("repo_allowlist")  // ['owner/repo1', 'owner/repo2']
   pathGlobs     String[] @default([]) @map("path_globs")      // ['openapi.yaml', 'src/**/*.ts']
 
-  // Track A: Contract Integrity Gate
-  trackAEnabled Boolean @default(false) @map("track_a_enabled")
-  trackAConfig  Json @default("{}") @map("track_a_config")
-  // Structure: {
+  // Track A: YAML/DSL-Based Policy Pack (NEW - Migration Plan v5.0)
+  trackAEnabled             Boolean  @default(false) @map("track_a_enabled")
+  trackAConfigYamlDraft     String?  @db.Text @map("track_a_config_yaml_draft")     // Editable draft YAML
+  trackAConfigYamlPublished String?  @db.Text @map("track_a_config_yaml_published") // Published YAML (used by gatekeeper)
+  trackAPackHashPublished   String?  @map("track_a_pack_hash_published")            // Full SHA-256 hash (64 chars)
+  packStatus                String   @default("draft") @map("pack_status")          // 'draft' | 'published'
+  publishedAt               DateTime? @map("published_at")
+  publishedBy               String?  @map("published_by")
+
+  // CRITICAL: Denormalized metadata for uniqueness validation + selection (Gap #2)
+  // Extracted from YAML at publish time to enable DB-level queries without parsing
+  // NULL for drafts, required for published packs
+  packMetadataId      String? @map("pack_metadata_id")       // From pack.metadata.id
+  packMetadataVersion String? @map("pack_metadata_version")  // From pack.metadata.version
+  packMetadataName    String? @map("pack_metadata_name")     // From pack.metadata.name (for display)
+
+  // Track A (LEGACY): JSON-based config - DEPRECATED, use YAML fields above
+  trackAConfig  Json? @map("track_a_config")
+  // DEPRECATED Structure: {
   //   surfaces: ['api', 'infra', 'docs'],
   //   contracts: [{ contractId, name, description, scope, artifacts, invariants, enforcement, routing, writeback }],
   //   dictionaries: { serviceAliases: {}, glossary: {} },
@@ -637,6 +656,12 @@ model WorkspacePolicyPack {
   @@index([workspaceId])
   @@index([status])
   @@index([workspaceId, status])
+  @@index([scopeType, scopeRef])
+  @@index([packMetadataId, packMetadataVersion])  // For uniqueness checks
+  @@index([packStatus])  // For published pack queries
+  @@unique([workspaceId, scopeType, scopeRef, name])
+  // Prevent duplicate pack versions at same scope
+  @@unique([workspaceId, scopeType, scopeRef, packMetadataId, packMetadataVersion])
   @@map("workspace_policy_packs")
 }
 

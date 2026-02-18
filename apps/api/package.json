@@ -17,6 +17,8 @@
     "db:studio": "prisma studio",
     "migrate:contract-packs": "tsx src/scripts/migrate-contract-packs.ts",
     "migrate:drift-plans": "tsx src/scripts/migrate-drift-plans.ts",
+    "migrate:gatekeeper-to-yaml": "tsx src/scripts/migrate-legacy-gatekeeper-to-yaml.ts",
+    "setup:e2e-workspace": "tsx src/scripts/create-test-workspace-and-pack.ts",
     "rollback:policy-packs": "tsx src/scripts/rollback-policy-packs.ts"
   },
   "dependencies": {
@@ -35,8 +37,11 @@
     "express": "^4.19.2",
     "ioredis": "^5.4.1",
     "js-yaml": "^4.1.1",
+    "minimatch": "^10.2.1",
     "octokit": "^4.1.4",
+    "semver": "^7.7.4",
     "uuid": "^13.0.0",
+    "yaml": "^2.8.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -46,6 +51,7 @@
     "@types/express": "^4.17.21",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.12.0",
+    "@types/semver": "^7.7.1",
     "@types/supertest": "^6.0.3",
     "@types/uuid": "^11.0.0",
     "prisma": "^5.14.0",

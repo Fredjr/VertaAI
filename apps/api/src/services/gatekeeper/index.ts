@@ -19,6 +19,9 @@ import { computeImpactAssessment } from '../evidence/impactAssessment.js';
 import { joinSignals } from '../correlation/signalJoiner.js';
 import { getInstallationOctokit } from '../../lib/github.js';
 import type { SourceEvidence, TargetEvidence } from '../evidence/types.js';
+import { prisma } from '../../lib/db.js';
+import { runYAMLGatekeeper } from './yaml-dsl/yamlGatekeeperIntegration.js';
+import { createYAMLGatekeeperCheck } from './yaml-dsl/githubCheckCreator.js';
 
 export interface GatekeeperInput {
   // PR metadata
@@ -65,6 +68,58 @@ export interface GatekeeperResult {
 export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperResult> {
   const analysisStartTime = new Date();
   console.log(`[Gatekeeper] Running gatekeeper for ${input.owner}/${input.repo}#${input.prNumber}`);
+
+  // YAML DSL Migration: Try YAML-driven gatekeeper first
+  try {
+    const octokit = await getInstallationOctokit(input.installationId);
+    const yamlResult = await runYAMLGatekeeper(prisma, input, octokit);
+
+    if (yamlResult) {
+      console.log(`[Gatekeeper] Using YAML pack (${yamlResult.packSource}): ${yamlResult.decision}`);
+
+      // Create GitHub Check with YAML results
+      await createYAMLGatekeeperCheck({
+        owner: input.owner,
+        repo: input.repo,
+        headSha: input.headSha,
+        installationId: input.installationId,
+        prNumber: input.prNumber,
+        packResult: {
+          decision: yamlResult.decision,
+          findings: yamlResult.findings,
+          triggeredRules: yamlResult.triggeredRules,
+          packHash: yamlResult.packHash!,
+          packSource: yamlResult.packSource!,
+          evaluationTimeMs: yamlResult.evaluationTimeMs,
+          budgetExhausted: false,
+        },
+      });
+
+      // Map YAML decision to legacy GatekeeperResult format
+      const riskTierMap = {
+        pass: 'PASS' as const,
+        warn: 'WARN' as const,
+        block: 'BLOCK' as const,
+      };
+
+      return {
+        riskTier: riskTierMap[yamlResult.decision],
+        riskScore: yamlResult.decision === 'block' ? 1.0 : yamlResult.decision === 'warn' ? 0.6 : 0.2,
+        agentDetected: false, // TODO: Extract from findings
+        agentConfidence: 0,
+        domains: [],
+        evidenceSatisfied: yamlResult.decision === 'pass',
+        missingEvidence: [],
+        checkCreated: true,
+        deltaSyncFindings: [],
+      };
+    }
+  } catch (error) {
+    console.error(`[Gatekeeper] YAML gatekeeper failed, falling back to legacy:`, error);
+  }
+
+  // Fallback to legacy gatekeeper if no YAML pack configured
+  console.log(`[Gatekeeper] Using legacy gatekeeper (no YAML pack configured)`);
 
   // Step 1: Detect if PR is agent-authored
   const agentDetection = detectAgentAuthoredPR({

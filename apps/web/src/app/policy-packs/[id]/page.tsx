@@ -6,7 +6,7 @@ import Navigation from '@/components/Navigation';
 import { ArrowLeft, Save } from 'lucide-react';
 import Link from 'next/link';
 import OverviewForm from '../new/sections/OverviewForm';
-import TrackAForm from '../new/sections/TrackAForm';
+import TrackAFormYAML from '../new/sections/TrackAFormYAML';
 import TrackBForm from '../new/sections/TrackBForm';
 import ApprovalTiersForm from '../new/sections/ApprovalTiersForm';
 
@@ -20,6 +20,8 @@ interface PolicyPackFormData {
   pathGlobs: string[];
   trackAEnabled: boolean;
   trackAConfig: any;
+  trackAConfigYamlDraft?: string;
+  workspaceId?: string;
   trackBEnabled: boolean;
   trackBConfig: any;
   approvalTiers: any;
@@ -69,7 +71,7 @@ function EditPolicyPackContent() {
 
   const steps = [
     { id: 1, name: 'Overview', component: OverviewForm },
-    { id: 2, name: 'Track A: Contract Integrity', component: TrackAForm },
+    { id: 2, name: 'Track A: YAML Policy Pack', component: TrackAFormYAML },
     { id: 3, name: 'Track B: Drift Remediation', component: TrackBForm },
     { id: 4, name: 'Approval & Routing', component: ApprovalTiersForm },
   ];

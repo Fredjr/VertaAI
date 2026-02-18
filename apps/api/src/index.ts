@@ -23,6 +23,7 @@ import healthCheckRouter from './routes/health-check.js';  // Health check endpo
 import contractPacksRouter from './routes/contractPacks.js';  // Phase 1 Week 1-2: Contract Packs Management
 import contractPoliciesRouter from './routes/contractPolicies.js';  // Week 5-6: Contract Policies Management
 import policyPacksRouter from './routes/policyPacks.js';  // P2 Week 7: Unified WorkspacePolicyPack Management
+import { initializeComparators } from './services/gatekeeper/yaml-dsl/comparators/index.js';  // YAML DSL Migration
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -1086,6 +1087,10 @@ process.on('SIGTERM', async () => {
   await prisma.$disconnect();
   process.exit(0);
 });
+
+// Initialize YAML DSL comparators
+console.log('[Startup] Initializing YAML DSL comparators...');
+initializeComparators();
 
 // Start server
 app.listen(PORT, () => {

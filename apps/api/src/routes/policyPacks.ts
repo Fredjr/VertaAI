@@ -16,6 +16,10 @@ import { Router, Request, Response } from 'express';
 import { PrismaClient, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { z } from 'zod';
+import { parsePackYAML, validatePackYAML } from '../services/gatekeeper/yaml-dsl/packValidator.js';
+import { computePackHashFull } from '../services/gatekeeper/yaml-dsl/canonicalize.js';
+import { parseWorkspaceDefaults, validateWorkspaceDefaults } from '../services/gatekeeper/yaml-dsl/workspaceDefaultsSchema.js';
+import yaml from 'yaml';
 
 const router: Router = Router();
 const prisma = new PrismaClient();
@@ -423,6 +427,462 @@ router.post('/workspaces/:workspaceId/policy-packs/:id/test', async (req: Reques
   } catch (error) {
     console.error('[PolicyPacks] Test error:', error);
     res.status(500).json({ error: 'Failed to test policy pack' });
+  }
+});
+
+// ======================================================================
+// YAML DSL ENDPOINTS (Track A Migration)
+// ======================================================================
+
+/**
+ * POST /api/workspaces/:workspaceId/policy-packs/:id/publish
+ * Publish a draft YAML pack
+ */
+router.post('/workspaces/:workspaceId/policy-packs/:id/publish', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId, id } = req.params;
+    const { publishedBy } = req.body;
+
+    if (!workspaceId || !id) {
+      return res.status(400).json({ error: 'Missing workspaceId or id' });
+    }
+
+    if (!publishedBy) {
+      return res.status(400).json({ error: 'Missing publishedBy (user ID)' });
+    }
+
+    // Get the pack
+    const pack = await prisma.workspacePolicyPack.findUnique({
+      where: { workspaceId_id: { workspaceId, id } },
+    });
+
+    if (!pack) {
+      return res.status(404).json({ error: 'Policy pack not found' });
+    }
+
+    if (!pack.trackAConfigYamlDraft) {
+      return res.status(400).json({ error: 'No draft YAML to publish' });
+    }
+
+    // Parse and validate the draft YAML
+    const validation = validatePackYAML(pack.trackAConfigYamlDraft);
+    const packYAML = parsePackYAML(pack.trackAConfigYamlDraft);
+
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: 'Invalid pack YAML',
+        validationErrors: validation.errors
+      });
+    }
+
+    // Validate metadata is present (required for published packs)
+    if (!packYAML.metadata?.id || !packYAML.metadata?.version) {
+      return res.status(400).json({
+        error: 'Pack metadata.id and metadata.version are required for publishing'
+      });
+    }
+
+    // Check for duplicate version
+    const existing = await prisma.workspacePolicyPack.findFirst({
+      where: {
+        workspaceId: pack.workspaceId,
+        scopeType: pack.scopeType,
+        scopeRef: pack.scopeRef,
+        packMetadataId: packYAML.metadata.id,
+        packMetadataVersion: packYAML.metadata.version,
+        packStatus: 'published',
+        id: { not: id },  // Allow re-publishing same pack
+      },
+    });
+
+    if (existing) {
+      return res.status(409).json({
+        error: `Pack version ${packYAML.metadata.id}@${packYAML.metadata.version} already published for this scope`
+      });
+    }
+
+    // Compute pack hash
+    const packHash = computePackHashFull(pack.trackAConfigYamlDraft);
+
+    // Publish the pack
+    const updatedPack = await prisma.workspacePolicyPack.update({
+      where: { workspaceId_id: { workspaceId, id } },
+      data: {
+        trackAConfigYamlPublished: pack.trackAConfigYamlDraft,
+        trackAPackHashPublished: packHash,
+        packStatus: 'published',
+        publishedAt: new Date(),
+        publishedBy,
+        packMetadataId: packYAML.metadata.id,
+        packMetadataVersion: packYAML.metadata.version,
+        packMetadataName: packYAML.metadata.name,
+      },
+    });
+
+    res.json({
+      policyPack: updatedPack,
+      packHash,
+      message: 'Pack published successfully'
+    });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Publish error:', error);
+    res.status(500).json({ error: error.message || 'Failed to publish policy pack' });
+  }
+});
+
+/**
+ * POST /api/workspaces/:workspaceId/policy-packs/:id/validate
+ * Validate pack YAML without publishing
+ */
+router.post('/workspaces/:workspaceId/policy-packs/:id/validate', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId, id } = req.params;
+    const { yamlContent } = req.body;
+
+    if (!workspaceId || !id) {
+      return res.status(400).json({ error: 'Missing workspaceId or id' });
+    }
+
+    if (!yamlContent) {
+      return res.status(400).json({ error: 'Missing yamlContent' });
+    }
+
+    // Parse and validate
+    try {
+      const validation = validatePackYAML(yamlContent);
+
+      if (!validation.valid) {
+        return res.json({
+          valid: false,
+          errors: validation.errors
+        });
+      }
+
+      const packYAML = parsePackYAML(yamlContent);
+
+      // Compute pack hash for preview
+      const packHash = computePackHashFull(yamlContent);
+
+      res.json({
+        valid: true,
+        packHash,
+        metadata: packYAML.metadata,
+        ruleCount: packYAML.rules.length,
+        message: 'Pack YAML is valid'
+      });
+    } catch (parseError: any) {
+      res.json({
+        valid: false,
+        errors: [{ message: parseError.message, path: [] }]
+      });
+    }
+  } catch (error: any) {
+    console.error('[PolicyPacks] Validate error:', error);
+    res.status(500).json({ error: error.message || 'Failed to validate policy pack' });
+  }
+});
+
+/**
+ * GET /api/workspaces/:workspaceId/policy-packs/templates
+ * Get starter pack templates
+ */
+router.get('/workspaces/:workspaceId/policy-packs/templates', async (req: Request, res: Response) => {
+  try {
+    const templates = [
+      {
+        id: 'basic-microservices',
+        name: 'Basic Microservices Pack',
+        description: 'Essential checks for microservices: API contracts, human approval, no secrets',
+        category: 'starter',
+        yaml: `metadata:
+  id: basic-microservices
+  version: 1.0.0
+  name: Basic Microservices Pack
+  description: Essential checks for microservices
+
+scope:
+  type: workspace
+  branches:
+    include: ['main', 'master']
+
+rules:
+  - id: require-api-contract
+    name: Require API Contract Updates
+    description: API changes must update OpenAPI spec
+    trigger:
+      comparator: changed_path_matches
+      config:
+        patterns: ['src/api/**', 'src/routes/**']
+    obligations:
+      - comparator: artifact_updated
+        config:
+          artifactType: openapi_spec
+          message: "API changes require OpenAPI spec update"
+    decision: block
+
+  - id: require-human-approval
+    name: Require Human Approval
+    description: Agent PRs must have human approval
+    trigger:
+      comparator: actor_is_agent
+    obligations:
+      - comparator: human_approval_present
+        config:
+          message: "Agent PRs require human approval"
+    decision: block
+
+  - id: no-secrets
+    name: No Secrets in Diff
+    description: Block PRs with secrets
+    trigger:
+      always: true
+    obligations:
+      - comparator: no_secrets_in_diff
+        config:
+          message: "Secrets detected in diff"
+    decision: block
+`,
+      },
+      {
+        id: 'security-focused',
+        name: 'Security-Focused Pack',
+        description: 'Comprehensive security checks: secrets, approvals, checkruns',
+        category: 'security',
+        yaml: `metadata:
+  id: security-focused
+  version: 1.0.0
+  name: Security-Focused Pack
+  description: Comprehensive security checks
+
+scope:
+  type: workspace
+  branches:
+    include: ['main', 'master', 'production']
+
+rules:
+  - id: no-secrets
+    name: No Secrets in Diff
+    description: Block PRs with secrets
+    trigger:
+      always: true
+    obligations:
+      - comparator: no_secrets_in_diff
+        config:
+          message: "Secrets detected in diff"
+    decision: block
+
+  - id: require-security-review
+    name: Require Security Review
+    description: Security-sensitive changes need 2+ approvals
+    trigger:
+      comparator: changed_path_matches
+      config:
+        patterns: ['src/auth/**', 'src/security/**', '**/*.env*']
+    obligations:
+      - comparator: min_approvals
+        config:
+          minCount: 2
+          message: "Security changes require 2+ approvals"
+    decision: block
+
+  - id: require-ci-pass
+    name: Require CI to Pass
+    description: All CI checks must pass
+    trigger:
+      always: true
+    obligations:
+      - comparator: checkruns_passed
+        config:
+          requiredChecks: ['test', 'lint', 'security-scan']
+          message: "All CI checks must pass"
+    decision: block
+`,
+      },
+      {
+        id: 'documentation-enforcement',
+        name: 'Documentation Enforcement Pack',
+        description: 'Ensure documentation is updated with code changes',
+        category: 'documentation',
+        yaml: `metadata:
+  id: documentation-enforcement
+  version: 1.0.0
+  name: Documentation Enforcement Pack
+  description: Ensure documentation is updated
+
+scope:
+  type: workspace
+  branches:
+    include: ['main', 'master']
+
+rules:
+  - id: require-pr-description
+    name: Require PR Description
+    description: PRs must have description field filled
+    trigger:
+      always: true
+    obligations:
+      - comparator: pr_template_field_present
+        config:
+          fieldName: description
+          message: "PR description is required"
+    decision: warn
+
+  - id: api-changes-need-docs
+    name: API Changes Need Docs
+    description: API changes must update documentation
+    trigger:
+      comparator: changed_path_matches
+      config:
+        patterns: ['src/api/**', 'src/routes/**']
+    obligations:
+      - comparator: artifact_updated
+        config:
+          artifactType: api_documentation
+          message: "API changes require documentation update"
+    decision: warn
+`,
+      },
+      {
+        id: 'deployment-safety',
+        name: 'Deployment Safety Pack',
+        description: 'Safety checks for production deployments',
+        category: 'deployment',
+        yaml: `metadata:
+  id: deployment-safety
+  version: 1.0.0
+  name: Deployment Safety Pack
+  description: Safety checks for production deployments
+
+scope:
+  type: workspace
+  branches:
+    include: ['production', 'release/**']
+
+rules:
+  - id: require-multiple-approvals
+    name: Require Multiple Approvals
+    description: Production changes need 2+ approvals
+    trigger:
+      always: true
+    obligations:
+      - comparator: min_approvals
+        config:
+          minCount: 2
+          message: "Production changes require 2+ approvals"
+    decision: block
+
+  - id: require-all-checks
+    name: Require All Checks to Pass
+    description: All CI/CD checks must pass
+    trigger:
+      always: true
+    obligations:
+      - comparator: checkruns_passed
+        config:
+          requiredChecks: ['test', 'lint', 'build', 'integration-test']
+          message: "All checks must pass for production"
+    decision: block
+
+  - id: no-agent-direct-merge
+    name: No Agent Direct Merge
+    description: Agents cannot merge to production
+    trigger:
+      comparator: actor_is_agent
+    obligations:
+      - comparator: human_approval_present
+        config:
+          message: "Agent PRs to production require human approval"
+    decision: block
+`,
+      },
+    ];
+
+    res.json({ templates });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Templates error:', error);
+    res.status(500).json({ error: error.message || 'Failed to get templates' });
+  }
+});
+
+/**
+ * GET /api/workspaces/:workspaceId/defaults
+ * Get workspace defaults
+ */
+router.get('/workspaces/:workspaceId/defaults', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId } = req.params;
+
+    if (!workspaceId) {
+      return res.status(400).json({ error: 'Missing workspaceId' });
+    }
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { workspaceDefaultsYaml: true },
+    });
+
+    if (!workspace) {
+      return res.status(404).json({ error: 'Workspace not found' });
+    }
+
+    res.json({
+      workspaceDefaultsYaml: workspace.workspaceDefaultsYaml || null
+    });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Get defaults error:', error);
+    res.status(500).json({ error: error.message || 'Failed to get workspace defaults' });
+  }
+});
+
+/**
+ * PUT /api/workspaces/:workspaceId/defaults
+ * Update workspace defaults
+ */
+router.put('/workspaces/:workspaceId/defaults', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId } = req.params;
+    const { workspaceDefaultsYaml } = req.body;
+
+    if (!workspaceId) {
+      return res.status(400).json({ error: 'Missing workspaceId' });
+    }
+
+    if (!workspaceDefaultsYaml) {
+      return res.status(400).json({ error: 'Missing workspaceDefaultsYaml' });
+    }
+
+    // Parse and validate
+    try {
+      const validation = validateWorkspaceDefaults(workspaceDefaultsYaml);
+
+      if (!validation.valid) {
+        return res.status(400).json({
+          error: 'Invalid workspace defaults YAML',
+          validationErrors: validation.errors
+        });
+      }
+
+      const defaults = parseWorkspaceDefaults(workspaceDefaultsYaml);
+
+      // Update workspace
+      const workspace = await prisma.workspace.update({
+        where: { id: workspaceId },
+        data: { workspaceDefaultsYaml },
+      });
+
+      res.json({
+        workspace,
+        message: 'Workspace defaults updated successfully'
+      });
+    } catch (parseError: any) {
+      res.status(400).json({
+        error: 'Failed to parse workspace defaults YAML',
+        details: parseError.message
+      });
+    }
+  } catch (error: any) {
+    console.error('[PolicyPacks] Update defaults error:', error);
+    res.status(500).json({ error: error.message || 'Failed to update workspace defaults' });
   }
 });
 
