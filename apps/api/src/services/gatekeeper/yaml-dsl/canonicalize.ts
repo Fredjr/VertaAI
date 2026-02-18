@@ -12,14 +12,14 @@ import yaml from 'yaml';
 /**
  * Recursively canonicalize object for deterministic hashing
  * Uses parent path for set-like array detection (not element path)
- * 
+ *
  * CRITICAL RULES:
  * 1. Sort object keys recursively at all nesting levels
  * 2. Sort set-like arrays (tags, include/exclude patterns, requiredChecks)
  * 3. Preserve order for non-set arrays (rules, obligations)
  * 4. Normalize undefined to null
- * 5. Normalize empty objects to undefined
- * 6. Skip undefined values in objects
+ * 5. CRITICAL FIX (Gap #9): Never return undefined at root level
+ * 6. Skip undefined/null values in objects
  */
 export function canonicalize(obj: any, parentPath: string = ''): any {
   if (obj === null || obj === undefined) {
@@ -32,31 +32,36 @@ export function canonicalize(obj: any, parentPath: string = ''): any {
       // Sort set-like arrays for deterministic hashing
       return obj
         .map(item => canonicalize(item, parentPath))  // Use parent path, not element path
+        .filter(item => item !== null && item !== undefined)  // Remove null/undefined
         .sort((a, b) => {
           const aStr = typeof a === 'string' ? a : JSON.stringify(a);
           const bStr = typeof b === 'string' ? b : JSON.stringify(b);
           return aStr.localeCompare(bStr);
         });
     }
-    // Non-set arrays: preserve order
-    return obj.map((item, idx) => canonicalize(item, `${parentPath}[${idx}]`));
+    // Non-set arrays: preserve order, filter out null/undefined
+    return obj
+      .map((item, idx) => canonicalize(item, `${parentPath}[${idx}]`))
+      .filter(item => item !== null && item !== undefined);
   }
 
   if (typeof obj === 'object') {
     const sorted: any = {};
     const keys = Object.keys(obj).sort();
 
-    // Skip empty objects
-    if (keys.length === 0) return undefined;
+    // CRITICAL FIX (Gap #9): Return null instead of undefined for empty objects
+    if (keys.length === 0) return null;
 
     for (const key of keys) {
       const value = canonicalize(obj[key], `${parentPath}.${key}`);
-      if (value !== undefined) {  // Skip undefined values
+      // Skip null and undefined values
+      if (value !== undefined && value !== null) {
         sorted[key] = value;
       }
     }
 
-    return Object.keys(sorted).length > 0 ? sorted : undefined;
+    // CRITICAL FIX (Gap #9): Return null instead of undefined
+    return Object.keys(sorted).length > 0 ? sorted : null;
   }
 
   return obj;

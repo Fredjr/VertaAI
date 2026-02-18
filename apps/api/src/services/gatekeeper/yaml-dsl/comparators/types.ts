@@ -75,7 +75,22 @@ export interface PRContext {
   deletions: number;
 
   // GitHub API client (budgeted)
-  github: BudgetedGitHubClient;
+  // CRITICAL FIX (Gap #1): Expose only safe API methods, not raw client
+  // Comparators MUST use these methods instead of direct github access
+  github: {
+    rest: {
+      pulls: {
+        listReviews(params: { owner: string; repo: string; pull_number: number }): Promise<{ data: any[] }>;
+        listFiles(params: { owner: string; repo: string; pull_number: number }): Promise<{ data: any[] }>;
+      };
+      repos: {
+        getContent(params: { owner: string; repo: string; path: string; ref: string }): Promise<{ data: any }>;
+      };
+      checks: {
+        listForRef(params: { owner: string; repo: string; ref: string }): Promise<{ data: any }>;
+      };
+    };
+  };
 
   // Cancellation support
   abortController: AbortController;

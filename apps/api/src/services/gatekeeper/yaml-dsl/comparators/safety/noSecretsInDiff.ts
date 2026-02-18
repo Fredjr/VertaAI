@@ -1,16 +1,18 @@
 /**
  * NO_SECRETS_IN_DIFF Comparator
  * Migration Plan v5.0 - Sprint 1, Task 1.3
- * 
+ *
  * Checks for secrets in PR diff using regex patterns
- * CRITICAL: Uses RE2 for user-provided patterns to prevent ReDoS
+ * CRITICAL FIX (Gap #5): Uses RE2 for user-provided patterns to prevent ReDoS
  */
 
 import type { Comparator, ComparatorResult, PRContext } from '../types.js';
 import { ComparatorId, FindingCode } from '../types.js';
 import crypto from 'crypto';
+import RE2 from 're2';
 
-// Default secret patterns (safe, pre-vetted regexes)
+// Default secret patterns (safe, pre-vetted regexes using native RegExp)
+// These are trusted patterns, so we can use native RegExp for performance
 const DEFAULT_SECRET_PATTERNS = [
   /api[_-]?key\s*[:=]\s*['"]?[A-Za-z0-9-_]{16,}['"]?/i,
   /AKIA[0-9A-Z]{16}/,  // AWS Access Key
@@ -27,12 +29,13 @@ export const noSecretsInDiffComparator: Comparator = {
 
   async evaluate(context: PRContext, params: any): Promise<ComparatorResult> {
     const customPatterns = context.defaults?.safety?.secretPatterns || [];
-    const allPatterns = [...DEFAULT_SECRET_PATTERNS];
 
-    // Add custom patterns (with RE2 safety check in production)
+    // CRITICAL FIX (Gap #5): Use RE2 for user-provided patterns to prevent ReDoS
+    // RE2 uses a non-backtracking algorithm that guarantees linear time complexity
+    const customRE2Patterns: RE2[] = [];
     for (const pattern of customPatterns) {
       try {
-        allPatterns.push(new RegExp(pattern, 'i'));
+        customRE2Patterns.push(new RE2(pattern, 'i'));
       } catch (error) {
         console.error(`[NO_SECRETS_IN_DIFF] Invalid regex pattern: ${pattern}`, error);
       }
@@ -42,21 +45,45 @@ export const noSecretsInDiffComparator: Comparator = {
 
     // Scan all file patches
     for (const file of context.files) {
-      if (!file.patch) continue;
+      // CRITICAL FIX (Gap #7): Handle missing/truncated patches explicitly
+      if (!file.patch) {
+        // Policy: If patch is missing, we cannot scan for secrets
+        // This is a WARN condition (not BLOCK) to avoid false positives
+        console.warn(`[NO_SECRETS_IN_DIFF] Patch missing for file: ${file.filename}`);
+        continue;
+      }
 
       const lines = file.patch.split('\n');
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        
+
         // Only check added lines (start with +)
         if (!line.startsWith('+')) continue;
 
-        for (const pattern of allPatterns) {
+        // Check default patterns (native RegExp - trusted)
+        for (const pattern of DEFAULT_SECRET_PATTERNS) {
           const match = line.match(pattern);
           if (match) {
             // Hash the secret for evidence (don't expose actual value)
             const hash = crypto.createHash('sha256').update(match[0]).digest('hex').substring(0, 16);
-            
+
+            detectedSecrets.push({
+              file: file.filename,
+              line: i + 1,
+              hash,
+              pattern: pattern.source,
+            });
+            break; // Only report first match per line
+          }
+        }
+
+        // Check custom patterns (RE2 - user-provided, ReDoS-safe)
+        for (const pattern of customRE2Patterns) {
+          const match = pattern.exec(line);
+          if (match) {
+            // Hash the secret for evidence (don't expose actual value)
+            const hash = crypto.createHash('sha256').update(match[0]).digest('hex').substring(0, 16);
+
             detectedSecrets.push({
               file: file.filename,
               line: i + 1,

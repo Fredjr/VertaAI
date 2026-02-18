@@ -65,6 +65,8 @@ export async function runYAMLGatekeeper(
 
   const budgetedGitHub = new BudgetedGitHubClient(octokit, budgets, abortController.signal);
 
+  // CRITICAL FIX (Gap #1): Expose only safe API methods to comparators
+  // This prevents comparators from bypassing budgets/cancellation
   const context: PRContext = {
     owner: input.owner,
     repo: input.repo,
@@ -81,7 +83,23 @@ export async function runYAMLGatekeeper(
     additions: input.additions,
     deletions: input.deletions,
     files: input.files,
-    github: budgetedGitHub,
+    github: {
+      rest: {
+        pulls: {
+          listReviews: budgetedGitHub.rest.pulls.listReviews.bind(budgetedGitHub.rest.pulls),
+          listFiles: budgetedGitHub.rest.pulls.listFiles.bind(budgetedGitHub.rest.pulls),
+        },
+        repos: {
+          getContent: budgetedGitHub.rest.repos.getContent.bind(budgetedGitHub.rest.repos),
+        },
+        checks: {
+          listForRef: budgetedGitHub.rest.checks.listForRef.bind(budgetedGitHub.rest.checks),
+        },
+      },
+    },
+    abortController,
+    workspaceId: input.workspaceId,
+    installationId: input.installationId,
     defaults,
     budgets,
     cache: {

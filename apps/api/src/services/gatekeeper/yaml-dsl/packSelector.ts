@@ -16,6 +16,7 @@ export interface SelectedPack {
   packHash: string;
   source: 'repo' | 'service' | 'workspace';
   dbId: string;
+  publishedAt: Date | null;
 }
 
 /**
@@ -46,9 +47,9 @@ export async function selectApplicablePack(
   }
 
   // 2. Parse and filter packs by scope
-  const repoPacks: Array<{ pack: PackYAML; packHash: string; dbId: string }> = [];
-  const servicePacks: Array<{ pack: PackYAML; packHash: string; dbId: string }> = [];
-  const workspacePacks: Array<{ pack: PackYAML; packHash: string; dbId: string }> = [];
+  const repoPacks: Array<{ pack: PackYAML; packHash: string; dbId: string; publishedAt: Date | null }> = [];
+  const servicePacks: Array<{ pack: PackYAML; packHash: string; dbId: string; publishedAt: Date | null }> = [];
+  const workspacePacks: Array<{ pack: PackYAML; packHash: string; dbId: string; publishedAt: Date | null }> = [];
 
   for (const dbPack of allPacks) {
     try {
@@ -64,6 +65,7 @@ export async function selectApplicablePack(
         pack,
         packHash: dbPack.trackAPackHashPublished!,
         dbId: dbPack.id,
+        publishedAt: dbPack.publishedAt,
       };
 
       // Categorize by scope type
@@ -127,16 +129,23 @@ function packApplies(pack: PackYAML, fullRepo: string, branch: string): boolean 
 
 /**
  * Select best pack from candidates using semver + publishedAt
+ * CRITICAL FIX (Gap #3): Use publishedAt as tie-breaker, NOT updatedAt or packHash
  */
 function selectBestPack(
-  packs: Array<{ pack: PackYAML; packHash: string; dbId: string }>
-): { pack: PackYAML; packHash: string; dbId: string } {
+  packs: Array<{ pack: PackYAML; packHash: string; dbId: string; publishedAt: Date | null }>
+): { pack: PackYAML; packHash: string; dbId: string; publishedAt: Date | null } {
   return packs.sort((a, b) => {
     // Sort by semver (descending)
     const versionCompare = semver.rcompare(a.pack.metadata.version, b.pack.metadata.version);
     if (versionCompare !== 0) return versionCompare;
 
-    // If same version, use pack hash as tie-breaker (deterministic)
+    // CRITICAL: If same version, use publishedAt as tie-breaker (most recent first)
+    // This ensures deterministic selection and prevents "policy suddenly changed" incidents
+    if (a.publishedAt && b.publishedAt) {
+      return b.publishedAt.getTime() - a.publishedAt.getTime();
+    }
+
+    // Fallback: if publishedAt is missing (shouldn't happen for published packs), use pack hash
     return a.packHash.localeCompare(b.packHash);
   })[0];
 }
