@@ -1,0 +1,152 @@
+# ======================================================================
+# TEMPLATE A8: DEPLOY GATE PACK
+# Cross-Gate Dependencies for Production Deployments
+# ======================================================================
+#
+# Purpose: Enforce cross-gate dependencies to ensure all quality gates
+#          pass before production deployments
+#
+# Use Case: Prevent production deployments when:
+#           - Contract integrity checks are failing
+#           - Previous gate evaluations found critical issues
+#           - Required quality gates haven't been evaluated yet
+#
+# Recommended Scope: Production repositories or deployment branches
+# ======================================================================
+
+metadata:
+  id: deploy-gate-pack
+  name: Deploy Gate Pack
+  version: 1.0.0
+  description: Enforce cross-gate dependencies for production deployments
+  category: deployment
+  tags:
+    - deployment
+    - production
+    - quality-gates
+    - cross-gate
+
+scope:
+  branches:
+    - main
+    - master
+    - production
+    - release/*
+
+rules:
+  - id: require-contract-integrity-pass
+    name: Require Contract Integrity Gate to Pass
+    description: Block production deployments when contract integrity checks are failing
+    trigger:
+      anyLabels:
+        - production
+        - deploy
+        - release
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: gate.contractIntegrity.status
+          operator: eq
+          value: pass
+        message: "Contract integrity gate is not passing. Current status: {gate.contractIntegrity.status}. Please resolve all contract integrity issues before deploying to production."
+        evidence:
+          - type: gate_status
+            description: Contract integrity gate must pass before production deployment
+            status: "{gate.contractIntegrity.status}"
+            findings: "{gate.contractIntegrity.findings}"
+
+  - id: warn-contract-integrity-warnings
+    name: Warn About Contract Integrity Warnings
+    description: Notify when contract integrity gate has warnings
+    trigger:
+      anyLabels:
+        - production
+        - deploy
+        - release
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          fact: gate.contractIntegrity.status
+          operator: neq
+          value: warn
+        message: "Contract integrity gate has warnings ({gate.contractIntegrity.findings} findings). Review before deploying to production."
+        evidence:
+          - type: gate_status
+            description: Contract integrity gate has warnings
+            status: "{gate.contractIntegrity.status}"
+            findings: "{gate.contractIntegrity.findings}"
+
+  - id: require-gate-evaluation
+    name: Require Gate Evaluation Before Deploy
+    description: Block deployments when no gate evaluation has been performed
+    trigger:
+      anyLabels:
+        - production
+        - deploy
+        - release
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: gate.contractIntegrity.status
+          operator: neq
+          value: unknown
+        message: "No gate evaluation found. Please ensure all quality gates are evaluated before deploying to production."
+        evidence:
+          - type: gate_status
+            description: Gate evaluation is required before production deployment
+            status: "{gate.contractIntegrity.status}"
+
+  - id: block-high-finding-count
+    name: Block Deployments with High Finding Count
+    description: Block production deployments when there are too many findings
+    trigger:
+      anyLabels:
+        - production
+        - deploy
+        - release
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: gate.contractIntegrity.findings
+          operator: lt
+          value: 5
+        message: "Too many contract integrity findings ({gate.contractIntegrity.findings}). Maximum allowed: 4. Please resolve critical issues before deploying."
+        evidence:
+          - type: gate_status
+            description: High finding count detected
+            findings: "{gate.contractIntegrity.findings}"
+            threshold: 5
+
+  - id: require-production-approval
+    name: Require Production Approval
+    description: Require at least 2 approvals for production deployments
+    trigger:
+      anyLabels:
+        - production
+        - deploy
+        - release
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: pr.approvals.count
+          operator: gte
+          value: 2
+        message: "Production deployments require at least 2 approvals. Current approvals: {pr.approvals.count}"
+        evidence:
+          - type: approval_count
+            description: Production deployment approval requirement
+            current: "{pr.approvals.count}"
+            required: 2
+
+routing:
+  github:
+    conclusionMapping:
+      pass: success
+      warn: success
+      block: failure
+

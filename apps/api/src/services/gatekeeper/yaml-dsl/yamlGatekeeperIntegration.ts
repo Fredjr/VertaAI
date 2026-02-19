@@ -176,10 +176,60 @@ export async function runYAMLGatekeeper(
 }
 
 /**
- * PHASE 2 FIX: Compute global decision from multiple pack results
- * Decision algorithm: any BLOCK → BLOCK, else any WARN → WARN, else PASS
+ * PHASE 3A.1: Compute global decision from multiple pack results
+ * Now supports all 3 merge strategies: MOST_RESTRICTIVE, HIGHEST_PRIORITY, EXPLICIT
  */
 function computeGlobalDecision(packResults: PackResult[]): 'pass' | 'warn' | 'block' {
+  if (packResults.length === 0) {
+    return 'pass';
+  }
+
+  // Get merge strategy from packs (should be consistent)
+  const mergeStrategies = new Set(
+    packResults.map(pr => pr.pack.metadata.scopeMergeStrategy || 'MOST_RESTRICTIVE')
+  );
+
+  // Validate merge strategy consistency
+  if (mergeStrategies.size > 1) {
+    // If any pack uses EXPLICIT, require all to use same strategy
+    if (mergeStrategies.has('EXPLICIT')) {
+      console.error(
+        `[YAMLGatekeeper] Conflicting merge strategies detected. ` +
+        `When using EXPLICIT mode, all packs must use the same strategy. ` +
+        `Found: ${Array.from(mergeStrategies).join(', ')}`
+      );
+      // Fallback to MOST_RESTRICTIVE for safety
+      return computeMostRestrictive(packResults);
+    }
+    // Otherwise, use MOST_RESTRICTIVE as fallback
+    console.warn(
+      `[YAMLGatekeeper] Multiple merge strategies detected, using MOST_RESTRICTIVE as fallback`
+    );
+  }
+
+  // Get the strategy to use (validated to be consistent or defaulted)
+  const strategy = packResults[0].pack.metadata.scopeMergeStrategy || 'MOST_RESTRICTIVE';
+
+  switch (strategy) {
+    case 'MOST_RESTRICTIVE':
+      return computeMostRestrictive(packResults);
+
+    case 'HIGHEST_PRIORITY':
+      return computeHighestPriority(packResults);
+
+    case 'EXPLICIT':
+      return computeExplicit(packResults);
+
+    default:
+      console.warn(`[YAMLGatekeeper] Unknown merge strategy: ${strategy}, using MOST_RESTRICTIVE`);
+      return computeMostRestrictive(packResults);
+  }
+}
+
+/**
+ * MOST_RESTRICTIVE: Any BLOCK → BLOCK, else any WARN → WARN, else PASS
+ */
+function computeMostRestrictive(packResults: PackResult[]): 'pass' | 'warn' | 'block' {
   // Check for any BLOCK decisions
   for (const packResult of packResults) {
     if (packResult.result.decision === 'block') {
@@ -196,5 +246,47 @@ function computeGlobalDecision(packResults: PackResult[]): 'pass' | 'warn' | 'bl
 
   // All packs passed
   return 'pass';
+}
+
+/**
+ * HIGHEST_PRIORITY: Use decision from highest priority pack only
+ */
+function computeHighestPriority(packResults: PackResult[]): 'pass' | 'warn' | 'block' {
+  // Sort by priority (highest first)
+  const sorted = [...packResults].sort((a, b) => {
+    const priorityA = a.pack.metadata.scopePriority || 50;
+    const priorityB = b.pack.metadata.scopePriority || 50;
+    return priorityB - priorityA;
+  });
+
+  // Return decision from highest priority pack
+  return sorted[0].result.decision;
+}
+
+/**
+ * EXPLICIT: Require all packs to agree, throw error on conflict
+ */
+function computeExplicit(packResults: PackResult[]): 'pass' | 'warn' | 'block' {
+  // Check for conflicts (different decisions from different packs)
+  const decisions = new Set(packResults.map(pr => pr.result.decision));
+
+  if (decisions.size > 1) {
+    // Conflict detected - log error and use MOST_RESTRICTIVE as fallback
+    const packNames = packResults.map(pr => pr.pack.metadata.name).join(', ');
+    const decisionList = Array.from(decisions).join(', ');
+
+    console.error(
+      `[YAMLGatekeeper] EXPLICIT conflict resolution required. ` +
+      `Multiple packs returned different decisions: ${decisionList}. ` +
+      `Packs: ${packNames}. ` +
+      `Using MOST_RESTRICTIVE as fallback for safety.`
+    );
+
+    // Fallback to MOST_RESTRICTIVE for safety
+    return computeMostRestrictive(packResults);
+  }
+
+  // All packs agree - return the decision
+  return packResults[0].result.decision;
 }
 

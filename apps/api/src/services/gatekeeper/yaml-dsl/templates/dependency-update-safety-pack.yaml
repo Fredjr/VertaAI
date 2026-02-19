@@ -1,0 +1,206 @@
+metadata:
+  id: dependency-update-safety
+  name: Dependency Update Safety
+  version: 1.0.0
+  description: Enforce safety checks for dependency updates and version bumps
+  category: dependencies
+  author: VertaAI
+  tags:
+    - dependencies
+    - security
+    - cve
+    - version-management
+
+scope:
+  type: workspace
+  scopeMergeStrategy: MOST_RESTRICTIVE
+  scopePriority: 55
+
+rules:
+  - id: block-dependencies-with-critical-cves
+    name: Block Dependencies with Critical CVEs
+    description: Block dependency updates that introduce critical vulnerabilities
+    trigger:
+      anyChangedPaths:
+        - '**/package.json'
+        - '**/package-lock.json'
+        - '**/yarn.lock'
+        - '**/pnpm-lock.yaml'
+        - '**/requirements.txt'
+        - '**/Pipfile.lock'
+        - '**/Cargo.lock'
+        - '**/go.mod'
+        - '**/go.sum'
+        - '**/pom.xml'
+        - '**/build.gradle'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: sbom.cves.critical.count
+          operator: eq
+          value: 0
+        message: "Critical CVEs detected in dependencies ({sbom.cves.critical.count} critical vulnerabilities). Block merge until vulnerabilities are resolved."
+        evidence:
+          - "Critical CVEs must be addressed before merging"
+          - "Update to patched versions or find alternative packages"
+          - "Document any accepted risks with security team approval"
+
+  - id: warn-high-severity-cves
+    name: Warn About High-Severity CVEs
+    description: Warn about high-severity vulnerabilities in dependencies
+    trigger:
+      anyChangedPaths:
+        - '**/package.json'
+        - '**/package-lock.json'
+        - '**/yarn.lock'
+        - '**/pnpm-lock.yaml'
+        - '**/requirements.txt'
+        - '**/Pipfile.lock'
+        - '**/Cargo.lock'
+        - '**/go.mod'
+        - '**/go.sum'
+        - '**/pom.xml'
+        - '**/build.gradle'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          fact: sbom.cves.high.count
+          operator: eq
+          value: 0
+        message: "High-severity CVEs detected in dependencies ({sbom.cves.high.count} high-severity vulnerabilities). Review and plan remediation."
+        evidence:
+          - "High-severity CVEs should be addressed promptly"
+          - "Check if vulnerabilities affect your usage of the package"
+          - "Plan upgrade or mitigation strategy"
+
+  - id: warn-major-version-bumps
+    name: Warn About Major Version Bumps
+    description: Require extra scrutiny for major version updates (breaking changes)
+    trigger:
+      anyChangedPaths:
+        - '**/package.json'
+        - '**/requirements.txt'
+        - '**/Cargo.toml'
+        - '**/go.mod'
+        - '**/pom.xml'
+        - '**/build.gradle'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          or:
+            - fact: pr.labels
+              operator: contains
+              value: major-version-bump
+            - fact: pr.body
+              operator: contains
+              value: breaking change
+        message: "Major version bump detected in dependencies. Major versions may include breaking changes. Review changelog and test thoroughly."
+        evidence:
+          - "Major version bumps follow semantic versioning (breaking changes)"
+          - "Review package changelog for breaking changes"
+          - "Test affected functionality thoroughly"
+          - "Update code if API changes are required"
+
+  - id: require-tests-dependency-changes
+    name: Require Tests for Dependency Changes
+    description: Ensure tests are updated when dependencies change
+    trigger:
+      anyChangedPaths:
+        - '**/package.json'
+        - '**/package-lock.json'
+        - '**/yarn.lock'
+        - '**/pnpm-lock.yaml'
+        - '**/requirements.txt'
+        - '**/Pipfile.lock'
+        - '**/Cargo.lock'
+        - '**/go.mod'
+        - '**/go.sum'
+        - '**/pom.xml'
+        - '**/build.gradle'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          and:
+            - fact: sbom.packages.added.count
+              operator: gt
+              value: 0
+            - or:
+                - fact: diff.files.modified
+                  operator: contains
+                  value: test
+                - fact: diff.files.modified
+                  operator: contains
+                  value: spec
+                - fact: pr.labels
+                  operator: contains
+                  value: tests-not-needed
+        message: "Dependencies added ({sbom.packages.added.count} packages) without test updates. Ensure new dependencies are tested or add 'tests-not-needed' label with justification."
+        evidence:
+          - "New dependencies should be tested to verify integration"
+          - "Test critical functionality that uses new packages"
+          - "Verify no regressions from dependency updates"
+
+  - id: notify-dependency-removals
+    name: Notify About Dependency Removals
+    description: Alert when dependencies are removed (may break functionality)
+    trigger:
+      anyChangedPaths:
+        - '**/package.json'
+        - '**/requirements.txt'
+        - '**/Cargo.toml'
+        - '**/go.mod'
+        - '**/pom.xml'
+        - '**/build.gradle'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          fact: sbom.packages.removed.count
+          operator: eq
+          value: 0
+        message: "Dependencies removed ({sbom.packages.removed.count} packages). Ensure removed packages are not used in codebase. Run tests to verify no breakage."
+        evidence:
+          - "Removed packages: Verify no code depends on them"
+          - "Search codebase for imports/requires of removed packages"
+          - "Run full test suite to catch missing dependencies"
+
+  - id: block-non-compliant-licenses
+    name: Block Non-Compliant Licenses
+    description: Block dependencies with non-compliant licenses (GPL, AGPL, LGPL)
+    trigger:
+      anyChangedPaths:
+        - '**/package.json'
+        - '**/package-lock.json'
+        - '**/yarn.lock'
+        - '**/pnpm-lock.yaml'
+        - '**/requirements.txt'
+        - '**/Pipfile.lock'
+        - '**/Cargo.lock'
+        - '**/go.mod'
+        - '**/go.sum'
+        - '**/pom.xml'
+        - '**/build.gradle'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: sbom.licenses.nonCompliant
+          operator: eq
+          value: []
+        message: "Non-compliant licenses detected: {sbom.licenses.nonCompliant}. GPL/AGPL/LGPL licenses may have legal implications. Get legal team approval or find alternative packages."
+        evidence:
+          - "Non-compliant licenses: GPL, AGPL, LGPL (copyleft licenses)"
+          - "These licenses may require open-sourcing your code"
+          - "Consult legal team or use MIT/Apache-2.0/BSD licensed alternatives"
+
+defaults:
+  decisionOnFail: warn
+  evidence:
+    - "Dependency updates can introduce security vulnerabilities or breaking changes"
+    - "Always review changelogs and test thoroughly"
+    - "Keep dependencies up-to-date to avoid security debt"
+

@@ -1,0 +1,246 @@
+metadata:
+  id: team-based-routing
+  name: Team-Based Routing
+  version: 1.0.0
+  description: Route PRs to appropriate teams based on changed files and expertise areas
+  category: team-routing
+  author: VertaAI
+  tags:
+    - team-routing
+    - code-ownership
+    - approvals
+    - expertise
+
+scope:
+  type: workspace
+  scopeMergeStrategy: MOST_RESTRICTIVE
+  scopePriority: 40
+
+rules:
+  - id: require-frontend-team-review
+    name: Require Frontend Team Review for UI Changes
+    description: Route UI/frontend changes to frontend team
+    trigger:
+      anyChangedPaths:
+        - '**/src/components/**'
+        - '**/src/pages/**'
+        - '**/src/app/**'
+        - '**/src/views/**'
+        - '**/public/**'
+        - '**/styles/**'
+        - '**/*.css'
+        - '**/*.scss'
+        - '**/*.tsx'
+        - '**/*.jsx'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          or:
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: frontend
+            - fact: pr.labels
+              operator: contains
+              value: frontend-reviewed
+        message: "Frontend/UI changes detected. Request review from @frontend team or add 'frontend-reviewed' label after review."
+        evidence:
+          - "Frontend team owns UI components and user experience"
+          - "Review needed for: accessibility, responsive design, performance"
+          - "Ensure changes follow design system and UI guidelines"
+
+  - id: require-backend-team-review
+    name: Require Backend Team Review for API Changes
+    description: Route API/backend changes to backend team
+    trigger:
+      anyChangedPaths:
+        - '**/src/api/**'
+        - '**/src/routes/**'
+        - '**/src/controllers/**'
+        - '**/src/services/**'
+        - '**/src/models/**'
+        - '**/openapi.yaml'
+        - '**/openapi.json'
+        - '**/swagger.yaml'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          or:
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: backend
+            - fact: pr.labels
+              operator: contains
+              value: backend-reviewed
+        message: "Backend/API changes detected. Request review from @backend team or add 'backend-reviewed' label after review."
+        evidence:
+          - "Backend team owns API contracts and business logic"
+          - "Review needed for: API design, performance, scalability"
+          - "Ensure backward compatibility and proper error handling"
+
+  - id: require-security-team-review
+    name: Require Security Team Review for Security Changes
+    description: Route security-sensitive changes to security team
+    trigger:
+      anyChangedPaths:
+        - '**/auth/**'
+        - '**/authentication/**'
+        - '**/authorization/**'
+        - '**/security/**'
+        - '**/crypto/**'
+        - '**/encryption/**'
+        - '**/.env*'
+        - '**/secrets/**'
+        - '**/middleware/auth*'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          or:
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: security
+            - fact: pr.labels
+              operator: contains
+              value: security-approved
+        message: "Security-sensitive changes detected. Request review from @security team or add 'security-approved' label after security review."
+        evidence:
+          - "Security team must review authentication, authorization, and cryptography changes"
+          - "Review needed for: vulnerabilities, secure coding practices, compliance"
+          - "Security review is mandatory before merge"
+
+  - id: require-dba-team-review
+    name: Require DBA Team Review for Database Changes
+    description: Route database changes to DBA team
+    trigger:
+      anyChangedPaths:
+        - '**/migrations/**'
+        - '**/schema/**'
+        - '**/prisma/**'
+        - '**/alembic/**'
+        - '**/db/**'
+        - '**/*.sql'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          or:
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: dba
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: database
+            - fact: pr.labels
+              operator: contains
+              value: dba-approved
+        message: "Database changes detected. Request review from @dba team or add 'dba-approved' label after DBA review."
+        evidence:
+          - "DBA team must review schema changes and migrations"
+          - "Review needed for: performance impact, data integrity, rollback plan"
+          - "DBA approval is mandatory for production database changes"
+
+  - id: require-devops-team-review
+    name: Require DevOps Team Review for Infrastructure Changes
+    description: Route infrastructure changes to DevOps/SRE team
+    trigger:
+      anyChangedPaths:
+        - '**/terraform/**'
+        - '**/k8s/**'
+        - '**/kubernetes/**'
+        - '**/helm/**'
+        - '**/docker/**'
+        - '**/Dockerfile*'
+        - '**/.github/workflows/**'
+        - '**/cloudformation/**'
+        - '**/ansible/**'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          or:
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: devops
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: sre
+            - fact: pr.labels
+              operator: contains
+              value: devops-reviewed
+        message: "Infrastructure changes detected. Request review from @devops or @sre team or add 'devops-reviewed' label after review."
+        evidence:
+          - "DevOps/SRE team owns infrastructure and deployment pipelines"
+          - "Review needed for: resource allocation, security, cost optimization"
+          - "Ensure changes follow infrastructure best practices"
+
+  - id: require-data-team-review
+    name: Require Data Team Review for Analytics Changes
+    description: Route analytics and data pipeline changes to data team
+    trigger:
+      anyChangedPaths:
+        - '**/analytics/**'
+        - '**/data-pipelines/**'
+        - '**/etl/**'
+        - '**/airflow/**'
+        - '**/dbt/**'
+        - '**/spark/**'
+        - '**/sql/analytics/**'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          or:
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: data
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: analytics
+            - fact: pr.labels
+              operator: contains
+              value: data-reviewed
+        message: "Analytics/data pipeline changes detected. Request review from @data team or add 'data-reviewed' label after review."
+        evidence:
+          - "Data team owns analytics pipelines and data quality"
+          - "Review needed for: data accuracy, pipeline performance, schema changes"
+          - "Ensure changes don't break downstream analytics"
+
+  - id: require-mobile-team-review
+    name: Require Mobile Team Review for Mobile Changes
+    description: Route mobile app changes to mobile team
+    trigger:
+      anyChangedPaths:
+        - '**/ios/**'
+        - '**/android/**'
+        - '**/mobile/**'
+        - '**/*.swift'
+        - '**/*.kt'
+        - '**/*.java'
+        - '**/react-native/**'
+        - '**/flutter/**'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          or:
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: mobile
+            - fact: pr.labels
+              operator: contains
+              value: mobile-reviewed
+        message: "Mobile app changes detected. Request review from @mobile team or add 'mobile-reviewed' label after review."
+        evidence:
+          - "Mobile team owns iOS and Android applications"
+          - "Review needed for: platform-specific issues, performance, UX"
+          - "Ensure changes work on both iOS and Android"
+
+defaults:
+  decisionOnFail: warn
+  evidence:
+    - "Team-based routing ensures changes are reviewed by domain experts"
+    - "Code ownership improves code quality and knowledge sharing"
+    - "Request reviews from appropriate teams based on changed files"
+

@@ -20,6 +20,9 @@ import { parsePackYAML, validatePackYAML } from '../services/gatekeeper/yaml-dsl
 import { computePackHashFull } from '../services/gatekeeper/yaml-dsl/canonicalize.js';
 import { parseWorkspaceDefaults, validateWorkspaceDefaults } from '../services/gatekeeper/yaml-dsl/workspaceDefaultsSchema.js';
 import { loadAllTemplates, getTemplateById, getTemplateMetadata } from '../services/gatekeeper/yaml-dsl/templateRegistry.js';
+// PHASE 3B.1: Effective Policy View
+import { selectApplicablePacks } from '../services/gatekeeper/yaml-dsl/packSelector.js';
+import { computeEffectivePolicy } from '../services/gatekeeper/yaml-dsl/effectivePolicyService.js';
 import yaml from 'yaml';
 
 const router: Router = Router();
@@ -922,6 +925,116 @@ router.get('/workspaces/:workspaceId/policy-packs/templates/:templateId', async 
   } catch (error: any) {
     console.error('[PolicyPacks] Get template error:', error);
     res.status(500).json({ error: error.message || 'Failed to load template' });
+  }
+});
+
+// ======================================================================
+// PHASE 3B.1: EFFECTIVE POLICY VIEW
+// ======================================================================
+
+/**
+ * POST /api/workspaces/:workspaceId/policy-packs/effective-policy
+ * Compute effective policy for a given repo/branch
+ *
+ * Shows which packs apply, how rules are merged, and explains decision logic
+ */
+router.post('/workspaces/:workspaceId/policy-packs/effective-policy', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId } = req.params;
+    const { repository, branch } = req.body;
+
+    if (!workspaceId) {
+      return res.status(400).json({ error: 'Missing workspaceId' });
+    }
+
+    if (!repository || !branch) {
+      return res.status(400).json({ error: 'Missing repository or branch' });
+    }
+
+    // Parse repository (format: "owner/repo")
+    const parts = repository.split('/');
+    if (parts.length !== 2) {
+      return res.status(400).json({ error: 'Invalid repository format. Expected "owner/repo"' });
+    }
+
+    const [owner, repo] = parts;
+
+    // Use existing pack selection logic
+    const selectedPacks = await selectApplicablePacks(prisma, workspaceId, owner, repo, branch);
+
+    // Compute effective policy
+    const effectivePolicy = computeEffectivePolicy(selectedPacks, repository, branch);
+
+    console.log(
+      `[PolicyPacks] Computed effective policy for ${repository}:${branch} - ` +
+      `${effectivePolicy.applicablePacks.length} packs, ${effectivePolicy.effectiveRules.length} rules, ` +
+      `${effectivePolicy.conflicts.length} conflicts`
+    );
+
+    res.json({ effectivePolicy });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Effective policy error:', error);
+    res.status(500).json({ error: error.message || 'Failed to compute effective policy' });
+  }
+});
+
+// ======================================================================
+// PHASE 3C.2: CONFLICT DETECTION
+// ======================================================================
+
+/**
+ * GET /api/workspaces/:workspaceId/policy-packs/conflicts
+ * Detect conflicts between published policy packs
+ *
+ * Returns list of conflicts with severity, affected packs, and remediation steps
+ */
+router.get('/workspaces/:workspaceId/policy-packs/conflicts', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId } = req.params;
+
+    if (!workspaceId) {
+      return res.status(400).json({ error: 'Missing workspaceId' });
+    }
+
+    // Import conflict detector
+    const { detectConflicts } = await import('../services/gatekeeper/yaml-dsl/conflictDetector.js');
+
+    // Get all published packs for this workspace
+    const allPacks = await prisma.workspacePolicyPack.findMany({
+      where: {
+        workspaceId,
+        packStatus: 'published',
+        trackAEnabled: true,
+        trackAConfigYamlPublished: { not: null },
+      },
+    });
+
+    // Parse YAML for all packs
+    const parsedPacks: any[] = [];
+    for (const dbPack of allPacks) {
+      try {
+        const pack = yaml.parse(dbPack.trackAConfigYamlPublished!);
+        parsedPacks.push(pack);
+      } catch (error) {
+        console.error(`[ConflictDetector] Failed to parse pack ${dbPack.id}:`, error);
+      }
+    }
+
+    // Detect conflicts
+    const conflicts = detectConflicts(parsedPacks);
+
+    console.log(
+      `[PolicyPacks] Detected ${conflicts.length} conflicts across ${parsedPacks.length} packs`
+    );
+
+    res.json({
+      totalPacks: parsedPacks.length,
+      conflictCount: conflicts.length,
+      conflicts,
+    });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Conflict detection error:', error);
+    res.status(500).json({ error: error.message || 'Failed to detect conflicts' });
   }
 });
 

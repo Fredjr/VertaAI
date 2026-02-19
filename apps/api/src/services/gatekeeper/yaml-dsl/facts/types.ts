@@ -10,14 +10,15 @@ import type { PRContext } from '../comparators/types.js';
 /**
  * Fact categories for organization
  */
-export type FactCategory = 
+export type FactCategory =
   | 'universal'   // Workspace, repo, branch, environment
   | 'pr'          // PR metadata (approvals, labels, author)
   | 'diff'        // File changes, lines added/deleted
   | 'openapi'     // OpenAPI spec changes
   | 'terraform'   // Terraform plan changes
   | 'sbom'        // SBOM/dependency changes
-  | 'drift';      // Drift detection (Track B)
+  | 'drift'       // Drift detection (Track B)
+  | 'gate';       // Gate status (cross-gate dependencies)
 
 /**
  * Supported value types for facts

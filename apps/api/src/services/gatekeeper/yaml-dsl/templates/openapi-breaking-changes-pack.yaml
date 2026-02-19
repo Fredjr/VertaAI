@@ -1,0 +1,145 @@
+# ======================================================================
+# Template A1: Block Breaking OpenAPI Changes
+# ======================================================================
+# 
+# Purpose: Block PRs with breaking changes to OpenAPI specs
+# Use Case: API-first organizations that need to prevent breaking changes
+#           from being merged to production branches
+# 
+# This pack:
+# - Detects breaking changes in OpenAPI/Swagger specs
+# - Blocks PRs with breaking changes to main/release branches
+# - Provides detailed information about what changed
+# - Suggests version bump requirements
+# 
+# Phase 3B.2 - OpenAPI Diff Facts
+# ======================================================================
+
+apiVersion: verta.ai/v1
+kind: PolicyPack
+metadata:
+  id: openapi-breaking-changes
+  name: Block Breaking OpenAPI Changes
+  version: 1.0.0
+  description: Block PRs with breaking changes to OpenAPI specs
+  author: Verta AI
+  tags:
+    - openapi
+    - api-contract
+    - breaking-changes
+    - production-safety
+
+scope:
+  type: workspace
+  branches:
+    include:
+      - main
+      - master
+      - release/*
+      - production
+
+rules:
+  # Rule 1: Block breaking changes to OpenAPI specs
+  - id: block-breaking-openapi-changes
+    name: Block Breaking OpenAPI Changes
+    description: Block PRs that introduce breaking changes to OpenAPI specs
+    enabled: true
+    
+    trigger:
+      anyChangedPaths:
+        - "**/*.openapi.yaml"
+        - "**/*.openapi.json"
+        - "**/openapi.yaml"
+        - "**/openapi.yml"
+        - "**/swagger.yaml"
+        - "**/swagger.json"
+    
+    obligations:
+      # Obligation 1: Fail if breaking changes detected
+      - condition:
+          fact: openapi.breakingChanges.count
+          operator: ">"
+          value: 0
+        severity: critical
+        decisionOnFail: block
+        message: |
+          Breaking changes detected in OpenAPI spec.
+          
+          Breaking changes require a major version bump and careful coordination with API consumers.
+          
+          Please:
+          1. Review the breaking changes listed in the PR
+          2. Update the API version (major bump)
+          3. Communicate changes to API consumers
+          4. Consider deprecation period for removed endpoints
+          
+          If this is intentional, get approval from API platform team.
+
+  # Rule 2: Require version bump when endpoints are added
+  - id: require-version-bump-new-endpoints
+    name: Require Version Bump for New Endpoints
+    description: Ensure API version is bumped when new endpoints are added
+    enabled: true
+    
+    trigger:
+      anyChangedPaths:
+        - "**/*.openapi.yaml"
+        - "**/*.openapi.json"
+        - "**/openapi.yaml"
+        - "**/swagger.yaml"
+    
+    obligations:
+      # Warn if endpoints added but version not bumped
+      - condition:
+          and:
+            - fact: openapi.endpointsAdded.count
+              operator: ">"
+              value: 0
+            - fact: openapi.oldVersion
+              operator: "=="
+              value: openapi.newVersion
+        severity: medium
+        decisionOnFail: warn
+        message: |
+          New endpoints were added but API version was not bumped.
+          
+          Please update the API version in the OpenAPI spec (minor bump recommended).
+
+  # Rule 3: Warn about deprecated endpoints
+  - id: warn-deprecated-endpoints
+    name: Warn About Deprecated Endpoints
+    description: Notify when endpoints are marked as deprecated
+    enabled: true
+    
+    trigger:
+      anyChangedPaths:
+        - "**/*.openapi.yaml"
+        - "**/*.openapi.json"
+        - "**/openapi.yaml"
+        - "**/swagger.yaml"
+    
+    obligations:
+      - condition:
+          fact: openapi.deprecatedEndpoints.count
+          operator: ">"
+          value: 0
+        severity: low
+        decisionOnFail: warn
+        message: |
+          Endpoints were marked as deprecated in this PR.
+          
+          Please ensure:
+          1. Deprecation notice is added to API documentation
+          2. Sunset date is communicated to API consumers
+          3. Alternative endpoints are documented
+
+evaluation:
+  externalDependencyMode: soft_fail
+  unknownArtifactMode: soft_fail
+  budgets:
+    totalTimeoutSeconds: 60
+    perComparatorTimeoutSeconds: 15
+    maxApiCalls: 30
+  maxFindings: 50
+  maxEvidenceSnippetsPerFinding: 3
+

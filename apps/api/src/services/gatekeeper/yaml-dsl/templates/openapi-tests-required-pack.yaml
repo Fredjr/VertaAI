@@ -1,0 +1,162 @@
+# ======================================================================
+# Template A4: OpenAPI Changes Require Tests
+# ======================================================================
+# 
+# Purpose: Require test updates when OpenAPI spec changes
+# Use Case: API-first organizations that need to ensure test coverage
+#           for API changes
+# 
+# This pack:
+# - Detects changes to OpenAPI/Swagger specs
+# - Requires test file modifications when API changes
+# - Blocks PRs that change APIs without updating tests
+# - Ensures test coverage for API contracts
+# 
+# Phase 3C.3 - OpenAPI Tests Required
+# ======================================================================
+
+apiVersion: verta.ai/v1
+kind: PolicyPack
+metadata:
+  id: openapi-tests-required
+  name: OpenAPI Changes Require Tests
+  version: 1.0.0
+  description: Require test updates when OpenAPI spec changes
+  author: Verta AI
+  tags:
+    - openapi
+    - testing
+    - api-contract
+    - quality
+
+scope:
+  type: workspace
+  branches:
+    include:
+      - main
+      - master
+      - release/*
+      - develop
+
+rules:
+  # Rule 1: Require tests for OpenAPI changes
+  - id: require-tests-for-openapi-changes
+    name: Require Tests for OpenAPI Changes
+    description: Block PRs that change OpenAPI spec without updating tests
+    enabled: true
+    
+    trigger:
+      anyChangedPaths:
+        - "**/*.openapi.yaml"
+        - "**/*.openapi.json"
+        - "**/openapi.yaml"
+        - "**/openapi.json"
+        - "**/swagger.yaml"
+        - "**/swagger.json"
+        - "**/api-spec.yaml"
+        - "**/api-spec.json"
+    
+    obligations:
+      # Check if OpenAPI changed AND no test files were modified
+      - condition:
+          and:
+            - fact: openapi.changed
+              operator: "=="
+              value: true
+            - not:
+                fact: diff.changedPaths
+                operator: "contains"
+                value: "test"
+        severity: high
+        decisionOnFail: block
+        message: |
+          OpenAPI spec changed but no test files were modified.
+          
+          When you modify the API contract, you must also update the tests to ensure:
+          1. New endpoints have test coverage
+          2. Modified endpoints have updated tests
+          3. Removed endpoints have tests removed
+          
+          Please add or update test files in one of these locations:
+          - tests/
+          - __tests__/
+          - *.test.ts
+          - *.test.js
+          - *.spec.ts
+          - *.spec.js
+  
+  # Rule 2: Require tests for new endpoints
+  - id: require-tests-for-new-endpoints
+    name: Require Tests for New Endpoints
+    description: Require test coverage for newly added API endpoints
+    enabled: true
+    
+    trigger:
+      anyChangedPaths:
+        - "**/*.openapi.yaml"
+        - "**/*.openapi.json"
+        - "**/openapi.yaml"
+        - "**/openapi.json"
+    
+    obligations:
+      # Check if new endpoints were added AND no test files were modified
+      - condition:
+          and:
+            - fact: openapi.endpointsAdded.count
+              operator: ">"
+              value: 0
+            - not:
+                fact: diff.changedPaths
+                operator: "contains"
+                value: "test"
+        severity: high
+        decisionOnFail: block
+        message: |
+          New API endpoints added without test coverage.
+          
+          You added {openapi.endpointsAdded.count} new endpoint(s) to the OpenAPI spec.
+          Please add tests for these new endpoints.
+          
+          Best practices:
+          - Add integration tests for each new endpoint
+          - Test success cases (200, 201, etc.)
+          - Test error cases (400, 404, 500, etc.)
+          - Test authentication and authorization
+          - Test input validation
+  
+  # Rule 3: Warn about modified endpoints without tests
+  - id: warn-modified-endpoints-without-tests
+    name: Warn About Modified Endpoints
+    description: Warn when endpoints are modified without test updates
+    enabled: true
+    
+    trigger:
+      anyChangedPaths:
+        - "**/*.openapi.yaml"
+        - "**/*.openapi.json"
+    
+    obligations:
+      # Check if endpoints were modified AND no test files were modified
+      - condition:
+          and:
+            - fact: openapi.endpointsModified.count
+              operator: ">"
+              value: 0
+            - not:
+                fact: diff.changedPaths
+                operator: "contains"
+                value: "test"
+        severity: medium
+        decisionOnFail: warn
+        message: |
+          API endpoints modified without test updates.
+          
+          You modified {openapi.endpointsModified.count} endpoint(s).
+          Consider updating tests to reflect these changes.
+          
+          Modified endpoints may have:
+          - New parameters
+          - Changed response schemas
+          - Different status codes
+          - Updated validation rules
+

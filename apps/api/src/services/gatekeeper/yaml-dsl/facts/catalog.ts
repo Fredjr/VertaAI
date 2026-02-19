@@ -162,6 +162,32 @@ registerFact({
   examples: ['2026-02-18T10:30:00Z'],
 });
 
+// Phase 3B.3: Additional time facts
+registerFact({
+  id: 'time.dayOfWeek',
+  name: 'Day of Week',
+  description: 'Day of week when PR was evaluated (Monday, Tuesday, etc.)',
+  category: 'universal',
+  valueType: 'string',
+  version: 'v1.0.0',
+  resolver: () => {
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return days[new Date().getDay()];
+  },
+  examples: ['Monday', 'Friday', 'Sunday'],
+});
+
+registerFact({
+  id: 'time.hourOfDay',
+  name: 'Hour of Day',
+  description: 'Hour of day (0-23) when PR was evaluated',
+  category: 'universal',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: () => new Date().getHours(),
+  examples: ['9', '14', '23'],
+});
+
 // ======================================================================
 // PR METADATA FACTS
 // ======================================================================
@@ -208,6 +234,59 @@ registerFact({
   version: 'v1.0.0',
   resolver: (context: PRContext) => (context as any).isDraft || false,
   examples: ['true', 'false'],
+});
+
+// Phase 3B.3: Additional PR reviewer facts
+registerFact({
+  id: 'pr.reviewers.count',
+  name: 'Reviewer Count',
+  description: 'Number of unique reviewers who reviewed the PR',
+  category: 'pr',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    try {
+      const reviews = await context.github.rest.pulls.listReviews({
+        owner: context.owner,
+        repo: context.repo,
+        pull_number: context.prNumber,
+      });
+      const uniqueReviewers = new Set(
+        reviews.data.map(r => r.user?.login).filter(Boolean)
+      );
+      return uniqueReviewers.size;
+    } catch (error) {
+      console.error('[Facts] Failed to fetch reviewers:', error);
+      return 0;
+    }
+  },
+  examples: ['0', '2', '5'],
+});
+
+registerFact({
+  id: 'pr.reviewers.teams',
+  name: 'Reviewer Teams',
+  description: 'Teams that reviewed the PR (requires team membership data)',
+  category: 'pr',
+  valueType: 'array',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    try {
+      // Get requested reviewers (teams)
+      const pr = await context.github.rest.pulls.get({
+        owner: context.owner,
+        repo: context.repo,
+        pull_number: context.prNumber,
+      });
+
+      const teams = pr.data.requested_teams?.map(t => t.slug) || [];
+      return teams;
+    } catch (error) {
+      console.error('[Facts] Failed to fetch reviewer teams:', error);
+      return [];
+    }
+  },
+  examples: [['platform-team', 'security-team'], ['backend-team']],
 });
 
 registerFact({
@@ -343,5 +422,803 @@ registerFact({
     return context.files?.reduce((sum, f) => sum + (f.additions || 0) + (f.deletions || 0), 0) || 0;
   },
   examples: ['15', '80', '300'],
+});
+
+// ======================================================================
+// OPENAPI FACTS (Phase 3B.2)
+// ======================================================================
+
+/**
+ * Helper function to find OpenAPI files in PR
+ */
+function findOpenApiFiles(context: PRContext): string[] {
+  return context.files?.filter(f =>
+    f.filename.includes('openapi') ||
+    f.filename.endsWith('.openapi.yaml') ||
+    f.filename.endsWith('.openapi.json') ||
+    f.filename.endsWith('swagger.yaml') ||
+    f.filename.endsWith('swagger.json') ||
+    f.filename.match(/\/openapi\.(yaml|yml|json)$/i) ||
+    f.filename.match(/\/swagger\.(yaml|yml|json)$/i)
+  ).map(f => f.filename) || [];
+}
+
+/**
+ * Helper function to fetch file content from GitHub
+ */
+async function fetchFileContent(
+  context: PRContext,
+  path: string,
+  ref: 'base' | 'head'
+): Promise<string | null> {
+  try {
+    const sha = ref === 'base' ? context.baseBranch : context.headSha;
+    const response = await context.github.rest.repos.getContent({
+      owner: context.owner,
+      repo: context.repo,
+      path,
+      ref: sha,
+    });
+
+    // Decode base64 content
+    if ('content' in response.data && response.data.content) {
+      return Buffer.from(response.data.content, 'base64').toString('utf-8');
+    }
+    return null;
+  } catch (error) {
+    console.error(`[OpenAPIFacts] Failed to fetch ${path} at ${ref}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Helper function to get OpenAPI diff data (cached in context)
+ */
+async function getOpenApiDiffData(context: PRContext): Promise<any> {
+  // Check if already cached
+  if (context.cache && (context.cache as any).openApiDiff) {
+    return (context.cache as any).openApiDiff;
+  }
+
+  // Find OpenAPI files
+  const openapiFiles = findOpenApiFiles(context);
+  if (openapiFiles.length === 0) {
+    return null;
+  }
+
+  // For now, analyze the first OpenAPI file found
+  const file = openapiFiles[0];
+
+  // Import OpenAPI parser (dynamic import to avoid circular dependencies)
+  const { diffOpenApiSpecs } = await import('../../../signals/openApiParser.js');
+
+  // Fetch old and new content
+  const oldContent = await fetchFileContent(context, file, 'base');
+  const newContent = await fetchFileContent(context, file, 'head');
+
+  // Compute diff
+  const diff = diffOpenApiSpecs(oldContent, newContent);
+
+  // Cache the result
+  if (!context.cache) {
+    (context as any).cache = {};
+  }
+  (context.cache as any).openApiDiff = diff;
+
+  return diff;
+}
+
+registerFact({
+  id: 'openapi.changed',
+  name: 'OpenAPI Spec Changed',
+  description: 'Whether OpenAPI spec changed in this PR',
+  category: 'openapi',
+  valueType: 'boolean',
+  version: 'v1.0.0',
+  resolver: (context: PRContext) => {
+    const openapiFiles = findOpenApiFiles(context);
+    return openapiFiles.length > 0;
+  },
+  examples: ['true', 'false'],
+});
+
+registerFact({
+  id: 'openapi.breakingChanges.count',
+  name: 'OpenAPI Breaking Changes Count',
+  description: 'Number of breaking changes detected in OpenAPI spec',
+  category: 'openapi',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return 0;
+    return diff.changes.filter((c: any) => c.breakingChange).length;
+  },
+  examples: ['0', '2', '5'],
+});
+
+registerFact({
+  id: 'openapi.breakingChanges.types',
+  name: 'OpenAPI Breaking Change Types',
+  description: 'Types of breaking changes (e.g., ["endpoint_removed", "required_param_added"])',
+  category: 'openapi',
+  valueType: 'array',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return [];
+    return diff.changes
+      .filter((c: any) => c.breakingChange)
+      .map((c: any) => c.changeType);
+  },
+  examples: [['endpoint_removed', 'required_param_added'], ['schema_removed']],
+});
+
+registerFact({
+  id: 'openapi.endpointsAdded.count',
+  name: 'OpenAPI Endpoints Added',
+  description: 'Number of endpoints added to OpenAPI spec',
+  category: 'openapi',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return 0;
+    return diff.addedEndpoints || 0;
+  },
+  examples: ['0', '3', '10'],
+});
+
+registerFact({
+  id: 'openapi.endpointsRemoved.count',
+  name: 'OpenAPI Endpoints Removed',
+  description: 'Number of endpoints removed from OpenAPI spec',
+  category: 'openapi',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return 0;
+    return diff.removedEndpoints || 0;
+  },
+  examples: ['0', '1', '5'],
+});
+
+registerFact({
+  id: 'openapi.endpointsModified.count',
+  name: 'OpenAPI Endpoints Modified',
+  description: 'Number of endpoints modified in OpenAPI spec',
+  category: 'openapi',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return 0;
+    return diff.modifiedEndpoints || 0;
+  },
+  examples: ['0', '2', '8'],
+});
+
+registerFact({
+  id: 'openapi.versionBumpRequired',
+  name: 'OpenAPI Version Bump Required',
+  description: 'Required version bump type (major, minor, patch)',
+  category: 'openapi',
+  valueType: 'string',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return 'none';
+
+    // Determine version bump based on changes
+    if (diff.hasBreakingChanges) {
+      return 'major';
+    } else if (diff.addedEndpoints > 0) {
+      return 'minor';
+    } else if (diff.modifiedEndpoints > 0) {
+      return 'patch';
+    }
+    return 'none';
+  },
+  examples: ['major', 'minor', 'patch', 'none'],
+});
+
+registerFact({
+  id: 'openapi.oldVersion',
+  name: 'OpenAPI Old Version',
+  description: 'Old OpenAPI spec version',
+  category: 'openapi',
+  valueType: 'string',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return '';
+    return diff.oldVersion || '';
+  },
+  examples: ['1.0.0', '2.3.1'],
+});
+
+registerFact({
+  id: 'openapi.newVersion',
+  name: 'OpenAPI New Version',
+  description: 'New OpenAPI spec version',
+  category: 'openapi',
+  valueType: 'string',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return '';
+    return diff.newVersion || '';
+  },
+  examples: ['1.1.0', '3.0.0'],
+});
+
+registerFact({
+  id: 'openapi.deprecatedEndpoints.count',
+  name: 'OpenAPI Deprecated Endpoints',
+  description: 'Number of endpoints marked as deprecated',
+  category: 'openapi',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return 0;
+
+    // Count endpoints that were newly marked as deprecated
+    return diff.changes.filter((c: any) =>
+      c.changeType === 'modified' &&
+      c.newSpec?.deprecated &&
+      !c.oldSpec?.deprecated
+    ).length;
+  },
+  examples: ['0', '1', '3'],
+});
+
+registerFact({
+  id: 'openapi.schemasAdded.count',
+  name: 'OpenAPI Schemas Added',
+  description: 'Number of schemas added to OpenAPI spec',
+  category: 'openapi',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return 0;
+
+    // Count schema additions from changes
+    return diff.changes.filter((c: any) =>
+      c.changeType === 'added' && c.path?.includes('/components/schemas/')
+    ).length;
+  },
+  examples: ['0', '2', '5'],
+});
+
+registerFact({
+  id: 'openapi.schemasRemoved.count',
+  name: 'OpenAPI Schemas Removed',
+  description: 'Number of schemas removed from OpenAPI spec',
+  category: 'openapi',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const diff = await getOpenApiDiffData(context);
+    if (!diff) return 0;
+
+    // Count schema removals from changes
+    return diff.changes.filter((c: any) =>
+      c.changeType === 'removed' && c.path?.includes('/components/schemas/')
+    ).length;
+  },
+  examples: ['0', '1', '2'],
+});
+
+// ======================================================================
+// SBOM/CVE FACTS (Phase 3C.1)
+// ======================================================================
+
+// Helper function to find SBOM files in PR
+function findSBOMFiles(context: PRContext): any[] {
+  return context.files?.filter(f =>
+    f.filename.includes('sbom') ||
+    f.filename.endsWith('.sbom.json') ||
+    f.filename.endsWith('.spdx.json') ||
+    f.filename.endsWith('.cyclonedx.json') ||
+    f.filename.includes('bom.json')
+  ) || [];
+}
+
+// Helper function to parse SBOM content
+function parseSBOM(content: string): any {
+  try {
+    const data = JSON.parse(content);
+
+    // CycloneDX format
+    if (data.bomFormat === 'CycloneDX') {
+      return {
+        format: 'cyclonedx',
+        packages: (data.components || []).map((c: any) => ({
+          name: c.name,
+          version: c.version,
+          license: c.licenses?.[0]?.license?.id || c.licenses?.[0]?.license?.name,
+          vulnerabilities: (c.vulnerabilities || []).map((v: any) => ({
+            id: v.id,
+            severity: v.ratings?.[0]?.severity?.toLowerCase() || 'unknown',
+          })),
+        })),
+      };
+    }
+
+    // SPDX format
+    if (data.spdxVersion) {
+      return {
+        format: 'spdx',
+        packages: (data.packages || []).map((p: any) => ({
+          name: p.name,
+          version: p.versionInfo,
+          license: p.licenseConcluded,
+          vulnerabilities: [], // SPDX doesn't include CVEs by default
+        })),
+      };
+    }
+
+    return { format: 'unknown', packages: [] };
+  } catch (error) {
+    console.error('[SBOMParser] Failed to parse SBOM:', error);
+    return { format: 'unknown', packages: [] };
+  }
+}
+
+// Helper function to get SBOM data (cached)
+async function getSBOMData(context: PRContext): Promise<any | null> {
+  // Check cache first
+  if ((context as any)._sbomDataCache) {
+    return (context as any)._sbomDataCache;
+  }
+
+  const sbomFiles = findSBOMFiles(context);
+  if (sbomFiles.length === 0) {
+    return null;
+  }
+
+  // For now, handle first SBOM file
+  const file = sbomFiles[0];
+
+  const oldContent = await fetchFileContent(context, file.filename, 'base');
+  const newContent = await fetchFileContent(context, file.filename, 'head');
+
+  if (!newContent) {
+    return null;
+  }
+
+  const oldSBOM = oldContent ? parseSBOM(oldContent) : { packages: [] };
+  const newSBOM = parseSBOM(newContent);
+
+  // Compute diff
+  const oldPackageNames = new Set(oldSBOM.packages.map((p: any) => p.name));
+  const newPackageNames = new Set(newSBOM.packages.map((p: any) => p.name));
+
+  const added = newSBOM.packages.filter((p: any) => !oldPackageNames.has(p.name));
+  const removed = oldSBOM.packages.filter((p: any) => !newPackageNames.has(p.name));
+
+  const result = {
+    oldSBOM,
+    newSBOM,
+    added,
+    removed,
+  };
+
+  // Cache the result
+  (context as any)._sbomDataCache = result;
+
+  return result;
+}
+
+registerFact({
+  id: 'sbom.packages.count',
+  name: 'SBOM Package Count',
+  description: 'Total number of packages in SBOM',
+  category: 'sbom',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const data = await getSBOMData(context);
+    if (!data) return 0;
+    return data.newSBOM.packages.length;
+  },
+  examples: ['50', '120', '300'],
+});
+
+registerFact({
+  id: 'sbom.packages.added.count',
+  name: 'SBOM Packages Added',
+  description: 'Number of packages added to SBOM',
+  category: 'sbom',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const data = await getSBOMData(context);
+    if (!data) return 0;
+    return data.added.length;
+  },
+  examples: ['0', '2', '5'],
+});
+
+registerFact({
+  id: 'sbom.packages.removed.count',
+  name: 'SBOM Packages Removed',
+  description: 'Number of packages removed from SBOM',
+  category: 'sbom',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const data = await getSBOMData(context);
+    if (!data) return 0;
+    return data.removed.length;
+  },
+  examples: ['0', '1', '3'],
+});
+
+registerFact({
+  id: 'sbom.cves.critical.count',
+  name: 'Critical CVE Count',
+  description: 'Number of critical CVEs in SBOM packages',
+  category: 'sbom',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const data = await getSBOMData(context);
+    if (!data) return 0;
+
+    let count = 0;
+    for (const pkg of data.newSBOM.packages) {
+      count += (pkg.vulnerabilities || []).filter(
+        (v: any) => v.severity === 'critical'
+      ).length;
+    }
+    return count;
+  },
+  examples: ['0', '1', '5'],
+});
+
+registerFact({
+  id: 'sbom.cves.high.count',
+  name: 'High CVE Count',
+  description: 'Number of high-severity CVEs in SBOM packages',
+  category: 'sbom',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const data = await getSBOMData(context);
+    if (!data) return 0;
+
+    let count = 0;
+    for (const pkg of data.newSBOM.packages) {
+      count += (pkg.vulnerabilities || []).filter(
+        (v: any) => v.severity === 'high'
+      ).length;
+    }
+    return count;
+  },
+  examples: ['0', '2', '10'],
+});
+
+registerFact({
+  id: 'sbom.licenses.nonCompliant',
+  name: 'Non-Compliant Licenses',
+  description: 'List of non-compliant licenses found in SBOM packages',
+  category: 'sbom',
+  valueType: 'array',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const data = await getSBOMData(context);
+    if (!data) return [];
+
+    // List of approved licenses (common permissive licenses)
+    const approvedLicenses = [
+      'MIT',
+      'Apache-2.0',
+      'BSD-2-Clause',
+      'BSD-3-Clause',
+      'ISC',
+      'CC0-1.0',
+      'Unlicense',
+      '0BSD',
+    ];
+
+    const nonCompliant = new Set<string>();
+
+    for (const pkg of data.newSBOM.packages) {
+      if (pkg.license && !approvedLicenses.includes(pkg.license)) {
+        nonCompliant.add(pkg.license);
+      }
+    }
+
+    return Array.from(nonCompliant);
+  },
+  examples: [['GPL-3.0', 'AGPL-3.0'], ['LGPL-2.1']],
+});
+
+// ======================================================================
+// GATE STATUS FACTS (Cross-Gate Dependencies)
+// Phase 2 - Option C: Gate Status Facts
+// ======================================================================
+
+/**
+ * Helper function to get previous gate check run status from GitHub
+ * Uses GitHub Check Runs API to query for previous VertaAI Policy Pack checks
+ */
+async function getPreviousGateStatus(context: PRContext): Promise<{
+  status: 'pass' | 'warn' | 'block' | 'unknown';
+  findings: number;
+} | null> {
+  try {
+    // Query GitHub for check runs on this PR's head SHA
+    const response = await context.github.rest.checks.listForRef({
+      owner: context.owner,
+      repo: context.repo,
+      ref: context.headSha,
+    });
+
+    // Find the most recent VertaAI Policy Pack check
+    const policyChecks = response.data.check_runs?.filter(
+      (run: any) => run.name === 'VertaAI Policy Pack'
+    ) || [];
+
+    if (policyChecks.length === 0) {
+      return null; // No previous check run found
+    }
+
+    // Get the most recent check (they're sorted by created_at desc by default)
+    const latestCheck = policyChecks[0];
+
+    // Map GitHub check conclusion to our status
+    let status: 'pass' | 'warn' | 'block' | 'unknown' = 'unknown';
+    if (latestCheck.conclusion === 'success') {
+      status = 'pass';
+    } else if (latestCheck.conclusion === 'failure') {
+      status = 'block';
+    } else if (latestCheck.conclusion === 'neutral' || latestCheck.conclusion === 'action_required') {
+      status = 'warn';
+    }
+
+    // Extract findings count from check output
+    // The check output summary typically includes "X findings" or "X rules triggered"
+    let findings = 0;
+    const summary = latestCheck.output?.summary || '';
+    const findingsMatch = summary.match(/(\d+)\s+findings?/i);
+    if (findingsMatch) {
+      findings = parseInt(findingsMatch[1], 10);
+    }
+
+    return { status, findings };
+  } catch (error) {
+    console.error('[FactCatalog] Failed to fetch previous gate status:', error);
+    return null;
+  }
+}
+
+/**
+ * Cache for gate status to avoid redundant API calls
+ */
+let gateStatusCache: {
+  status: 'pass' | 'warn' | 'block' | 'unknown';
+  findings: number;
+} | null | undefined = undefined;
+
+async function getGateStatusCached(context: PRContext) {
+  if (gateStatusCache === undefined) {
+    gateStatusCache = await getPreviousGateStatus(context);
+  }
+  return gateStatusCache;
+}
+
+registerFact({
+  id: 'gate.contractIntegrity.status',
+  name: 'Contract Integrity Gate Status',
+  description: 'Status of the most recent Track A (Contract Integrity) gate evaluation: pass, warn, block, or unknown',
+  category: 'gate',
+  valueType: 'string',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const gateStatus = await getGateStatusCached(context);
+    return gateStatus?.status || 'unknown';
+  },
+  examples: ['pass', 'warn', 'block', 'unknown'],
+});
+
+registerFact({
+  id: 'gate.contractIntegrity.findings',
+  name: 'Contract Integrity Gate Findings Count',
+  description: 'Number of findings from the most recent Track A (Contract Integrity) gate evaluation',
+  category: 'gate',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const gateStatus = await getGateStatusCached(context);
+    return gateStatus?.findings || 0;
+  },
+  examples: ['0', '3', '10'],
+});
+
+registerFact({
+  id: 'gate.driftRemediation.status',
+  name: 'Drift Remediation Gate Status',
+  description: 'Status of the most recent Track B (Drift Remediation) gate evaluation: pass, warn, block, or unknown. Note: Track B is async, so this reflects the last evaluation if any.',
+  category: 'gate',
+  valueType: 'string',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    // Track B doesn't currently post GitHub checks, so we return 'unknown' for now
+    // This fact is reserved for future Track B YAML DSL integration
+    // When Track B posts checks, we can query for them similar to Track A
+    return 'unknown';
+  },
+  examples: ['pass', 'warn', 'block', 'unknown'],
+});
+
+// ============================================================================
+// DRIFT FACTS (Track B - Drift Remediation)
+// ============================================================================
+
+/**
+ * Helper function to get drift candidate for this PR
+ * Queries DriftCandidate table for PR-based drift detection results
+ */
+async function getDriftCandidateForPR(context: PRContext): Promise<any | null> {
+  try {
+    const { prisma } = await import('../../../lib/db.js');
+
+    // Query for drift candidate associated with this PR
+    // DriftCandidate.repo format: "owner/repo"
+    const repoFullName = `${context.owner}/${context.repo}`;
+
+    const driftCandidate = await prisma.driftCandidate.findFirst({
+      where: {
+        workspaceId: context.workspaceId,
+        repo: repoFullName,
+        sourceType: 'github_pr',
+      },
+      orderBy: {
+        stateUpdatedAt: 'desc', // Get most recent
+      },
+    });
+
+    return driftCandidate;
+  } catch (error) {
+    console.error('[FactCatalog] Failed to fetch drift candidate:', error);
+    return null;
+  }
+}
+
+/**
+ * Cache for drift candidate to avoid redundant queries
+ */
+let driftCandidateCache: any | null | undefined = undefined;
+
+async function getDriftCandidateCached(context: PRContext) {
+  if (driftCandidateCache === undefined) {
+    driftCandidateCache = await getDriftCandidateForPR(context);
+  }
+  return driftCandidateCache;
+}
+
+registerFact({
+  id: 'drift.detected',
+  name: 'Drift Detected',
+  description: 'Whether drift was detected in this PR by the Track B drift detection pipeline',
+  category: 'drift',
+  valueType: 'boolean',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const driftCandidate = await getDriftCandidateCached(context);
+    if (!driftCandidate) {
+      return false;
+    }
+
+    // Drift is detected if the candidate exists and has a drift type
+    return driftCandidate.driftType !== null && driftCandidate.driftType !== undefined;
+  },
+  examples: ['true', 'false'],
+});
+
+registerFact({
+  id: 'drift.types',
+  name: 'Drift Types',
+  description: 'Types of drift detected: instruction, process, ownership, coverage, environment_tooling',
+  category: 'drift',
+  valueType: 'array',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const driftCandidate = await getDriftCandidateCached(context);
+    if (!driftCandidate || !driftCandidate.driftType) {
+      return [];
+    }
+
+    // DriftCandidate.driftType is a single string, but we return as array for consistency
+    return [driftCandidate.driftType];
+  },
+  examples: ['["instruction"]', '["process", "coverage"]', '[]'],
+});
+
+registerFact({
+  id: 'drift.confidence',
+  name: 'Drift Confidence Score',
+  description: 'Confidence score (0-1) of drift detection from triage agent',
+  category: 'drift',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const driftCandidate = await getDriftCandidateCached(context);
+    if (!driftCandidate || driftCandidate.confidence === null || driftCandidate.confidence === undefined) {
+      return 0;
+    }
+
+    return driftCandidate.confidence;
+  },
+  examples: ['0.85', '0.92', '0.0'],
+});
+
+registerFact({
+  id: 'drift.impactedDomains',
+  name: 'Drift Impacted Domains',
+  description: 'Domains impacted by drift: deployment, rollback, config, infra, api, auth, observability, onboarding, ownership_routing, data_migrations',
+  category: 'drift',
+  valueType: 'array',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const driftCandidate = await getDriftCandidateCached(context);
+    if (!driftCandidate || !driftCandidate.driftDomains) {
+      return [];
+    }
+
+    return driftCandidate.driftDomains;
+  },
+  examples: ['["deployment", "rollback"]', '["api", "auth"]', '[]'],
+});
+
+registerFact({
+  id: 'drift.riskLevel',
+  name: 'Drift Risk Level',
+  description: 'Risk level of detected drift: low, medium, high',
+  category: 'drift',
+  valueType: 'string',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const driftCandidate = await getDriftCandidateCached(context);
+    if (!driftCandidate || !driftCandidate.riskLevel) {
+      return 'unknown';
+    }
+
+    return driftCandidate.riskLevel;
+  },
+  examples: ['low', 'medium', 'high', 'unknown'],
+});
+
+registerFact({
+  id: 'drift.priority',
+  name: 'Drift Priority',
+  description: 'Priority level for drift remediation: P0 (critical), P1 (high), P2 (medium)',
+  category: 'drift',
+  valueType: 'string',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const driftCandidate = await getDriftCandidateCached(context);
+    if (!driftCandidate) {
+      return 'unknown';
+    }
+
+    // Map risk level to priority
+    // Note: DriftCandidate doesn't have a priority field, so we derive from riskLevel
+    if (driftCandidate.riskLevel === 'high') {
+      return 'P0';
+    } else if (driftCandidate.riskLevel === 'medium') {
+      return 'P1';
+    } else if (driftCandidate.riskLevel === 'low') {
+      return 'P2';
+    }
+
+    return 'unknown';
+  },
+  examples: ['P0', 'P1', 'P2', 'unknown'],
 });
 

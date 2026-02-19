@@ -1,0 +1,177 @@
+metadata:
+  id: high-risk-file-protection
+  name: High-Risk File Protection
+  version: 1.0.0
+  description: Require extra approvals for critical files and configurations
+  category: security
+  author: VertaAI
+  tags:
+    - security
+    - critical-files
+    - approvals
+    - production
+
+scope:
+  type: workspace
+  scopeMergeStrategy: MOST_RESTRICTIVE
+  scopePriority: 60
+
+rules:
+  - id: require-approvals-production-configs
+    name: Require 2+ Approvals for Production Configs
+    description: Block changes to production configurations without multiple approvals
+    trigger:
+      anyChangedPaths:
+        - '**/config/production.yaml'
+        - '**/config/production.json'
+        - '**/config/prod.yaml'
+        - '**/config/prod.json'
+        - '**/.env.production'
+        - '**/.env.prod'
+        - '**/k8s/production/**'
+        - '**/kubernetes/production/**'
+        - '**/terraform/production/**'
+        - '**/helm/production/**'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: pr.approvals.count
+          operator: gte
+          value: 2
+        message: "Production configuration changes require at least 2 approvals. Current approvals: {pr.approvals.count}. Get review from service owner and SRE team."
+        evidence:
+          - "Production configs are critical - errors can cause outages"
+          - "Required reviewers: Service owner + SRE/DevOps team"
+          - "Verify changes in staging before production deployment"
+
+  - id: require-security-team-auth-changes
+    name: Require Security Team Approval for Auth Changes
+    description: Block authentication/authorization changes without security review
+    trigger:
+      anyChangedPaths:
+        - '**/auth/**'
+        - '**/authentication/**'
+        - '**/authorization/**'
+        - '**/oauth/**'
+        - '**/jwt/**'
+        - '**/saml/**'
+        - '**/oidc/**'
+        - '**/rbac/**'
+        - '**/permissions/**'
+        - '**/middleware/auth*'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          or:
+            - fact: pr.reviewers.teams
+              operator: contains
+              value: security
+            - fact: pr.labels
+              operator: contains
+              value: security-approved
+        message: "Authentication/authorization changes require security team review. Request review from @security team or add 'security-approved' label after review."
+        evidence:
+          - "Auth changes can introduce security vulnerabilities"
+          - "Security team must review: access control, token handling, session management"
+          - "Test thoroughly: privilege escalation, bypass attempts, edge cases"
+
+  - id: warn-cicd-pipeline-changes
+    name: Warn About CI/CD Pipeline Changes
+    description: Require extra scrutiny for CI/CD pipeline modifications
+    trigger:
+      anyChangedPaths:
+        - '**/.github/workflows/**'
+        - '**/.gitlab-ci.yml'
+        - '**/Jenkinsfile'
+        - '**/.circleci/**'
+        - '**/azure-pipelines.yml'
+        - '**/buildkite/**'
+        - '**/.drone.yml'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          fact: pr.approvals.count
+          operator: gte
+          value: 1
+        message: "CI/CD pipeline changes detected. Ensure changes don't introduce security risks (secret exposure, malicious code execution, supply chain attacks)."
+        evidence:
+          - "CI/CD pipelines have access to secrets and deployment credentials"
+          - "Review: secret handling, third-party actions, deployment targets"
+          - "Test pipeline changes in a safe environment first"
+
+  - id: block-dockerfile-without-review
+    name: Block Dockerfile Changes Without Review
+    description: Require approval for Dockerfile changes (security implications)
+    trigger:
+      anyChangedPaths:
+        - '**/Dockerfile'
+        - '**/Dockerfile.*'
+        - '**/*.dockerfile'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: pr.approvals.count
+          operator: gte
+          value: 1
+        message: "Dockerfile changes require at least 1 approval. Dockerfiles can introduce security vulnerabilities (base image issues, exposed secrets, privilege escalation)."
+        evidence:
+          - "Review: base image security, exposed ports, secret handling"
+          - "Use official base images from trusted sources"
+          - "Scan images for vulnerabilities before deployment"
+
+  - id: protect-infrastructure-as-code
+    name: Protect Infrastructure as Code Files
+    description: Require 2+ approvals for infrastructure changes
+    trigger:
+      anyChangedPaths:
+        - '**/terraform/**/*.tf'
+        - '**/cloudformation/**/*.yaml'
+        - '**/cloudformation/**/*.json'
+        - '**/pulumi/**'
+        - '**/cdk/**'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: pr.approvals.count
+          operator: gte
+          value: 2
+        message: "Infrastructure as Code changes require at least 2 approvals (service owner + infrastructure team). Current approvals: {pr.approvals.count}"
+        evidence:
+          - "IaC changes can affect production infrastructure"
+          - "Required reviewers: Service owner + Infrastructure/SRE team"
+          - "Run terraform plan and review changes before applying"
+
+  - id: warn-database-credentials
+    name: Warn About Database Credential Changes
+    description: Alert on changes to database connection strings or credentials
+    trigger:
+      anyChangedPaths:
+        - '**/config/**/*database*'
+        - '**/config/**/*db*'
+        - '**/.env*'
+        - '**/secrets/**'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          fact: pr.labels
+          operator: contains
+          value: credentials-rotated
+        message: "Database configuration changes detected. If credentials changed, ensure old credentials are rotated and new ones are securely stored. Add 'credentials-rotated' label after verification."
+        evidence:
+          - "Never commit credentials to git - use secret management systems"
+          - "Rotate old credentials after updating"
+          - "Verify connection with new credentials before deployment"
+
+defaults:
+  decisionOnFail: warn
+  evidence:
+    - "High-risk files require extra scrutiny and multiple approvals"
+    - "Security and infrastructure changes can have wide-reaching impact"
+    - "Test changes thoroughly in non-production environments"
+

@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Navigation from '@/components/Navigation';
 import { Plus, Edit2, Trash2, Play, Archive, Copy } from 'lucide-react';
 import Link from 'next/link';
+import ConflictDetector from '@/components/policyPacks/ConflictDetector';
 
 interface WorkspacePolicyPack {
   workspaceId: string;
@@ -118,6 +119,13 @@ function PolicyPacksContent() {
             </Link>
           </div>
         </div>
+
+        {/* Conflict Detector - Show conflicts across all packs */}
+        {!loading && policyPacks.length > 0 && (
+          <div className="mb-6">
+            <ConflictDetector workspaceId={workspaceId} autoRefresh={true} refreshInterval={60} />
+          </div>
+        )}
 
         {/* Error State */}
         {error && (

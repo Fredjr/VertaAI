@@ -1,0 +1,131 @@
+metadata:
+  id: database-migration-safety
+  name: Database Migration Safety
+  version: 1.0.0
+  description: Require rollback scripts and safety checks for database migrations
+  category: database
+  author: VertaAI
+  tags:
+    - database
+    - migrations
+    - safety
+    - rollback
+
+scope:
+  type: workspace
+  scopeMergeStrategy: MOST_RESTRICTIVE
+  scopePriority: 50
+
+rules:
+  - id: require-rollback-script
+    name: Require Rollback Script for Migrations
+    description: Block database migrations without corresponding rollback scripts
+    trigger:
+      anyChangedPaths:
+        - '**/migrations/**/*.sql'
+        - '**/migrations/**/*.py'
+        - '**/migrations/**/*.js'
+        - '**/alembic/versions/**'
+        - '**/db/migrate/**'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          or:
+            - fact: diff.files.added
+              operator: contains
+              value: rollback
+            - fact: diff.files.added
+              operator: contains
+              value: down
+            - fact: diff.files.modified
+              operator: contains
+              value: rollback
+        message: "Database migration detected without rollback script. Please add a rollback script (e.g., *_rollback.sql or down migration)."
+        evidence:
+          - "Migration files changed: Check for corresponding rollback scripts"
+          - "Rollback scripts should be in the same directory with 'rollback' or 'down' in the filename"
+
+  - id: require-migration-tests
+    name: Require Tests for Database Migrations
+    description: Warn about database migrations without test coverage
+    trigger:
+      anyChangedPaths:
+        - '**/migrations/**/*.sql'
+        - '**/migrations/**/*.py'
+        - '**/migrations/**/*.js'
+        - '**/alembic/versions/**'
+        - '**/db/migrate/**'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          or:
+            - fact: diff.files.added
+              operator: contains
+              value: test
+            - fact: diff.files.modified
+              operator: contains
+              value: test
+            - fact: diff.files.added
+              operator: contains
+              value: spec
+        message: "Database migration detected without test updates. Consider adding migration tests to verify forward and backward compatibility."
+        evidence:
+          - "Migration files changed: Check for corresponding test files"
+          - "Tests should verify both migration up and rollback down"
+
+  - id: require-dba-approval-schema-changes
+    name: Require DBA Approval for Schema Changes
+    description: Require 2+ approvals for schema-altering migrations
+    trigger:
+      anyChangedPaths:
+        - '**/migrations/**/*.sql'
+        - '**/migrations/**/*.py'
+        - '**/migrations/**/*.js'
+        - '**/alembic/versions/**'
+        - '**/db/migrate/**'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: pr.approvals.count
+          operator: gte
+          value: 2
+        message: "Schema-altering migrations require at least 2 approvals (including DBA review). Current approvals: {pr.approvals.count}"
+        evidence:
+          - "Database schema changes are high-risk operations"
+          - "Require review from DBA team and service owner"
+
+  - id: warn-production-migration
+    name: Warn About Production Migrations
+    description: Notify about migrations that may affect production
+    trigger:
+      anyChangedPaths:
+        - '**/migrations/**/*.sql'
+        - '**/migrations/**/*.py'
+        - '**/migrations/**/*.js'
+        - '**/alembic/versions/**'
+        - '**/db/migrate/**'
+      allLabels:
+        - production
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          fact: pr.labels
+          operator: contains
+          value: migration-approved
+        message: "Production migration detected. Ensure migration has been tested in staging and approved by DBA team. Add 'migration-approved' label after review."
+        evidence:
+          - "Production migrations should be tested in staging first"
+          - "Coordinate with DBA team for production deployment window"
+          - "Have rollback plan ready in case of issues"
+
+defaults:
+  decisionOnFail: warn
+  evidence:
+    - "Database migrations are high-risk changes"
+    - "Always test migrations in non-production environments first"
+    - "Ensure rollback scripts are tested and ready"
+

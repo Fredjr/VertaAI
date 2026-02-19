@@ -1,0 +1,179 @@
+metadata:
+  id: breaking-change-documentation
+  name: Breaking Change Documentation
+  version: 1.0.0
+  description: Require changelog and migration guide for breaking changes
+  category: documentation
+  author: VertaAI
+  tags:
+    - breaking-changes
+    - changelog
+    - migration-guide
+    - versioning
+
+scope:
+  type: workspace
+  scopeMergeStrategy: MOST_RESTRICTIVE
+  scopePriority: 50
+
+rules:
+  - id: require-changelog-for-breaking-changes
+    name: Require Changelog Entry for Breaking Changes
+    description: Block breaking API changes without changelog entry
+    trigger:
+      anyChangedPaths:
+        - '**/openapi.yaml'
+        - '**/openapi.json'
+        - '**/swagger.yaml'
+        - '**/swagger.json'
+        - '**/api/**/*.proto'
+        - '**/graphql/**/*.graphql'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          and:
+            - fact: openapi.breakingChanges.count
+              operator: gt
+              value: 0
+            - or:
+                - fact: diff.files.modified
+                  operator: contains
+                  value: CHANGELOG
+                - fact: diff.files.modified
+                  operator: contains
+                  value: changelog
+                - fact: diff.files.added
+                  operator: contains
+                  value: CHANGELOG
+        message: "Breaking API changes detected ({openapi.breakingChanges.count} breaking changes) without changelog entry. Please update CHANGELOG.md with breaking change details."
+        evidence:
+          - "Breaking changes found: {openapi.breakingChanges.types}"
+          - "Changelog should document what changed, why, and how to migrate"
+          - "Follow semantic versioning: breaking changes require major version bump"
+
+  - id: require-migration-guide-major-version
+    name: Require Migration Guide for Major Version Bumps
+    description: Require migration guide when bumping major version
+    trigger:
+      anyChangedPaths:
+        - '**/openapi.yaml'
+        - '**/openapi.json'
+        - '**/swagger.yaml'
+        - '**/swagger.json'
+        - '**/package.json'
+        - '**/setup.py'
+        - '**/Cargo.toml'
+        - '**/pom.xml'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          and:
+            - fact: openapi.versionBumpRequired
+              operator: eq
+              value: major
+            - or:
+                - fact: diff.files.added
+                  operator: contains
+                  value: MIGRATION
+                - fact: diff.files.added
+                  operator: contains
+                  value: migration
+                - fact: diff.files.added
+                  operator: contains
+                  value: UPGRADE
+                - fact: pr.body
+                  operator: contains
+                  value: migration guide
+        message: "Major version bump detected (breaking changes) without migration guide. Please add MIGRATION.md or include migration instructions in PR description."
+        evidence:
+          - "Major version bumps indicate breaking changes"
+          - "Migration guide should include: what broke, how to fix, code examples"
+          - "Consider providing automated migration scripts or codemods"
+
+  - id: notify-stakeholders-breaking-changes
+    name: Notify Stakeholders About Breaking Changes
+    description: Ensure stakeholders are notified about breaking changes
+    trigger:
+      anyChangedPaths:
+        - '**/openapi.yaml'
+        - '**/openapi.json'
+        - '**/swagger.yaml'
+        - '**/swagger.json'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          and:
+            - fact: openapi.breakingChanges.count
+              operator: gt
+              value: 0
+            - or:
+                - fact: pr.labels
+                  operator: contains
+                  value: breaking-change
+                - fact: pr.labels
+                  operator: contains
+                  value: stakeholders-notified
+        message: "Breaking API changes detected. Please add 'breaking-change' label and notify stakeholders (API consumers, client teams, documentation team)."
+        evidence:
+          - "Breaking changes: {openapi.breakingChanges.types}"
+          - "Notify: API consumers, client library maintainers, documentation team"
+          - "Consider deprecation period before removing endpoints"
+
+  - id: require-deprecation-notice
+    name: Require Deprecation Notice Before Removal
+    description: Warn about endpoint removals without prior deprecation
+    trigger:
+      anyChangedPaths:
+        - '**/openapi.yaml'
+        - '**/openapi.json'
+        - '**/swagger.yaml'
+        - '**/swagger.json'
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          and:
+            - fact: openapi.endpointsRemoved.count
+              operator: gt
+              value: 0
+            - fact: openapi.deprecatedEndpoints.count
+              operator: gt
+              value: 0
+        message: "Endpoints removed ({openapi.endpointsRemoved.count} endpoints) without prior deprecation. Best practice: deprecate first, remove in next major version."
+        evidence:
+          - "Removed endpoints: Check if they were marked as deprecated in previous version"
+          - "Deprecation period allows consumers to migrate gracefully"
+          - "Document deprecation timeline in changelog"
+
+  - id: require-version-bump
+    name: Require Version Bump for API Changes
+    description: Ensure version is bumped when API changes
+    trigger:
+      anyChangedPaths:
+        - '**/openapi.yaml'
+        - '**/openapi.json'
+        - '**/swagger.yaml'
+        - '**/swagger.json'
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: openapi.versionBumpRequired
+          operator: neq
+          value: none
+        message: "API changes detected but version not bumped. Required bump: {openapi.versionBumpRequired}. Please update API version in OpenAPI spec."
+        evidence:
+          - "Breaking changes → major version bump (1.0.0 → 2.0.0)"
+          - "New endpoints → minor version bump (1.0.0 → 1.1.0)"
+          - "Bug fixes/modifications → patch version bump (1.0.0 → 1.0.1)"
+
+defaults:
+  decisionOnFail: warn
+  evidence:
+    - "Breaking changes require careful communication and migration planning"
+    - "Follow semantic versioning: MAJOR.MINOR.PATCH"
+    - "Provide clear migration path for API consumers"
+

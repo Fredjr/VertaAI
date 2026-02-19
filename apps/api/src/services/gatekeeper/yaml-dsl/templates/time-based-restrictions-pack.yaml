@@ -1,0 +1,181 @@
+metadata:
+  id: time-based-restrictions
+  name: Time-Based Restrictions
+  version: 1.0.0
+  description: Restrict deployments and changes based on time of day and day of week
+  category: time-based
+  author: VertaAI
+  tags:
+    - time-based
+    - deployment-windows
+    - business-hours
+    - weekend-protection
+
+scope:
+  type: workspace
+  scopeMergeStrategy: MOST_RESTRICTIVE
+  scopePriority: 45
+
+rules:
+  - id: block-friday-production-deploys
+    name: Block Friday Production Deployments
+    description: Prevent production deployments on Fridays (avoid weekend incidents)
+    trigger:
+      allLabels:
+        - production
+        - deploy
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          fact: time.dayOfWeek
+          operator: neq
+          value: Friday
+        message: "Production deployments are blocked on Fridays to avoid weekend incidents. Current day: {time.dayOfWeek}. Deploy on Monday-Thursday or add 'emergency-deploy' label with approval."
+        evidence:
+          - "Friday deploys increase risk of weekend incidents"
+          - "Limited support availability on weekends"
+          - "For emergencies, add 'emergency-deploy' label and get approval from on-call engineer"
+
+  - id: require-approvals-outside-business-hours
+    name: Require Extra Approvals Outside Business Hours
+    description: Require 2+ approvals for changes outside business hours (9 AM - 5 PM)
+    trigger:
+      allLabels:
+        - production
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          or:
+            - and:
+                - fact: time.hourOfDay
+                  operator: gte
+                  value: 9
+                - fact: time.hourOfDay
+                  operator: lt
+                  value: 17
+            - fact: pr.approvals.count
+              operator: gte
+              value: 2
+        message: "Production changes outside business hours (9 AM - 5 PM) require at least 2 approvals. Current time: {time.hourOfDay}:00. Current approvals: {pr.approvals.count}"
+        evidence:
+          - "Business hours: 9 AM - 5 PM (full team availability)"
+          - "Outside business hours: Limited support, higher risk"
+          - "Require extra approval from on-call engineer + service owner"
+
+  - id: warn-weekend-deployments
+    name: Warn About Weekend Deployments
+    description: Require justification for weekend deployments
+    trigger:
+      allLabels:
+        - production
+        - deploy
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          and:
+            - fact: time.dayOfWeek
+              operator: neq
+              value: Saturday
+            - fact: time.dayOfWeek
+              operator: neq
+              value: Sunday
+        message: "Weekend deployment detected (day: {time.dayOfWeek}). Weekend deploys should be avoided unless emergency. Add 'emergency-deploy' label and document justification in PR."
+        evidence:
+          - "Weekend deployments have limited support availability"
+          - "Only deploy on weekends for critical incidents or planned maintenance"
+          - "Ensure on-call team is aware and ready to respond"
+
+  - id: block-late-night-changes
+    name: Block Late Night Changes Without Approval
+    description: Require approval for changes after 10 PM or before 6 AM
+    trigger:
+      allLabels:
+        - production
+    obligations:
+      - type: condition
+        decisionOnFail: block
+        condition:
+          or:
+            - and:
+                - fact: time.hourOfDay
+                  operator: gte
+                  value: 6
+                - fact: time.hourOfDay
+                  operator: lt
+                  value: 22
+            - fact: pr.labels
+              operator: contains
+              value: emergency-deploy
+        message: "Late night production changes (10 PM - 6 AM) are blocked. Current time: {time.hourOfDay}:00. For emergencies, add 'emergency-deploy' label with on-call approval."
+        evidence:
+          - "Late night changes (10 PM - 6 AM) have minimal support coverage"
+          - "Higher risk of incidents with limited team availability"
+          - "Emergency deploys require on-call engineer approval"
+
+  - id: require-maintenance-window-label
+    name: Require Maintenance Window Label for Off-Hours Deploys
+    description: Ensure off-hours deployments are part of planned maintenance
+    trigger:
+      allLabels:
+        - production
+        - deploy
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          or:
+            - and:
+                - fact: time.hourOfDay
+                  operator: gte
+                  value: 9
+                - fact: time.hourOfDay
+                  operator: lt
+                  value: 17
+                - fact: time.dayOfWeek
+                  operator: neq
+                  value: Saturday
+                - fact: time.dayOfWeek
+                  operator: neq
+                  value: Sunday
+            - fact: pr.labels
+              operator: contains
+              value: maintenance-window
+            - fact: pr.labels
+              operator: contains
+              value: emergency-deploy
+        message: "Off-hours deployment detected (outside Mon-Fri 9 AM - 5 PM). Add 'maintenance-window' label if this is planned maintenance, or 'emergency-deploy' if emergency."
+        evidence:
+          - "Off-hours deploys should be planned maintenance or emergencies"
+          - "Maintenance windows should be communicated to stakeholders"
+          - "Emergency deploys require incident ticket and on-call approval"
+
+  - id: warn-holiday-deployments
+    name: Warn About Holiday Deployments
+    description: Alert about deployments during typical holiday periods
+    trigger:
+      allLabels:
+        - production
+        - deploy
+    obligations:
+      - type: condition
+        decisionOnFail: warn
+        condition:
+          fact: pr.labels
+          operator: contains
+          value: holiday-deploy-approved
+        message: "Deployment during potential holiday period. Verify team availability and add 'holiday-deploy-approved' label after confirming on-call coverage."
+        evidence:
+          - "Holiday deployments have reduced team availability"
+          - "Verify on-call rotation is staffed"
+          - "Consider postponing non-critical deploys until after holiday"
+
+defaults:
+  decisionOnFail: warn
+  evidence:
+    - "Time-based restrictions reduce risk of incidents during low-coverage periods"
+    - "Business hours (Mon-Fri 9 AM - 5 PM) have full team availability"
+    - "Emergency deploys require proper approval and incident tracking"
+
