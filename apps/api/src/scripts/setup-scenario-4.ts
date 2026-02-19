@@ -5,6 +5,8 @@
  * if the previous "VertaAI Policy Pack" check passed.
  *
  * This tests the gate.contractIntegrity.status and gate.contractIntegrity.findings facts.
+ *
+ * IMPORTANT: Uses == and <= operators (NOT eq/lte)
  */
 
 import { PrismaClient } from '@prisma/client';
