@@ -1066,7 +1066,7 @@ registerFact({
  */
 async function getDriftCandidateForPR(context: PRContext): Promise<any | null> {
   try {
-    const { prisma } = await import('../../../lib/db.js');
+    const { prisma } = await import('../../../../lib/db.js');
 
     // Query for drift candidate associated with this PR
     // DriftCandidate.repo format: "owner/repo"

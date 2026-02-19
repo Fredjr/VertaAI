@@ -6,7 +6,7 @@
 import fs from 'fs';
 import path from 'path';
 import yaml from 'yaml';
-import { PackYAML } from './types';
+import { PackYAML } from './types.js';
 
 export interface PackTemplate {
   id: string;

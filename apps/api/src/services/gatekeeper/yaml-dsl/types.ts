@@ -193,6 +193,9 @@ export interface Rule {
   excludePaths?: string[];
 }
 
+// Alias for backward compatibility
+export type PackRule = Rule;
+
 export interface Trigger {
   anyChangedPaths?: string[];  // Glob patterns
   allChangedPaths?: string[];
