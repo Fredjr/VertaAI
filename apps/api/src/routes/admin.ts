@@ -8,7 +8,6 @@ import { PrismaClient } from '@prisma/client';
 import { getTemplateById } from '../services/gatekeeper/yaml-dsl/templateRegistry.js';
 import { computePackHashFull } from '../services/gatekeeper/yaml-dsl/canonicalize.js';
 import yaml from 'yaml';
-import { fixDeployGateOperators } from '../scripts/fix-deploy-gate-operators.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -293,8 +292,63 @@ router.post('/setup-scenario-4', async (req: Request, res: Response) => {
 router.post('/fix-deploy-gate-operators', async (req: Request, res: Response) => {
   try {
     console.log('[Admin] Fixing Deploy Gate operators...');
-    const result = await fixDeployGateOperators();
-    res.json(result);
+
+    // Find the Deploy Gate pack
+    const pack = await prisma.workspacePolicyPack.findFirst({
+      where: {
+        workspaceId: WORKSPACE_ID,
+        scopeType: 'repo',
+        scopeRef: TEST_REPO,
+        name: 'Deploy Gate'
+      }
+    });
+
+    if (!pack) {
+      return res.status(404).json({ error: 'Deploy Gate pack not found' });
+    }
+
+    console.log(`[Admin] Found pack: ${pack.id}`);
+
+    // Get current YAML
+    const currentYaml = pack.trackAConfigYamlPublished;
+    if (!currentYaml) {
+      return res.status(400).json({ error: 'No published YAML found' });
+    }
+
+    // Replace operators in the YAML string
+    let fixedYaml = currentYaml;
+    const eqCount = (fixedYaml.match(/operator: eq\b/g) || []).length;
+    const lteCount = (fixedYaml.match(/operator: lte\b/g) || []).length;
+
+    fixedYaml = fixedYaml.replace(/operator: eq\b/g, 'operator: ==');
+    fixedYaml = fixedYaml.replace(/operator: lte\b/g, 'operator: <=');
+
+    console.log(`[Admin] Replaced ${eqCount} 'eq' and ${lteCount} 'lte' operators`);
+
+    // Update the pack
+    await prisma.workspacePolicyPack.update({
+      where: {
+        workspaceId_id: {
+          workspaceId: pack.workspaceId,
+          id: pack.id
+        }
+      },
+      data: {
+        trackAConfigYamlPublished: fixedYaml,
+        trackAConfigYamlDraft: fixedYaml,
+        updatedAt: new Date(),
+        updatedBy: 'fix-operators-script'
+      }
+    });
+
+    console.log('[Admin] Updated pack in database');
+
+    res.json({
+      success: true,
+      packId: pack.id,
+      message: `Fixed operators: ${eqCount} eq → ==, ${lteCount} lte → <=`
+    });
+
   } catch (error: any) {
     console.error('[Admin] Failed to fix operators:', error);
     res.status(500).json({ error: 'Failed to fix operators', details: error.message });
