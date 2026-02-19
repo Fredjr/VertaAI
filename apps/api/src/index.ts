@@ -24,6 +24,7 @@ import healthCheckRouter from './routes/health-check.js';  // Health check endpo
 import contractPacksRouter from './routes/contractPacks.js';  // Phase 1 Week 1-2: Contract Packs Management
 import contractPoliciesRouter from './routes/contractPolicies.js';  // Week 5-6: Contract Policies Management
 import policyPacksRouter from './routes/policyPacks.js';  // P2 Week 7: Unified WorkspacePolicyPack Management
+import adminRouter from './routes/admin.js';  // Admin routes for one-time operations
 import { initializeComparators } from './services/gatekeeper/yaml-dsl/comparators/index.js';  // YAML DSL Migration
 
 const app: Application = express();
@@ -114,6 +115,9 @@ app.use('/api', contractPoliciesRouter);
 
 // Policy Packs API routes (P2 Week 7 - Unified WorkspacePolicyPack)
 app.use('/api', policyPacksRouter);
+
+// Admin API routes (one-time operations)
+app.use('/api/admin', adminRouter);
 
 // Health check API routes
 app.use('/api', healthCheckRouter);
