@@ -19,6 +19,26 @@ const TEST_REPO = 'Fredjr/vertaai-e2e-test';
 async function main() {
   console.log('[Scenario4] Setting up Test Scenario 4: Gate Status Facts\n');
 
+  // Delete existing Deploy Gate pack if it exists
+  console.log('[Scenario4] Deleting existing Deploy Gate pack...');
+  const existingPack = await prisma.workspacePolicyPack.findFirst({
+    where: {
+      workspaceId: WORKSPACE_ID,
+      scopeType: 'repo',
+      scopeRef: TEST_REPO,
+      packMetadataName: 'Deploy Gate'
+    }
+  });
+
+  if (existingPack) {
+    await prisma.workspacePolicyPack.delete({
+      where: { id: existingPack.id }
+    });
+    console.log('[Scenario4] Deleted existing pack:', existingPack.id);
+  } else {
+    console.log('[Scenario4] No existing pack found');
+  }
+
   // Create Deploy Gate pack that depends on previous gate status
   console.log('[Scenario4] Creating Deploy Gate pack...');
 
