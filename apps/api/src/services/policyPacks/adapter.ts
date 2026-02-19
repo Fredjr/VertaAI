@@ -88,7 +88,7 @@ export async function getContractPacksAdapter(workspaceId: string): Promise<Lega
     where: {
       workspaceId,
       trackAEnabled: true,
-      status: 'active',
+      status: 'ACTIVE',
     },
   });
 
@@ -267,7 +267,7 @@ export async function resolveDriftPlanAdapter(args: {
       where: {
         workspaceId,
         trackBEnabled: true,
-        status: 'active',
+        status: 'ACTIVE',
         scopeType: 'repo',
         scopeRef: repoFullName,
         trackBConfig: {
@@ -292,7 +292,7 @@ export async function resolveDriftPlanAdapter(args: {
       where: {
         workspaceId,
         trackBEnabled: true,
-        status: 'active',
+        status: 'ACTIVE',
         scopeType: 'repo',
         scopeRef: repoFullName,
       },
@@ -313,7 +313,7 @@ export async function resolveDriftPlanAdapter(args: {
       where: {
         workspaceId,
         trackBEnabled: true,
-        status: 'active',
+        status: 'ACTIVE',
         scopeType: 'service',
         scopeRef: serviceId,
       },
@@ -333,7 +333,7 @@ export async function resolveDriftPlanAdapter(args: {
     where: {
       workspaceId,
       trackBEnabled: true,
-      status: 'active',
+      status: 'ACTIVE',
       scopeType: 'workspace',
     },
   });
@@ -368,18 +368,18 @@ async function getCoverage(
 }> {
   const [workspaceDefault, servicePlan, repoPlan] = await Promise.all([
     prisma.workspacePolicyPack.findFirst({
-      where: { workspaceId, trackBEnabled: true, status: 'active', scopeType: 'workspace' },
+      where: { workspaceId, trackBEnabled: true, status: 'ACTIVE', scopeType: 'workspace' },
       select: { id: true },
     }),
     serviceId
       ? prisma.workspacePolicyPack.findFirst({
-          where: { workspaceId, trackBEnabled: true, status: 'active', scopeType: 'service', scopeRef: serviceId },
+          where: { workspaceId, trackBEnabled: true, status: 'ACTIVE', scopeType: 'service', scopeRef: serviceId },
           select: { id: true },
         })
       : null,
     repoFullName
       ? prisma.workspacePolicyPack.findFirst({
-          where: { workspaceId, trackBEnabled: true, status: 'active', scopeType: 'repo', scopeRef: repoFullName },
+          where: { workspaceId, trackBEnabled: true, status: 'ACTIVE', scopeType: 'repo', scopeRef: repoFullName },
           select: { id: true },
         })
       : null,
