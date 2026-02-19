@@ -24,8 +24,23 @@ router.delete('/delete-pack/:packId', async (req: Request, res: Response) => {
     const { packId } = req.params;
     console.log(`[Admin] Deleting pack: ${packId}`);
 
-    await prisma.workspacePolicyPack.delete({
+    // First find the pack to get its compound key
+    const pack = await prisma.workspacePolicyPack.findFirst({
       where: { id: packId }
+    });
+
+    if (!pack) {
+      return res.status(404).json({ error: 'Pack not found' });
+    }
+
+    // Delete using compound unique key
+    await prisma.workspacePolicyPack.delete({
+      where: {
+        workspaceId_id: {
+          workspaceId: pack.workspaceId,
+          id: packId
+        }
+      }
     });
 
     console.log(`[Admin] Deleted pack: ${packId}`);
