@@ -210,8 +210,43 @@ function buildCheckText(result: PackEvaluationResult, pack: PackYAML): string {
 }
 
 function formatFinding(finding: any): string {
-  const { ruleName, comparatorResult } = finding;
-  const { message, evidence, reasonCode } = comparatorResult;
+  const { ruleName, comparatorResult, conditionResult } = finding;
+
+  // Handle both comparator-based and condition-based findings
+  let message: string;
+  let reasonCode: string;
+  let evidence: any[] = [];
+
+  if (comparatorResult) {
+    message = comparatorResult.message;
+    reasonCode = comparatorResult.reasonCode;
+    evidence = comparatorResult.evidence || [];
+  } else if (conditionResult) {
+    // Format condition result
+    if (conditionResult.error) {
+      message = `Condition evaluation error: ${conditionResult.error}`;
+      reasonCode = 'CONDITION_ERROR';
+    } else if (!conditionResult.satisfied) {
+      const cond = conditionResult.condition;
+      if ('fact' in cond) {
+        // Simple condition
+        message = `Condition not satisfied: ${cond.fact} ${cond.operator} ${JSON.stringify(cond.value)}`;
+        if (conditionResult.actualValue !== undefined) {
+          message += ` (actual: ${JSON.stringify(conditionResult.actualValue)})`;
+        }
+      } else {
+        // Composite condition
+        message = `Composite condition not satisfied`;
+      }
+      reasonCode = 'CONDITION_NOT_SATISFIED';
+    } else {
+      message = 'Condition satisfied';
+      reasonCode = 'CONDITION_SATISFIED';
+    }
+  } else {
+    message = 'Unknown finding type';
+    reasonCode = 'UNKNOWN';
+  }
 
   const lines = [
     `### ${ruleName}`,
