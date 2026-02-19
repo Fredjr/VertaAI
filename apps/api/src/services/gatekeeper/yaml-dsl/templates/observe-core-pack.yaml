@@ -102,7 +102,7 @@ rules:
         - "**/openapi.yaml"
         - "**/openapi.json"
     obligations:
-      - comparator: OPENAPI_VALID
+      - comparator: OPENAPI_SCHEMA_VALID
         params: {}
         severity: medium
         decisionOnFail: pass  # Observe only
