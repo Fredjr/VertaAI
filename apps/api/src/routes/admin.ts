@@ -16,6 +16,27 @@ const WORKSPACE_ID = 'demo-workspace';
 const TEST_REPO = 'Fredjr/vertaai-e2e-test';
 
 /**
+ * DELETE /api/admin/delete-pack/:packId
+ * Delete a policy pack by ID
+ */
+router.delete('/delete-pack/:packId', async (req: Request, res: Response) => {
+  try {
+    const { packId } = req.params;
+    console.log(`[Admin] Deleting pack: ${packId}`);
+
+    await prisma.workspacePolicyPack.delete({
+      where: { id: packId }
+    });
+
+    console.log(`[Admin] Deleted pack: ${packId}`);
+    res.json({ success: true, packId });
+  } catch (error: any) {
+    console.error('[Admin] Failed to delete pack:', error);
+    res.status(500).json({ error: 'Failed to delete pack', details: error.message });
+  }
+});
+
+/**
  * POST /api/admin/recreate-observe-pack
  * One-time endpoint to recreate the observe pack with updated template
  */
