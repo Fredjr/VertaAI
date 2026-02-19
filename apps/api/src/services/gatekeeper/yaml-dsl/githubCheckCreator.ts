@@ -37,6 +37,9 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
     // Multi-pack mode
     const decision = input.globalDecision!;
 
+    // Check if ALL packs are in observe mode
+    const allObserveMode = input.packResults!.every(pr => pr.pack.metadata.packMode === 'observe');
+
     // Use first pack's conclusionMapping (all packs should have same routing config)
     const conclusionMapping = input.packResults![0].pack.routing?.github?.conclusionMapping || {
       pass: 'success' as const,
@@ -44,7 +47,8 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
       block: 'failure' as const,
     };
 
-    const conclusion = conclusionMapping[decision];
+    // In observe mode, always return success (don't block PR) but show true decision in output
+    const conclusion = allObserveMode ? 'success' as const : conclusionMapping[decision];
 
     // Build check output for multi-pack
     const title = buildMultiPackCheckTitle(decision, input.packResults!);
@@ -68,16 +72,19 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
     console.log(`[YAMLGatekeeperCheck] Created multi-pack check with conclusion: ${conclusion} (${input.packResults!.length} packs)`);
   } else {
     // Single-pack mode (backward compatibility)
+    const isObserveMode = input.pack.metadata.packMode === 'observe';
+
     const conclusionMapping = input.pack.routing?.github?.conclusionMapping || {
       pass: 'success' as const,
       warn: 'success' as const,
       block: 'failure' as const,
     };
 
-    const conclusion = conclusionMapping[input.packResult.decision];
+    // In observe mode, always return success (don't block PR) but show true decision in output
+    const conclusion = isObserveMode ? 'success' as const : conclusionMapping[input.packResult.decision];
 
-    const title = buildCheckTitle(input.packResult);
-    const summary = buildCheckSummary(input.packResult);
+    const title = buildCheckTitle(input.packResult, input.pack);
+    const summary = buildCheckSummary(input.packResult, input.pack);
     const text = buildCheckText(input.packResult, input.pack);
 
     await octokit.rest.checks.create({
@@ -98,27 +105,34 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
   }
 }
 
-function buildCheckTitle(result: PackEvaluationResult): string {
+function buildCheckTitle(result: PackEvaluationResult, pack?: PackYAML): string {
   const { decision, findings } = result;
+  const isObserveMode = pack?.metadata.packMode === 'observe';
 
   if (decision === 'pass') {
-    return '✅ All policy checks passed';
+    return isObserveMode ? '👁️ Observation complete - no issues detected' : '✅ All policy checks passed';
   }
 
   if (decision === 'warn') {
-    const warnCount = findings.filter(f => f.decisionOnFail === 'warn').length;
-    return `⚠️ ${warnCount} warning(s) found`;
+    const warnCount = findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult?.status === 'fail').length;
+    return isObserveMode
+      ? `👁️ Would WARN (observe-only) - ${warnCount} warning(s) detected`
+      : `⚠️ ${warnCount} warning(s) found`;
   }
 
-  const blockCount = findings.filter(f => f.decisionOnFail === 'block').length;
-  return `❌ ${blockCount} blocking issue(s) found`;
+  const blockCount = findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult?.status === 'fail').length;
+  return isObserveMode
+    ? `👁️ Would BLOCK (observe-only) - ${blockCount} blocking issue(s) detected`
+    : `❌ ${blockCount} blocking issue(s) found`;
 }
 
-function buildCheckSummary(result: PackEvaluationResult): string {
+function buildCheckSummary(result: PackEvaluationResult, pack?: PackYAML): string {
   const { decision, findings, triggeredRules, packHash, packSource, evaluationTimeMs, engineFingerprint } = result;
+  const isObserveMode = pack?.metadata.packMode === 'observe';
 
   const lines = [
-    `**Decision:** ${decision.toUpperCase()}`,
+    isObserveMode ? `**Enforcement Mode:** OBSERVE-ONLY (not enforcing)` : `**Enforcement Mode:** ENFORCING`,
+    `**Policy Decision:** ${decision.toUpperCase()}${isObserveMode && decision !== 'pass' ? ' (would have applied if enforcing)' : ''}`,
     `**Pack Hash:** \`${packHash.substring(0, 16)}\``,
     `**Pack Source:** ${packSource}`,
     `**Rules Triggered:** ${triggeredRules.length}`,
@@ -229,30 +243,40 @@ function formatFinding(finding: any): string {
 // PHASE 3 FIX: Multi-pack check building functions
 
 function buildMultiPackCheckTitle(decision: 'pass' | 'warn' | 'block', packResults: PackResult[]): string {
+  const allObserveMode = packResults.every(pr => pr.pack.metadata.packMode === 'observe');
+
   if (decision === 'pass') {
-    return `✅ All policy checks passed (${packResults.length} pack${packResults.length > 1 ? 's' : ''})`;
+    return allObserveMode
+      ? `👁️ Observation complete - no issues detected (${packResults.length} pack${packResults.length > 1 ? 's' : ''})`
+      : `✅ All policy checks passed (${packResults.length} pack${packResults.length > 1 ? 's' : ''})`;
   }
 
   if (decision === 'warn') {
     const totalWarnings = packResults.reduce((sum, pr) =>
-      sum + pr.result.findings.filter(f => f.decisionOnFail === 'warn').length, 0
+      sum + pr.result.findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult?.status === 'fail').length, 0
     );
-    return `⚠️ ${totalWarnings} warning(s) found across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`;
+    return allObserveMode
+      ? `👁️ Would WARN (observe-only) - ${totalWarnings} warning(s) detected across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`
+      : `⚠️ ${totalWarnings} warning(s) found across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`;
   }
 
   const totalBlocking = packResults.reduce((sum, pr) =>
-    sum + pr.result.findings.filter(f => f.decisionOnFail === 'block').length, 0
+    sum + pr.result.findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult?.status === 'fail').length, 0
   );
-  return `❌ ${totalBlocking} blocking issue(s) found across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`;
+  return allObserveMode
+    ? `👁️ Would BLOCK (observe-only) - ${totalBlocking} blocking issue(s) detected across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`
+    : `❌ ${totalBlocking} blocking issue(s) found across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`;
 }
 
 function buildMultiPackCheckSummary(decision: 'pass' | 'warn' | 'block', packResults: PackResult[]): string {
   const totalFindings = packResults.reduce((sum, pr) => sum + pr.result.findings.length, 0);
   const totalRules = packResults.reduce((sum, pr) => sum + pr.result.triggeredRules.length, 0);
   const totalTime = packResults.reduce((sum, pr) => sum + pr.result.evaluationTimeMs, 0);
+  const allObserveMode = packResults.every(pr => pr.pack.metadata.packMode === 'observe');
 
   const lines = [
-    `**Global Decision:** ${decision.toUpperCase()}`,
+    allObserveMode ? `**Enforcement Mode:** OBSERVE-ONLY (not enforcing)` : `**Enforcement Mode:** ENFORCING`,
+    `**Global Decision:** ${decision.toUpperCase()}${allObserveMode && decision !== 'pass' ? ' (would have applied if enforcing)' : ''}`,
     `**Packs Evaluated:** ${packResults.length}`,
     `**Total Findings:** ${totalFindings}`,
     `**Total Rules Triggered:** ${totalRules}`,

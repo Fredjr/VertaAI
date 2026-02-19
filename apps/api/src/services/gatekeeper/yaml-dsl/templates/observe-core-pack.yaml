@@ -48,9 +48,9 @@ rules:
       - comparator: NO_SECRETS_IN_DIFF
         params: {}
         severity: high
-        decisionOnFail: pass  # Observe only - never block
-        decisionOnUnknown: pass
-        message: "Potential secret detected (observation only)"
+        decisionOnFail: block  # TRUE severity - would block if enforced
+        decisionOnUnknown: warn
+        message: "Potential secret detected in diff"
     skipIf:
       labels: []
     excludePaths: []
@@ -66,9 +66,9 @@ rules:
         params:
           minCount: 1
         severity: medium
-        decisionOnFail: pass  # Observe only
-        decisionOnUnknown: pass
-        message: "PR has fewer than 1 approval (observation only)"
+        decisionOnFail: warn  # TRUE severity - would warn if enforced
+        decisionOnUnknown: warn
+        message: "PR has fewer than required approvals"
     skipIf:
       labels: ["skip-approval"]
     excludePaths: []
@@ -84,9 +84,9 @@ rules:
         params:
           fieldName: "Testing Done"
         severity: low
-        decisionOnFail: pass  # Observe only
-        decisionOnUnknown: pass
-        message: "PR template field 'Testing Done' not found (observation only)"
+        decisionOnFail: warn  # TRUE severity - would warn if enforced
+        decisionOnUnknown: warn
+        message: "PR template field 'Testing Done' not found"
     skipIf:
       labels: []
     excludePaths: []
@@ -105,9 +105,9 @@ rules:
       - comparator: OPENAPI_SCHEMA_VALID
         params: {}
         severity: medium
-        decisionOnFail: pass  # Observe only
-        decisionOnUnknown: pass
-        message: "OpenAPI spec validation failed (observation only)"
+        decisionOnFail: warn  # TRUE severity - would warn if enforced
+        decisionOnUnknown: warn
+        message: "OpenAPI spec validation failed"
     skipIf:
       labels: []
     excludePaths:
