@@ -61,50 +61,54 @@ async function main() {
   // Step 3: List available templates
   console.log('\n📋 Step 3: Available templates:');
   const templates = [
-    'observe-core',
-    'enforce-core',
-    'security-focused',
-    'documentation',
-    'infrastructure',
-    'database-migration-safety',
-    'breaking-change-documentation',
-    'high-risk-file-protection',
-    'dependency-update-safety',
-    'deploy-gate',
-    'time-based-restrictions',
-    'team-based-routing',
+    'verta.observe-core.v1',
+    'verta.enforce-core.v1',
+    'verta.security-focused.v1',
+    'verta.documentation.v1',
+    'verta.infrastructure.v1',
+    'verta.database-migration-safety.v1',
+    'verta.breaking-change-documentation.v1',
+    'verta.high-risk-file-protection.v1',
+    'verta.dependency-update-safety.v1',
+    'verta.deploy-gate.v1',
+    'verta.time-based-restrictions.v1',
+    'verta.team-based-routing.v1',
   ];
-  
+
   templates.forEach((id, index) => {
     const template = getTemplateById(id);
     if (template) {
       console.log(`   ${index + 1}. ${id} - ${template.name}`);
     }
   });
-  
+
   // Step 4: Create test policy pack from observe-core template
   console.log('\n📋 Step 4: Creating test policy pack...');
-  const template = getTemplateById('observe-core');
+  const template = getTemplateById('verta.observe-core.v1');
   
   if (!template) {
-    console.error('❌ Template not found: observe-core');
+    console.error('❌ Template not found: verta.observe-core.v1');
     process.exit(1);
   }
   
-  // Parse template YAML
-  const packYAML = yaml.parse(template.yaml);
-  
+  // Use the already-parsed template
+  const packYAML = { ...template.parsed };
+
   // Customize for test repository
   packYAML.scope = {
     type: 'repo',
     repos: {
       include: [TEST_REPO]
+    },
+    branches: {
+      include: [],  // Empty = match all branches
+      exclude: []
     }
   };
-  
-  // Compute pack hash
-  const packHash = computePackHashFull(packYAML);
+
+  // Convert to YAML string and compute hash
   const yamlString = yaml.stringify(packYAML);
+  const packHash = computePackHashFull(yamlString);
   
   // Create or update policy pack
   const existingPack = await prisma.workspacePolicyPack.findFirst({
@@ -113,7 +117,7 @@ async function main() {
       name: 'Production Test Pack - Observe Core'
     }
   });
-  
+
   let pack;
   if (existingPack) {
     console.log('⚠️  Pack already exists. Updating...');
@@ -125,10 +129,17 @@ async function main() {
         }
       },
       data: {
-        yamlContent: yamlString,
-        packHash,
+        trackAConfigYamlPublished: yamlString,
+        trackAPackHashPublished: packHash,
+        packStatus: 'published',
+        publishedAt: new Date(),
+        publishedBy: 'setup-script',
+        packMetadataId: packYAML.metadata.id,
+        packMetadataVersion: packYAML.metadata.version,
+        packMetadataName: packYAML.metadata.name,
         status: 'ACTIVE',
         updatedAt: new Date(),
+        updatedBy: 'setup-script',
       }
     });
   } else {
@@ -140,12 +151,17 @@ async function main() {
         scopeType: 'repo',
         scopeRef: TEST_REPO,
         status: 'ACTIVE',
-        yamlContent: yamlString,
-        packHash,
         trackAEnabled: true,
-        trackAConfig: {},
+        trackAConfigYamlPublished: yamlString,
+        trackAPackHashPublished: packHash,
+        packStatus: 'published',
+        publishedAt: new Date(),
+        publishedBy: 'setup-script',
+        packMetadataId: packYAML.metadata.id,
+        packMetadataVersion: packYAML.metadata.version,
+        packMetadataName: packYAML.metadata.name,
+        versionHash: packHash,
         trackBEnabled: false,
-        trackBConfig: {},
         repoAllowlist: [TEST_REPO],
         pathGlobs: [],
         createdBy: 'setup-script',
