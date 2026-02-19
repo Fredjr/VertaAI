@@ -26,7 +26,7 @@ async function main() {
       workspaceId: WORKSPACE_ID,
       scopeType: 'repo',
       scopeRef: TEST_REPO,
-      packMetadataName: 'Deploy Gate'
+      name: 'Deploy Gate'
     }
   });
 
