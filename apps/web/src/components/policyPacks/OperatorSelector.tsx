@@ -41,9 +41,11 @@ export default function OperatorSelector({ value, onChange, factValueType, showD
     .flat()
     .find(op => op.id === value);
 
+  type Operator = { id: string; name: string; description: string; example: string; types?: string[] };
+
   // Filter operators based on fact value type
   const filteredCategories = Object.entries(OPERATORS).reduce((acc, [category, operators]) => {
-    const filtered = operators.filter(op => {
+    const filtered = (operators as Operator[]).filter(op => {
       // If no type restriction, show all
       if (!op.types) return true;
       // If fact type specified, only show compatible operators
@@ -56,7 +58,7 @@ export default function OperatorSelector({ value, onChange, factValueType, showD
       acc[category] = filtered;
     }
     return acc;
-  }, {} as Record<string, typeof OPERATORS.Equality>);
+  }, {} as Record<string, Operator[]>);
 
   const handleSelect = (operator: typeof OPERATORS.Equality[0]) => {
     onChange(operator.id);

@@ -61,6 +61,8 @@ export default function FactSelector({ value, onChange, showDescription = true }
     .flat()
     .find(f => f.id === value);
 
+  type Fact = { id: string; name: string; description: string; valueType: string; example: any };
+
   const filteredCategories = Object.entries(FACT_CATALOG).reduce((acc, [category, facts]) => {
     const filtered = facts.filter(f =>
       f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -71,7 +73,7 @@ export default function FactSelector({ value, onChange, showDescription = true }
       acc[category] = filtered;
     }
     return acc;
-  }, {} as Record<string, typeof FACT_CATALOG.Universal>);
+  }, {} as Record<string, Fact[]>);
 
   const handleSelect = (fact: typeof FACT_CATALOG.Universal[0]) => {
     onChange(fact.id, fact.valueType);

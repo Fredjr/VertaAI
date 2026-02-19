@@ -185,7 +185,7 @@ export default function ConditionBuilder({ value, onChange, showYAMLPreview = fa
       )}
 
       {/* YAML Preview */}
-      {showYAMLPreview && condition && condition.fact && condition.operator && (
+      {showYAMLPreview && condition && isSimpleCondition(condition) && condition.fact && condition.operator && (
         <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-900 rounded-md border border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-2 mb-2">
             <Code className="h-4 w-4 text-gray-500 dark:text-gray-400" />

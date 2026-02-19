@@ -4,6 +4,20 @@ import { useState } from 'react';
 import { Plus, Edit2, Trash2, GripVertical, ToggleLeft, ToggleRight } from 'lucide-react';
 import RuleEditor from './RuleEditor';
 
+// Condition types (matches backend types.ts)
+interface SimpleCondition {
+  fact: string;
+  operator: string;
+  value: any;
+}
+
+interface CompositeCondition {
+  operator: 'AND' | 'OR' | 'NOT';
+  conditions: Array<SimpleCondition | CompositeCondition>;
+}
+
+type Condition = SimpleCondition | CompositeCondition;
+
 interface Rule {
   id: string;
   name: string;
@@ -16,8 +30,11 @@ interface Rule {
     anyChangedPathsRef?: string;
   };
   obligations: Array<{
-    comparator: string;
+    // PHASE 2.4: Support both comparator-based and condition-based obligations
+    comparator?: string;
     params?: Record<string, any>;
+    condition?: Condition;
+    conditions?: Condition[];
     severity: 'low' | 'medium' | 'high' | 'critical';
     decisionOnFail: 'pass' | 'warn' | 'block';
     decisionOnUnknown: 'pass' | 'warn' | 'block';
