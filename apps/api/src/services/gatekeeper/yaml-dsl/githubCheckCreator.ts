@@ -78,7 +78,7 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
 
     const title = buildCheckTitle(input.packResult);
     const summary = buildCheckSummary(input.packResult);
-    const text = buildCheckText(input.packResult);
+    const text = buildCheckText(input.packResult, input.pack);
 
     await octokit.rest.checks.create({
       owner: input.owner,
@@ -133,7 +133,7 @@ function buildCheckSummary(result: PackEvaluationResult): string {
   return lines.join('\n');
 }
 
-function buildCheckText(result: PackEvaluationResult): string {
+function buildCheckText(result: PackEvaluationResult, pack: PackYAML): string {
   const { findings } = result;
 
   if (findings.length === 0) {
@@ -141,11 +141,13 @@ function buildCheckText(result: PackEvaluationResult): string {
   }
 
   const sections: string[] = [];
+  const isObserveMode = pack.metadata.packMode === 'observe';
 
   // Group findings by decision
   const blockFindings = findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult.status === 'fail');
   const warnFindings = findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult.status === 'fail');
   const unknownFindings = findings.filter(f => f.comparatorResult.status === 'unknown');
+  const passFindings = findings.filter(f => f.comparatorResult.status === 'pass');
 
   if (blockFindings.length > 0) {
     sections.push('## ❌ Blocking Issues\n');
@@ -164,6 +166,14 @@ function buildCheckText(result: PackEvaluationResult): string {
   if (unknownFindings.length > 0) {
     sections.push('## ❓ Unable to Evaluate\n');
     for (const finding of unknownFindings) {
+      sections.push(formatFinding(finding));
+    }
+  }
+
+  // In observe mode, show pass findings so users can see what's being monitored
+  if (isObserveMode && passFindings.length > 0) {
+    sections.push('## ✅ Passing Checks\n');
+    for (const finding of passFindings) {
       sections.push(formatFinding(finding));
     }
   }
@@ -261,9 +271,11 @@ function buildMultiPackCheckText(packResults: PackResult[]): string {
     sections.push(`# ${pack.metadata.name} v${pack.metadata.version}`);
     sections.push('');
 
+    const isObserveMode = pack.metadata.packMode === 'observe';
     const blockFindings = result.findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult.status === 'fail');
     const warnFindings = result.findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult.status === 'fail');
     const unknownFindings = result.findings.filter(f => f.comparatorResult.status === 'unknown');
+    const passFindings = result.findings.filter(f => f.comparatorResult.status === 'pass');
 
     if (blockFindings.length > 0) {
       sections.push('## ❌ Blocking Issues\n');
@@ -282,6 +294,14 @@ function buildMultiPackCheckText(packResults: PackResult[]): string {
     if (unknownFindings.length > 0) {
       sections.push('## ❓ Unable to Evaluate\n');
       for (const finding of unknownFindings) {
+        sections.push(formatFinding(finding));
+      }
+    }
+
+    // In observe mode, show pass findings so users can see what's being monitored
+    if (isObserveMode && passFindings.length > 0) {
+      sections.push('## ✅ Passing Checks\n');
+      for (const finding of passFindings) {
         sections.push(formatFinding(finding));
       }
     }
