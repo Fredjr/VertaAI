@@ -153,7 +153,13 @@ function buildCheckText(result: PackEvaluationResult, pack: PackYAML): string {
   const blockFindings = findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult?.status === 'fail');
   const warnFindings = findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult?.status === 'fail');
   const unknownFindings = findings.filter(f => f.comparatorResult?.status === 'unknown');
-  const passFindings = findings.filter(f => f.comparatorResult?.status === 'pass');
+  // Pass findings include:
+  // 1. Comparator returned 'pass'
+  // 2. Comparator returned 'fail' but decisionOnFail is 'pass' (observe mode)
+  const passFindings = findings.filter(f =>
+    f.comparatorResult?.status === 'pass' ||
+    (f.comparatorResult?.status === 'fail' && f.decisionOnFail === 'pass')
+  );
 
   console.log(`[GitHubCheckCreator] Grouped findings: block=${blockFindings.length}, warn=${warnFindings.length}, unknown=${unknownFindings.length}, pass=${passFindings.length}`);
 
@@ -283,7 +289,13 @@ function buildMultiPackCheckText(packResults: PackResult[]): string {
     const blockFindings = result.findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult.status === 'fail');
     const warnFindings = result.findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult.status === 'fail');
     const unknownFindings = result.findings.filter(f => f.comparatorResult.status === 'unknown');
-    const passFindings = result.findings.filter(f => f.comparatorResult.status === 'pass');
+    // Pass findings include:
+    // 1. Comparator returned 'pass'
+    // 2. Comparator returned 'fail' but decisionOnFail is 'pass' (observe mode)
+    const passFindings = result.findings.filter(f =>
+      f.comparatorResult.status === 'pass' ||
+      (f.comparatorResult.status === 'fail' && f.decisionOnFail === 'pass')
+    );
 
     if (blockFindings.length > 0) {
       sections.push('## ❌ Blocking Issues\n');
