@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "prisma generate && (tsc --skipLibCheck || exit 0)",
+    "build": "prisma generate && (tsc --skipLibCheck || exit 0) && mkdir -p dist/schemas dist/services/gatekeeper/yaml-dsl/templates && cp -r src/schemas/*.json dist/schemas/ && cp -r src/services/gatekeeper/yaml-dsl/templates/*.yaml dist/services/gatekeeper/yaml-dsl/templates/",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
