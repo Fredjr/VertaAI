@@ -8,6 +8,7 @@
 
 import type { PackYAML } from './packValidator.js';
 import type { PrismaClient } from '@prisma/client';
+import * as yaml from 'yaml';
 // PHASE 2.4: Auto-enhance packs with fact-based conditions
 import { enhancePackWithConditions } from './packEnhancer.js';
 // PHASE 3A.2: Use PackMatcher for priority-based selection
@@ -66,7 +67,6 @@ export async function selectApplicablePacks(
   }
 
   // 2. Parse YAML and enhance with conditions
-  const yaml = require('yaml');
   const parsedPacks: Array<{ pack: PackYAML; dbPack: any }> = [];
 
   for (const dbPack of allPacks) {
