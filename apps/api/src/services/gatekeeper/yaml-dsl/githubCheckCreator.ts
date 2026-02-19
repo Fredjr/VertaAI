@@ -143,11 +143,19 @@ function buildCheckText(result: PackEvaluationResult, pack: PackYAML): string {
   const sections: string[] = [];
   const isObserveMode = pack.metadata.packMode === 'observe';
 
+  console.log(`[GitHubCheckCreator] Pack mode: ${pack.metadata.packMode}, isObserveMode: ${isObserveMode}`);
+  console.log(`[GitHubCheckCreator] Total findings: ${findings.length}`);
+  findings.forEach((f, i) => {
+    console.log(`[GitHubCheckCreator] Finding ${i}: status=${f.comparatorResult?.status}, ruleName=${f.ruleName}`);
+  });
+
   // Group findings by decision
-  const blockFindings = findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult.status === 'fail');
-  const warnFindings = findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult.status === 'fail');
-  const unknownFindings = findings.filter(f => f.comparatorResult.status === 'unknown');
-  const passFindings = findings.filter(f => f.comparatorResult.status === 'pass');
+  const blockFindings = findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult?.status === 'fail');
+  const warnFindings = findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult?.status === 'fail');
+  const unknownFindings = findings.filter(f => f.comparatorResult?.status === 'unknown');
+  const passFindings = findings.filter(f => f.comparatorResult?.status === 'pass');
+
+  console.log(`[GitHubCheckCreator] Grouped findings: block=${blockFindings.length}, warn=${warnFindings.length}, unknown=${unknownFindings.length}, pass=${passFindings.length}`);
 
   if (blockFindings.length > 0) {
     sections.push('## ❌ Blocking Issues\n');
