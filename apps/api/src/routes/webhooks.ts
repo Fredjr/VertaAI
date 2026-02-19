@@ -314,19 +314,122 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
 
   console.log(`[Webhook] [V2] PR #${prInfo.prNumber} ${prInfo.action} in ${prInfo.repoFullName}`);
 
-  // Process merged PRs, opened PRs, and synchronize events (new commits)
+  // Process merged PRs, opened PRs, synchronize events (new commits), and labeled events
   const shouldProcess =
     (prInfo.action === 'closed' && prInfo.merged) ||  // Merged PR
     prInfo.action === 'opened' ||                      // New PR opened
-    prInfo.action === 'synchronize';                   // New commits pushed to PR
+    prInfo.action === 'synchronize' ||                 // New commits pushed to PR
+    prInfo.action === 'labeled';                       // Label added to PR
 
   if (!shouldProcess) {
     console.log(`[Webhook] Ignoring PR action: ${prInfo.action}, merged: ${prInfo.merged}`);
     return res.json({ message: 'PR action not relevant for drift detection' });
   }
 
+  // For labeled events, only run gatekeeper (skip drift detection)
+  const isLabeledEvent = prInfo.action === 'labeled';
+  if (isLabeledEvent) {
+    console.log(`[Webhook] [V2] Label added to PR #${prInfo.prNumber} - running gatekeeper only`);
+  }
+
   const eventType = prInfo.merged ? 'merged' : prInfo.action;
   console.log(`[Webhook] [V2] Processing ${eventType} PR #${prInfo.prNumber}: ${prInfo.prTitle}`);
+
+  // For labeled events, we only need to run the gatekeeper (no drift detection)
+  // Fetch PR details and run gatekeeper, then return early
+  if (isLabeledEvent) {
+    try {
+      const octokit = await getGitHubClient(workspaceId, prInfo.installationId);
+      if (!octokit) {
+        console.error('[Webhook] [V2] Could not get GitHub client for labeled event');
+        return res.status(500).json({ error: 'GitHub client not available' });
+      }
+
+      // Fetch PR details to get labels, commits, files
+      const { data: prData } = await octokit.rest.pulls.get({
+        owner: prInfo.repoOwner,
+        repo: prInfo.repoName,
+        pull_number: prInfo.prNumber,
+      });
+
+      const labels = prData.labels?.map((l: any) => l.name) || [];
+      const additions = prData.additions || 0;
+      const deletions = prData.deletions || 0;
+
+      // Fetch commits
+      const { data: commitsData } = await octokit.rest.pulls.listCommits({
+        owner: prInfo.repoOwner,
+        repo: prInfo.repoName,
+        pull_number: prInfo.prNumber,
+      });
+      const commits = commitsData.map((c: any) => ({
+        message: c.commit.message,
+        author: c.commit.author?.name || 'unknown',
+      }));
+
+      // Fetch files
+      const { data: filesData } = await octokit.rest.pulls.listFiles({
+        owner: prInfo.repoOwner,
+        repo: prInfo.repoName,
+        pull_number: prInfo.prNumber,
+      });
+      const files = filesData.map((f: any) => ({
+        filename: f.filename,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+        patch: f.patch,
+      }));
+
+      // Run gatekeeper
+      if (isFeatureEnabled('ENABLE_AGENT_PR_GATEKEEPER', workspaceId)) {
+        if (shouldRunGatekeeper({ author: prInfo.authorLogin, labels })) {
+          console.log(`[Webhook] [V2] Running Agent PR Gatekeeper for labeled PR #${prInfo.prNumber}`);
+
+          try {
+            const gatekeeperResult = await runGatekeeper({
+              owner: prInfo.repoOwner,
+              repo: prInfo.repoName,
+              prNumber: prInfo.prNumber,
+              headSha: payload.pull_request.head.sha,
+              installationId: prInfo.installationId,
+              workspaceId,
+              author: prInfo.authorLogin,
+              title: prInfo.prTitle,
+              body: prInfo.prBody || '',
+              labels,
+              baseBranch: payload.pull_request.base.ref,
+              headBranch: payload.pull_request.head.ref,
+              commits,
+              additions,
+              deletions,
+              files,
+            });
+
+            console.log(`[Webhook] [V2] Gatekeeper result for labeled event: ${gatekeeperResult.riskTier}`);
+
+            return res.status(200).json({
+              message: 'Label added - gatekeeper check triggered',
+              prNumber: prInfo.prNumber,
+              labels,
+            });
+          } catch (error: any) {
+            console.error('[Webhook] [V2] Gatekeeper failed for labeled event:', error.message);
+            return res.status(500).json({ error: 'Gatekeeper failed', details: error.message });
+          }
+        } else {
+          console.log(`[Webhook] [V2] Skipping gatekeeper for labeled PR #${prInfo.prNumber} (trusted bot or skip label)`);
+          return res.json({ message: 'Label added but gatekeeper skipped' });
+        }
+      } else {
+        console.log(`[Webhook] [V2] Gatekeeper not enabled for workspace ${workspaceId}`);
+        return res.json({ message: 'Label added but gatekeeper not enabled' });
+      }
+    } catch (error: any) {
+      console.error('[Webhook] [V2] Error handling labeled event:', error.message);
+      return res.status(500).json({ error: 'Failed to handle labeled event', details: error.message });
+    }
+  }
 
   try {
     // Generate a unique signal event ID
