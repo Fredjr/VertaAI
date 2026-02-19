@@ -225,9 +225,11 @@ If deployment fails or critical issues are found:
 
 ---
 
-**Deployment Status**: ⏳ **REDEPLOYING** (Attempt #4)
+**Deployment Status**: ⏳ **REDEPLOYING** (Attempt #5)
 
-**Monitor deployment at**: https://railway.app
+**Monitor deployment at**:
+- Railway: https://railway.app
+- Vercel: https://vercel.com/dashboard
 
 ---
 
@@ -238,7 +240,8 @@ If deployment fails or critical issues are found:
 | #1 | `c67335f` | ❌ FAILED | ❌ FAILED | TypeScript compilation errors (3 errors) | Commit `79091cf` |
 | #2 | `79091cf` | ❌ FAILED | ❌ FAILED | Missing schema files, __dirname error, missing templates | Commit `8dcf5f1` |
 | #3 | `8dcf5f1` | ✅ SUCCESS | ❌ FAILED | Vercel pnpm registry errors, Web app TypeScript errors (4 errors) | Commit `c086382` |
-| #4 | `c086382` | ⏳ IN PROGRESS | ⏳ IN PROGRESS | All TypeScript errors fixed, all projects compile | - |
+| #4 | `c086382` | ✅ SUCCESS | ❌ FAILED | Vercel pnpm infrastructure issue (`ERR_INVALID_THIS`) | Commit `131b6ee` |
+| #5 | `131b6ee` | ✅ SUCCESS | ⏳ IN PROGRESS | Testing Vercel pnpm fix (.npmrc + vercel.json updates) | MONITORING |
 
 ### Attempt #4 Fixes (Commit `c086382`)
 **All TypeScript Errors Resolved**:
@@ -248,4 +251,17 @@ If deployment fails or critical issues are found:
 4. ✅ Fixed RuleBuilder.tsx - Align Rule interface with RuleEditor
 
 **Build Status**: ✅ All workspace projects compile successfully
+
+### Attempt #5 Fixes (Commit `131b6ee`)
+**Vercel pnpm ERR_INVALID_THIS Fix**:
+1. ✅ Added `.npmrc` with explicit registry configuration
+2. ✅ Updated `vercel.json` to use `--no-frozen-lockfile` flag
+3. ✅ Added `NPM_CONFIG_REGISTRY` environment variable
+4. ✅ Added `PNPM_VERSION=9.1.0` environment variable
+5. ✅ Reduced network concurrency to 1 (avoid registry connection issues)
+6. ✅ Increased fetch retries to 5 with longer timeouts
+
+**Root Cause**: Vercel's pnpm implementation had issues with URLSearchParams when accessing npm registry. The fix adds explicit registry configuration and reduces concurrency to avoid race conditions.
+
+**Expected Result**: Vercel deployment should now complete `pnpm install` successfully
 
