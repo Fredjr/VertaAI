@@ -54,7 +54,7 @@ async function main() {
             type: 'condition',
             condition: {
               fact: 'gate.contractIntegrity.status',
-              operator: 'eq',
+              operator: '==',
               value: 'pass'
             },
             severity: 'critical',
@@ -74,7 +74,7 @@ async function main() {
             type: 'condition',
             condition: {
               fact: 'gate.contractIntegrity.findings',
-              operator: 'lte',
+              operator: '<=',
               value: 3
             },
             severity: 'high',
