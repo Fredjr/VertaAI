@@ -959,9 +959,15 @@ async function getPreviousGateStatus(context: PRContext): Promise<{
       ref: context.headSha,
     });
 
-    // Find the most recent VertaAI Policy Pack check
+    // Find the most recent VertaAI check (look for any check from our app)
+    // This includes: "VertaAI Policy Pack", "VertaAI Observe Core", "Deploy Gate", etc.
     const policyChecks = response.data.check_runs?.filter(
-      (run: any) => run.name === 'VertaAI Policy Pack'
+      (run: any) => {
+        // Match any check from our app or with "VertaAI" in the name
+        return run.app?.slug === 'vertaai-drift-detector' ||
+               run.name?.includes('VertaAI') ||
+               run.name === 'Deploy Gate';
+      }
     ) || [];
 
     if (policyChecks.length === 0) {

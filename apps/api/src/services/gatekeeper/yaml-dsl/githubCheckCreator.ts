@@ -310,16 +310,43 @@ function buildMultiPackCheckText(packResults: PackResult[]): string {
     sections.push('');
 
     const isObserveMode = pack.metadata.packMode === 'observe';
-    const blockFindings = result.findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult.status === 'fail');
-    const warnFindings = result.findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult.status === 'fail');
-    const unknownFindings = result.findings.filter(f => f.comparatorResult.status === 'unknown');
+
+    // FIX: Handle both comparator-based and condition-based findings
+    // Condition-based findings don't have comparatorResult, they have conditionResult
+    const blockFindings = result.findings.filter(f => {
+      if (f.decisionOnFail !== 'block') return false;
+      if (f.comparatorResult) return f.comparatorResult.status === 'fail';
+      if (f.conditionResult) return !f.conditionResult.passed;
+      return false;
+    });
+
+    const warnFindings = result.findings.filter(f => {
+      if (f.decisionOnFail !== 'warn') return false;
+      if (f.comparatorResult) return f.comparatorResult.status === 'fail';
+      if (f.conditionResult) return !f.conditionResult.passed;
+      return false;
+    });
+
+    const unknownFindings = result.findings.filter(f => {
+      if (f.comparatorResult) return f.comparatorResult.status === 'unknown';
+      if (f.conditionResult) return false; // Conditions are never unknown
+      return false;
+    });
+
     // Pass findings include:
     // 1. Comparator returned 'pass'
     // 2. Comparator returned 'fail' but decisionOnFail is 'pass' (observe mode)
-    const passFindings = result.findings.filter(f =>
-      f.comparatorResult.status === 'pass' ||
-      (f.comparatorResult.status === 'fail' && f.decisionOnFail === 'pass')
-    );
+    // 3. Condition passed
+    const passFindings = result.findings.filter(f => {
+      if (f.comparatorResult) {
+        return f.comparatorResult.status === 'pass' ||
+               (f.comparatorResult.status === 'fail' && f.decisionOnFail === 'pass');
+      }
+      if (f.conditionResult) {
+        return f.conditionResult.passed || f.decisionOnFail === 'pass';
+      }
+      return false;
+    });
 
     if (blockFindings.length > 0) {
       sections.push('## ❌ Blocking Issues\n');
