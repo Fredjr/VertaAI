@@ -316,14 +316,14 @@ function buildMultiPackCheckText(packResults: PackResult[]): string {
     const blockFindings = result.findings.filter(f => {
       if (f.decisionOnFail !== 'block') return false;
       if (f.comparatorResult) return f.comparatorResult.status === 'fail';
-      if (f.conditionResult) return !f.conditionResult.passed;
+      if (f.conditionResult) return !f.conditionResult.satisfied;
       return false;
     });
 
     const warnFindings = result.findings.filter(f => {
       if (f.decisionOnFail !== 'warn') return false;
       if (f.comparatorResult) return f.comparatorResult.status === 'fail';
-      if (f.conditionResult) return !f.conditionResult.passed;
+      if (f.conditionResult) return !f.conditionResult.satisfied;
       return false;
     });
 
@@ -336,14 +336,14 @@ function buildMultiPackCheckText(packResults: PackResult[]): string {
     // Pass findings include:
     // 1. Comparator returned 'pass'
     // 2. Comparator returned 'fail' but decisionOnFail is 'pass' (observe mode)
-    // 3. Condition passed
+    // 3. Condition satisfied
     const passFindings = result.findings.filter(f => {
       if (f.comparatorResult) {
         return f.comparatorResult.status === 'pass' ||
                (f.comparatorResult.status === 'fail' && f.decisionOnFail === 'pass');
       }
       if (f.conditionResult) {
-        return f.conditionResult.passed || f.decisionOnFail === 'pass';
+        return f.conditionResult.satisfied || f.decisionOnFail === 'pass';
       }
       return false;
     });
