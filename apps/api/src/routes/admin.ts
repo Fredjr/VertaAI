@@ -8,6 +8,7 @@ import { PrismaClient } from '@prisma/client';
 import { getTemplateById } from '../services/gatekeeper/yaml-dsl/templateRegistry.js';
 import { computePackHashFull } from '../services/gatekeeper/yaml-dsl/canonicalize.js';
 import yaml from 'yaml';
+import { fixDeployGateOperators } from '../scripts/fix-deploy-gate-operators.js';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -282,6 +283,21 @@ router.post('/setup-scenario-4', async (req: Request, res: Response) => {
       error: 'Failed to setup Scenario 4',
       details: error instanceof Error ? error.message : String(error)
     });
+  }
+});
+
+/**
+ * POST /api/admin/fix-deploy-gate-operators
+ * Fix operators in existing Deploy Gate pack (eq → ==, lte → <=)
+ */
+router.post('/fix-deploy-gate-operators', async (req: Request, res: Response) => {
+  try {
+    console.log('[Admin] Fixing Deploy Gate operators...');
+    const result = await fixDeployGateOperators();
+    res.json(result);
+  } catch (error: any) {
+    console.error('[Admin] Failed to fix operators:', error);
+    res.status(500).json({ error: 'Failed to fix operators', details: error.message });
   }
 });
 
