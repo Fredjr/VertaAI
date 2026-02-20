@@ -287,11 +287,13 @@ router.post('/setup-scenario-4', async (req: Request, res: Response) => {
 
 /**
  * POST /api/admin/fix-deploy-gate-operators
- * Fix operators in existing Deploy Gate pack (eq → ==, lte → <=)
+ * Fix operators and fact names in existing Deploy Gate pack
+ * - Operators: eq → ==, lte → <=
+ * - Facts: gate.contractIntegrity.* → gate.previous.*
  */
 router.post('/fix-deploy-gate-operators', async (req: Request, res: Response) => {
   try {
-    console.log('[Admin] Fixing Deploy Gate operators...');
+    console.log('[Admin] Fixing Deploy Gate operators and fact names...');
 
     // Find the Deploy Gate pack
     const pack = await prisma.workspacePolicyPack.findFirst({
@@ -325,6 +327,15 @@ router.post('/fix-deploy-gate-operators', async (req: Request, res: Response) =>
 
     console.log(`[Admin] Replaced ${eqCount} 'eq' and ${lteCount} 'lte' operators`);
 
+    // Replace fact names: gate.contractIntegrity.* → gate.previous.*
+    const statusFactCount = (fixedYaml.match(/gate\.contractIntegrity\.status/g) || []).length;
+    const findingsFactCount = (fixedYaml.match(/gate\.contractIntegrity\.findings/g) || []).length;
+
+    fixedYaml = fixedYaml.replace(/gate\.contractIntegrity\.status/g, 'gate.previous.status');
+    fixedYaml = fixedYaml.replace(/gate\.contractIntegrity\.findings/g, 'gate.previous.findings');
+
+    console.log(`[Admin] Replaced ${statusFactCount} 'gate.contractIntegrity.status' and ${findingsFactCount} 'gate.contractIntegrity.findings' facts`);
+
     // Update the pack
     await prisma.workspacePolicyPack.update({
       where: {
@@ -337,7 +348,7 @@ router.post('/fix-deploy-gate-operators', async (req: Request, res: Response) =>
         trackAConfigYamlPublished: fixedYaml,
         trackAConfigYamlDraft: fixedYaml,
         updatedAt: new Date(),
-        updatedBy: 'fix-operators-script'
+        updatedBy: 'fix-operators-and-facts-script'
       }
     });
 
@@ -346,12 +357,12 @@ router.post('/fix-deploy-gate-operators', async (req: Request, res: Response) =>
     res.json({
       success: true,
       packId: pack.id,
-      message: `Fixed operators: ${eqCount} eq → ==, ${lteCount} lte → <=`
+      message: `Fixed operators: ${eqCount} eq → ==, ${lteCount} lte → <=. Fixed facts: ${statusFactCount} status, ${findingsFactCount} findings`
     });
 
   } catch (error: any) {
-    console.error('[Admin] Failed to fix operators:', error);
-    res.status(500).json({ error: 'Failed to fix operators', details: error.message });
+    console.error('[Admin] Failed to fix operators and facts:', error);
+    res.status(500).json({ error: 'Failed to fix operators and facts', details: error.message });
   }
 });
 
