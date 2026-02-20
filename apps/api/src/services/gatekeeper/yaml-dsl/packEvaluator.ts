@@ -90,6 +90,9 @@ export class PackEvaluator {
       };
     }
 
+    // ENHANCED: Initialize fact metadata storage for enhanced output context
+    (context as any)._factMetadata = {};
+
     // PHASE 2.1: Resolve all facts upfront and attach to context
     // This allows comparators to access fact values without re-resolving
     try {
@@ -193,6 +196,15 @@ export class PackEvaluator {
             const allSatisfied = conditionResults.every(r => r.satisfied);
             const hasError = conditionResults.some(r => r.error);
 
+            // ENHANCED: Extract metadata from PRContext for gate facts
+            let metadata: any = undefined;
+            if (conditionsToEvaluate.length === 1 && 'fact' in conditionsToEvaluate[0]) {
+              const factId = (conditionsToEvaluate[0] as any).fact;
+              if (factId.startsWith('gate.') && (context as any)._factMetadata) {
+                metadata = (context as any)._factMetadata[factId];
+              }
+            }
+
             findings.push({
               ruleId: rule.id,
               ruleName: rule.name,
@@ -204,7 +216,9 @@ export class PackEvaluator {
                   : { operator: 'AND', conditions: conditionsToEvaluate } as Condition,
                 childResults: conditionResults.length > 1 ? conditionResults : undefined,
                 error: hasError ? conditionResults.find(r => r.error)?.error : undefined,
-              },
+                // ENHANCED: Include metadata for better output context
+                ...(metadata ? { metadata } : {}),
+              } as any,
               decisionOnFail: obligation.decisionOnFail,
               decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
             });

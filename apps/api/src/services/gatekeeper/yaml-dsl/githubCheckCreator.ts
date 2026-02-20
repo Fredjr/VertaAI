@@ -254,17 +254,31 @@ function formatFinding(finding: any): string {
     reasonCode = comparatorResult.reasonCode;
     evidence = comparatorResult.evidence || [];
   } else if (conditionResult) {
-    // Format condition result
+    // Format condition result with enhanced context
     if (conditionResult.error) {
       message = `Condition evaluation error: ${conditionResult.error}`;
       reasonCode = 'CONDITION_ERROR';
     } else if (!conditionResult.satisfied) {
       const cond = conditionResult.condition;
       if ('fact' in cond) {
-        // Simple condition
+        // Simple condition - enhanced formatting with metadata
         message = `Condition not satisfied: ${cond.fact} ${cond.operator} ${JSON.stringify(cond.value)}`;
+
+        // Add actual value if available
         if (conditionResult.actualValue !== undefined) {
-          message += ` (actual: ${JSON.stringify(conditionResult.actualValue)})`;
+          message += `\nActual Value: ${JSON.stringify(conditionResult.actualValue)}`;
+          message += `\nExpected Value: ${JSON.stringify(cond.value)}`;
+        }
+
+        // ENHANCED: Add metadata for gate facts (cross-gate dependencies)
+        if (cond.fact.startsWith('gate.') && (conditionResult as any).metadata) {
+          const metadata = (conditionResult as any).metadata;
+          message += `\n\n📊 Previous Check Details:`;
+          message += `\n  • Check Name: ${metadata.checkName}`;
+          message += `\n  • Check ID: ${metadata.checkId}`;
+          message += `\n  • Completed At: ${new Date(metadata.completedAt).toLocaleString()}`;
+          message += `\n  • GitHub Conclusion: ${metadata.conclusion}`;
+          message += `\n  • Findings: ${metadata.findings}`;
         }
       } else {
         // Composite condition

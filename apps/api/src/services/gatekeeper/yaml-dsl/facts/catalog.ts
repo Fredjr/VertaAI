@@ -947,10 +947,18 @@ registerFact({
  * Helper function to get previous gate check run status from GitHub
  * Uses GitHub Check Runs API to query for previous VertaAI Policy Pack checks
  * CRITICAL FIX: Excludes in-progress checks to avoid circular dependencies
+ * ENHANCED: Returns detailed metadata for better output context
  */
-async function getPreviousGateStatus(context: PRContext): Promise<{
+async function getPreviousGateStatus(context: PRContext, options?: {
+  checkNameFilter?: string; // Filter by specific check name (e.g., "VertaAI Policy Pack")
+  excludeCheckId?: number;   // Exclude specific check run ID (to avoid querying current check)
+}): Promise<{
   status: 'pass' | 'warn' | 'block' | 'unknown';
   findings: number;
+  checkName: string;
+  checkId: number;
+  completedAt: string;
+  conclusion: string;
 } | null> {
   try {
     // Query GitHub for check runs on this PR's head SHA
@@ -960,30 +968,32 @@ async function getPreviousGateStatus(context: PRContext): Promise<{
       ref: context.headSha,
     });
 
-    // Find the most recent COMPLETED VertaAI check (look for any check from our app)
-    // CRITICAL: Exclude in_progress and queued checks to avoid querying the current check run
+    // Find the most recent COMPLETED VertaAI Policy Pack check
+    // CRITICAL: Exclude in_progress, queued checks AND the current check to avoid circular dependencies
     const policyChecks = response.data.check_runs?.filter(
       (run: any) => {
-        // Match any check from our app or with "VertaAI" in the name
-        const isOurCheck = run.app?.slug === 'vertaai-drift-detector' ||
-                          run.name?.includes('VertaAI') ||
-                          run.name === 'Deploy Gate';
+        // CRITICAL FIX: Only match "VertaAI Policy Pack" checks (YAML DSL), not legacy checks
+        const checkNameFilter = options?.checkNameFilter || 'VertaAI Policy Pack';
+        const isTargetCheck = run.name === checkNameFilter;
 
         // Only include completed checks (exclude in_progress, queued)
         const isCompleted = run.status === 'completed';
 
-        return isOurCheck && isCompleted;
+        // Exclude the current check run if specified
+        const isNotCurrentCheck = !options?.excludeCheckId || run.id !== options.excludeCheckId;
+
+        return isTargetCheck && isCompleted && isNotCurrentCheck;
       }
     ) || [];
 
     if (policyChecks.length === 0) {
-      console.log('[getPreviousGateStatus] No previous completed check run found');
+      console.log(`[getPreviousGateStatus] No previous completed check run found (filter: ${options?.checkNameFilter || 'VertaAI Policy Pack'})`);
       return null; // No previous check run found
     }
 
     // Get the most recent completed check (they're sorted by created_at desc by default)
     const latestCheck = policyChecks[0];
-    console.log(`[getPreviousGateStatus] Found previous check: ${latestCheck.name} (${latestCheck.conclusion})`);
+    console.log(`[getPreviousGateStatus] Found previous check: ${latestCheck.name} (ID: ${latestCheck.id}, conclusion: ${latestCheck.conclusion}, completed: ${latestCheck.completed_at})`);
 
     // Map GitHub check conclusion to our status
     let status: 'pass' | 'warn' | 'block' | 'unknown' = 'unknown';
@@ -1004,7 +1014,14 @@ async function getPreviousGateStatus(context: PRContext): Promise<{
       findings = parseInt(findingsMatch[1], 10);
     }
 
-    return { status, findings };
+    return {
+      status,
+      findings,
+      checkName: latestCheck.name,
+      checkId: latestCheck.id,
+      completedAt: latestCheck.completed_at || 'unknown',
+      conclusion: latestCheck.conclusion || 'unknown',
+    };
   } catch (error) {
     console.error('[FactCatalog] Failed to fetch previous gate status:', error);
     return null;
@@ -1017,19 +1034,75 @@ async function getPreviousGateStatus(context: PRContext): Promise<{
 let gateStatusCache: {
   status: 'pass' | 'warn' | 'block' | 'unknown';
   findings: number;
+  checkName: string;
+  checkId: number;
+  completedAt: string;
+  conclusion: string;
 } | null | undefined = undefined;
 
-async function getGateStatusCached(context: PRContext) {
+async function getGateStatusCached(context: PRContext, options?: {
+  checkNameFilter?: string;
+  excludeCheckId?: number;
+}) {
   if (gateStatusCache === undefined) {
-    gateStatusCache = await getPreviousGateStatus(context);
+    gateStatusCache = await getPreviousGateStatus(context, options);
   }
   return gateStatusCache;
 }
 
+// ENHANCED: Register gate facts with detailed metadata for better output context
+// These facts query the previous "VertaAI Policy Pack" check (YAML DSL)
+registerFact({
+  id: 'gate.previous.status',
+  name: 'Previous Policy Pack Status',
+  description: 'Status of the most recent VertaAI Policy Pack check: pass, warn, block, or unknown. Use this for cross-gate dependencies.',
+  category: 'gate',
+  valueType: 'string',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const gateStatus = await getGateStatusCached(context, {
+      checkNameFilter: 'VertaAI Policy Pack',
+    });
+
+    // Store metadata in context for enhanced output
+    if (gateStatus && (context as any)._factMetadata) {
+      (context as any)._factMetadata['gate.previous.status'] = {
+        checkName: gateStatus.checkName,
+        checkId: gateStatus.checkId,
+        completedAt: gateStatus.completedAt,
+        conclusion: gateStatus.conclusion,
+        findings: gateStatus.findings,
+      };
+    }
+
+    return gateStatus?.status || 'unknown';
+  },
+  examples: ['pass', 'warn', 'block', 'unknown'],
+});
+
+registerFact({
+  id: 'gate.previous.findings',
+  name: 'Previous Policy Pack Findings Count',
+  description: 'Number of findings from the most recent VertaAI Policy Pack check',
+  category: 'gate',
+  valueType: 'number',
+  version: 'v1.0.0',
+  resolver: async (context: PRContext) => {
+    const gateStatus = await getGateStatusCached(context, {
+      checkNameFilter: 'VertaAI Policy Pack',
+    });
+    return gateStatus?.findings || 0;
+  },
+  examples: ['0', '3', '10'],
+});
+
+// DEPRECATED: Legacy gate facts (kept for backward compatibility)
+// These query ANY VertaAI check (could be legacy or YAML DSL)
+// Prefer using gate.previous.* facts for cross-gate dependencies
 registerFact({
   id: 'gate.contractIntegrity.status',
-  name: 'Contract Integrity Gate Status',
-  description: 'Status of the most recent Track A (Contract Integrity) gate evaluation: pass, warn, block, or unknown',
+  name: 'Contract Integrity Gate Status (Legacy)',
+  description: 'DEPRECATED: Use gate.previous.status instead. Status of the most recent VertaAI check (could be legacy or YAML DSL)',
   category: 'gate',
   valueType: 'string',
   version: 'v1.0.0',
@@ -1042,8 +1115,8 @@ registerFact({
 
 registerFact({
   id: 'gate.contractIntegrity.findings',
-  name: 'Contract Integrity Gate Findings Count',
-  description: 'Number of findings from the most recent Track A (Contract Integrity) gate evaluation',
+  name: 'Contract Integrity Gate Findings Count (Legacy)',
+  description: 'DEPRECATED: Use gate.previous.findings instead. Number of findings from the most recent VertaAI check',
   category: 'gate',
   valueType: 'number',
   version: 'v1.0.0',
