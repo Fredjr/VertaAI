@@ -46,17 +46,19 @@ export interface YAMLGatekeeperResult {
 export async function runYAMLGatekeeper(
   prisma: PrismaClient,
   input: GatekeeperInput,
-  octokit: any
+  octokit: any,
+  prAction?: 'opened' | 'synchronize' | 'labeled' | 'closed'
 ): Promise<YAMLGatekeeperResult | null> {
   const startTime = Date.now();
 
-  // Step 1: PHASE 2 FIX - Select ALL applicable packs
+  // Step 1: PHASE 2 FIX - Select ALL applicable packs (filtered by prEvents)
   const selectedPacks = await selectApplicablePacks(
     prisma,
     input.workspaceId,
     input.owner,
     input.repo,
-    input.headBranch
+    input.headBranch,
+    prAction
   );
 
   if (selectedPacks.length === 0) {

@@ -946,6 +946,7 @@ registerFact({
 /**
  * Helper function to get previous gate check run status from GitHub
  * Uses GitHub Check Runs API to query for previous VertaAI Policy Pack checks
+ * CRITICAL FIX: Excludes in-progress checks to avoid circular dependencies
  */
 async function getPreviousGateStatus(context: PRContext): Promise<{
   status: 'pass' | 'warn' | 'block' | 'unknown';
@@ -959,23 +960,30 @@ async function getPreviousGateStatus(context: PRContext): Promise<{
       ref: context.headSha,
     });
 
-    // Find the most recent VertaAI check (look for any check from our app)
-    // This includes: "VertaAI Policy Pack", "VertaAI Observe Core", "Deploy Gate", etc.
+    // Find the most recent COMPLETED VertaAI check (look for any check from our app)
+    // CRITICAL: Exclude in_progress and queued checks to avoid querying the current check run
     const policyChecks = response.data.check_runs?.filter(
       (run: any) => {
         // Match any check from our app or with "VertaAI" in the name
-        return run.app?.slug === 'vertaai-drift-detector' ||
-               run.name?.includes('VertaAI') ||
-               run.name === 'Deploy Gate';
+        const isOurCheck = run.app?.slug === 'vertaai-drift-detector' ||
+                          run.name?.includes('VertaAI') ||
+                          run.name === 'Deploy Gate';
+
+        // Only include completed checks (exclude in_progress, queued)
+        const isCompleted = run.status === 'completed';
+
+        return isOurCheck && isCompleted;
       }
     ) || [];
 
     if (policyChecks.length === 0) {
+      console.log('[getPreviousGateStatus] No previous completed check run found');
       return null; // No previous check run found
     }
 
-    // Get the most recent check (they're sorted by created_at desc by default)
+    // Get the most recent completed check (they're sorted by created_at desc by default)
     const latestCheck = policyChecks[0];
+    console.log(`[getPreviousGateStatus] Found previous check: ${latestCheck.name} (${latestCheck.conclusion})`);
 
     // Map GitHub check conclusion to our status
     let status: 'pass' | 'warn' | 'block' | 'unknown' = 'unknown';

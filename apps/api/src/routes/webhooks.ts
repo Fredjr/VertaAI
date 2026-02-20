@@ -404,6 +404,7 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
               additions,
               deletions,
               files,
+              prAction: 'labeled', // CRITICAL: Pass prAction for pack filtering
             });
 
             console.log(`[Webhook] [V2] Gatekeeper result for labeled event: ${gatekeeperResult.riskTier}`);
@@ -599,6 +600,7 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
             additions,
             deletions,
             files,
+            prAction: prInfo.action as 'opened' | 'synchronize' | 'closed', // CRITICAL: Pass prAction for pack filtering
           });
 
           console.log(`[Webhook] [V2] Gatekeeper result: ${gatekeeperResult.riskTier} (agent: ${gatekeeperResult.agentDetected})`);

@@ -32,9 +32,10 @@ export async function selectApplicablePack(
   workspaceId: string,
   owner: string,
   repo: string,
-  branch: string
+  branch: string,
+  prAction?: 'opened' | 'synchronize' | 'labeled' | 'closed'
 ): Promise<SelectedPack | null> {
-  const packs = await selectApplicablePacks(prisma, workspaceId, owner, repo, branch);
+  const packs = await selectApplicablePacks(prisma, workspaceId, owner, repo, branch, prAction);
   return packs.length > 0 ? packs[0] : null;
 }
 
@@ -42,13 +43,15 @@ export async function selectApplicablePack(
  * PHASE 3A.2: Select ALL applicable packs for a PR (multi-pack support)
  * Now uses PackMatcher for priority-based selection
  * Returns packs sorted by priority (highest first)
+ * CRITICAL FIX: Now filters by prEvents to support event-specific packs
  */
 export async function selectApplicablePacks(
   prisma: PrismaClient,
   workspaceId: string,
   owner: string,
   repo: string,
-  branch: string
+  branch: string,
+  prAction?: 'opened' | 'synchronize' | 'labeled' | 'closed'
 ): Promise<SelectedPack[]> {
   const fullRepo = `${owner}/${repo}`;
 
@@ -80,7 +83,35 @@ export async function selectApplicablePacks(
     }
   }
 
-  // 3. PHASE 3A.2: Use PackMatcher to find applicable packs (priority-based)
+  // 3. CRITICAL FIX: Filter by prEvents BEFORE pack matching
+  // This ensures packs with prEvents: ['labeled'] only run on labeled events
+  const eventFilteredPacks = parsedPacks.filter(({ pack }) => {
+    const prEvents = pack.scope.prEvents;
+
+    // If no prEvents specified, pack runs on all events (default behavior)
+    if (!prEvents || prEvents.length === 0) {
+      return true;
+    }
+
+    // If prAction not provided, assume 'opened' or 'synchronize' (default PR events)
+    const action = prAction || 'opened';
+
+    // Check if the current action matches any of the pack's prEvents
+    const matches = prEvents.includes(action);
+
+    if (!matches) {
+      console.log(`[PackSelector] Skipping pack "${pack.metadata.name}" - prEvents ${JSON.stringify(prEvents)} doesn't include "${action}"`);
+    }
+
+    return matches;
+  });
+
+  if (eventFilteredPacks.length === 0) {
+    console.log(`[PackSelector] No packs match prAction "${prAction}" for ${fullRepo}:${branch}`);
+    return [];
+  }
+
+  // 4. PHASE 3A.2: Use PackMatcher to find applicable packs (priority-based)
   const matcher = new PackMatcher();
   const context: PackMatchContext = {
     repository: fullRepo,
@@ -88,13 +119,13 @@ export async function selectApplicablePacks(
   };
 
   const applicablePacks = matcher.findApplicablePacks(
-    parsedPacks.map(p => p.pack),
+    eventFilteredPacks.map(p => p.pack),
     context
   );
 
-  // 4. Map back to SelectedPack format with database info
+  // 5. Map back to SelectedPack format with database info
   const result: SelectedPack[] = applicablePacks.map(ap => {
-    const dbPack = parsedPacks.find(p => p.pack === ap.pack)!.dbPack;
+    const dbPack = eventFilteredPacks.find(p => p.pack === ap.pack)!.dbPack;
     return {
       pack: ap.pack,
       packHash: dbPack.trackAPackHashPublished!,
@@ -105,7 +136,7 @@ export async function selectApplicablePacks(
   });
 
   console.log(
-    `[PackSelector] Selected ${result.length} applicable packs for ${fullRepo}:${branch} ` +
+    `[PackSelector] Selected ${result.length} applicable packs for ${fullRepo}:${branch} (prAction: ${prAction || 'default'}) ` +
     `(priorities: ${applicablePacks.map(ap => `${ap.pack.metadata.name}=${ap.priority}`).join(', ')})`
   );
 

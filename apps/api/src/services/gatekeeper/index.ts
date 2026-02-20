@@ -45,6 +45,9 @@ export interface GatekeeperInput {
   additions: number;
   deletions: number;
   files: Array<{ filename: string; patch?: string; status?: string }>;
+
+  // PR event context (for pack filtering by prEvents)
+  prAction?: 'opened' | 'synchronize' | 'labeled' | 'closed';
 }
 
 export interface GatekeeperResult {
@@ -72,7 +75,7 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
   // YAML DSL Migration: Try YAML-driven gatekeeper first
   try {
     const octokit = await getInstallationOctokit(input.installationId);
-    const yamlResult = await runYAMLGatekeeper(prisma, input, octokit);
+    const yamlResult = await runYAMLGatekeeper(prisma, input, octokit, input.prAction);
 
     if (yamlResult) {
       console.log(`[Gatekeeper] Using YAML pack (${yamlResult.packSource}): ${yamlResult.decision}`);

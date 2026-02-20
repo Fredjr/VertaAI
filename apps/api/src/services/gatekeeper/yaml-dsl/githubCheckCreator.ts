@@ -114,13 +114,45 @@ function buildCheckTitle(result: PackEvaluationResult, pack?: PackYAML): string 
   }
 
   if (decision === 'warn') {
-    const warnCount = findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult?.status === 'fail').length;
+    // CRITICAL FIX: Count BOTH comparator-based AND condition-based warnings
+    const warnCount = findings.filter(f => {
+      if (f.decisionOnFail !== 'warn') return false;
+
+      // Comparator-based finding
+      if (f.comparatorResult) {
+        return f.comparatorResult.status === 'fail';
+      }
+
+      // Condition-based finding
+      if (f.conditionResult) {
+        return !f.conditionResult.satisfied;
+      }
+
+      return false;
+    }).length;
+
     return isObserveMode
       ? `👁️ Would WARN (observe-only) - ${warnCount} warning(s) detected`
       : `⚠️ ${warnCount} warning(s) found`;
   }
 
-  const blockCount = findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult?.status === 'fail').length;
+  // CRITICAL FIX: Count BOTH comparator-based AND condition-based blocking findings
+  const blockCount = findings.filter(f => {
+    if (f.decisionOnFail !== 'block') return false;
+
+    // Comparator-based finding
+    if (f.comparatorResult) {
+      return f.comparatorResult.status === 'fail';
+    }
+
+    // Condition-based finding
+    if (f.conditionResult) {
+      return !f.conditionResult.satisfied;
+    }
+
+    return false;
+  }).length;
+
   return isObserveMode
     ? `👁️ Would BLOCK (observe-only) - ${blockCount} blocking issue(s) detected`
     : `❌ ${blockCount} blocking issue(s) found`;
@@ -287,17 +319,49 @@ function buildMultiPackCheckTitle(decision: 'pass' | 'warn' | 'block', packResul
   }
 
   if (decision === 'warn') {
+    // CRITICAL FIX: Count BOTH comparator-based AND condition-based warnings
     const totalWarnings = packResults.reduce((sum, pr) =>
-      sum + pr.result.findings.filter(f => f.decisionOnFail === 'warn' && f.comparatorResult?.status === 'fail').length, 0
+      sum + pr.result.findings.filter(f => {
+        if (f.decisionOnFail !== 'warn') return false;
+
+        // Comparator-based finding
+        if (f.comparatorResult) {
+          return f.comparatorResult.status === 'fail';
+        }
+
+        // Condition-based finding
+        if (f.conditionResult) {
+          return !f.conditionResult.satisfied;
+        }
+
+        return false;
+      }).length, 0
     );
+
     return allObserveMode
       ? `👁️ Would WARN (observe-only) - ${totalWarnings} warning(s) detected across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`
       : `⚠️ ${totalWarnings} warning(s) found across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`;
   }
 
+  // CRITICAL FIX: Count BOTH comparator-based AND condition-based blocking findings
   const totalBlocking = packResults.reduce((sum, pr) =>
-    sum + pr.result.findings.filter(f => f.decisionOnFail === 'block' && f.comparatorResult?.status === 'fail').length, 0
+    sum + pr.result.findings.filter(f => {
+      if (f.decisionOnFail !== 'block') return false;
+
+      // Comparator-based finding
+      if (f.comparatorResult) {
+        return f.comparatorResult.status === 'fail';
+      }
+
+      // Condition-based finding
+      if (f.conditionResult) {
+        return !f.conditionResult.satisfied;
+      }
+
+      return false;
+    }).length, 0
   );
+
   return allObserveMode
     ? `👁️ Would BLOCK (observe-only) - ${totalBlocking} blocking issue(s) detected across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`
     : `❌ ${totalBlocking} blocking issue(s) found across ${packResults.length} pack${packResults.length > 1 ? 's' : ''}`;
