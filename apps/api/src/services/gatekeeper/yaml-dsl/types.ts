@@ -107,7 +107,7 @@ export interface PackDefaults {
 
   // Trigger defaults
   triggers?: {
-    defaultPrEvents?: ('opened' | 'synchronize' | 'reopened' | 'labeled')[];
+    defaultPrEvents?: ('opened' | 'synchronize' | 'reopened' | 'labeled' | 'closed')[];
   };
 }
 
@@ -157,7 +157,7 @@ export interface PackScope {
     exclude?: string[];
   };
   // PHASE 1 FIX: Add labeled event support
-  prEvents?: ('opened' | 'synchronize' | 'reopened' | 'labeled')[];
+  prEvents?: ('opened' | 'synchronize' | 'reopened' | 'labeled' | 'closed')[];
   // PHASE 1 FIX: Change actorSignals to object structure per spec
   actorSignals?: {
     detectAgentAuthorship?: boolean;
