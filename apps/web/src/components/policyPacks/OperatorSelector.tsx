@@ -30,11 +30,23 @@ const OPERATORS = {
 interface OperatorSelectorProps {
   value: string;
   onChange: (operator: string) => void;
-  factValueType?: string; // Filter operators based on fact type
+  /** Broad valueType-based filtering (fallback when allowedOperators is absent) */
+  factValueType?: string;
+  /**
+   * Explicit whitelist of operator IDs from the fact catalog's allowedOperators field.
+   * When provided, takes full precedence over factValueType-based filtering.
+   */
+  allowedOperators?: string[];
   showDescription?: boolean;
 }
 
-export default function OperatorSelector({ value, onChange, factValueType, showDescription = true }: OperatorSelectorProps) {
+export default function OperatorSelector({
+  value,
+  onChange,
+  factValueType,
+  allowedOperators,
+  showDescription = true,
+}: OperatorSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const selectedOperator = Object.values(OPERATORS)
@@ -43,15 +55,18 @@ export default function OperatorSelector({ value, onChange, factValueType, showD
 
   type Operator = { id: string; name: string; description: string; example: string; types?: string[] };
 
-  // Filter operators based on fact value type
+  // Build the filtered categories:
+  //   1. If allowedOperators is provided → whitelist by exact ID (most precise, from fact catalog)
+  //   2. Otherwise fall back to the old type-based filtering
   const filteredCategories = Object.entries(OPERATORS).reduce((acc, [category, operators]) => {
     const filtered = (operators as Operator[]).filter(op => {
-      // If no type restriction, show all
-      if (!op.types) return true;
-      // If fact type specified, only show compatible operators
-      if (factValueType) {
-        return op.types.includes(factValueType);
+      if (allowedOperators && allowedOperators.length > 0) {
+        // Catalog-driven exact whitelist — highest fidelity
+        return allowedOperators.includes(op.id);
       }
+      // Legacy type-based fallback
+      if (!op.types) return true;
+      if (factValueType) return op.types.includes(factValueType);
       return true;
     });
     if (filtered.length > 0) {

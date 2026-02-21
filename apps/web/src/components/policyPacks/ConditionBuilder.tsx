@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Trash2, Code } from 'lucide-react';
-import FactSelector from './FactSelector';
+import { Code } from 'lucide-react';
+import FactSelector, { getFactById, type FactEntry, type FactValueWidget } from './FactSelector';
 import OperatorSelector from './OperatorSelector';
 
 // Condition types (matches backend types.ts)
@@ -44,8 +44,9 @@ export default function ConditionBuilder({ value, onChange, showYAMLPreview = fa
     }
   };
 
-  const handleFactChange = (factId: string, valueType: string) => {
-    handleSimpleConditionChange({ fact: factId });
+  const handleFactChange = (factId: string, _valueType: string) => {
+    // Reset operator + value when the fact changes so stale values don't carry over
+    handleSimpleConditionChange({ fact: factId, operator: '', value: '' });
   };
 
   const handleOperatorChange = (operator: string) => {
@@ -56,77 +57,101 @@ export default function ConditionBuilder({ value, onChange, showYAMLPreview = fa
     handleSimpleConditionChange({ value });
   };
 
-  // Get value type for the selected fact
-  const getFactValueType = (): string | undefined => {
+  /** Live catalog lookup — replaces the old hardcoded factValueTypes map. */
+  const getSelectedFact = (): FactEntry | undefined => {
     if (!isSimpleCondition(condition) || !condition.fact) return undefined;
-    
-    // This should match the fact catalog
-    const factValueTypes: Record<string, string> = {
-      'pr.approvals.count': 'number',
-      'pr.number': 'number',
-      'diff.additions': 'number',
-      'diff.deletions': 'number',
-      'diff.filesChanged.count': 'number',
-      'pr.title': 'string',
-      'pr.body': 'string',
-      'pr.author': 'string',
-      'pr.baseBranch': 'string',
-      'pr.headBranch': 'string',
-      'pr.labels': 'array',
-      'diff.filesChanged.paths': 'array',
-      'actor.isBot': 'boolean',
-    };
-    
-    return factValueTypes[condition.fact];
+    return getFactById(condition.fact);
   };
 
-  // Render value input based on fact type
+  const getFactValueType = (): string | undefined => getSelectedFact()?.valueType;
+  const getFactWidget = (): FactValueWidget | undefined => getSelectedFact()?.valueWidget;
+  const getAllowedOperators = (): string[] | undefined => getSelectedFact()?.allowedOperators;
+
+  const INPUT_CLASS =
+    'w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white';
+
+  /** Render value input driven by the fact's valueWidget metadata. */
   const renderValueInput = () => {
     if (!isSimpleCondition(condition)) return null;
 
-    const valueType = getFactValueType();
+    const widget = getFactWidget();
     const currentValue = condition.value;
 
-    if (valueType === 'number') {
+    // ── select (enum / fixed options) ──────────────────────────────────────
+    if (widget?.kind === 'select') {
       return (
-        <input
-          type="number"
-          value={currentValue || ''}
-          onChange={(e) => handleValueChange(Number(e.target.value))}
-          placeholder="Enter number..."
-          className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-        />
+        <select
+          value={currentValue ?? ''}
+          onChange={(e) => handleValueChange(e.target.value)}
+          className={INPUT_CLASS}
+        >
+          <option value="">Select…</option>
+          {widget.options.map(opt => (
+            <option key={opt} value={opt}>{opt}</option>
+          ))}
+        </select>
       );
     }
 
-    if (valueType === 'boolean') {
+    // ── boolean ────────────────────────────────────────────────────────────
+    if (widget?.kind === 'boolean') {
       return (
         <select
           value={currentValue === true ? 'true' : currentValue === false ? 'false' : ''}
           onChange={(e) => handleValueChange(e.target.value === 'true')}
-          className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+          className={INPUT_CLASS}
         >
-          <option value="">Select...</option>
+          <option value="">Select…</option>
           <option value="true">true</option>
           <option value="false">false</option>
         </select>
       );
     }
 
-    if (valueType === 'array') {
-      // For arrays, show a text input with comma-separated values
-      const arrayValue = Array.isArray(currentValue) ? currentValue.join(', ') : currentValue || '';
+    // ── number ─────────────────────────────────────────────────────────────
+    if (widget?.kind === 'number') {
+      return (
+        <input
+          type="number"
+          value={currentValue ?? ''}
+          min={widget.min}
+          max={widget.max}
+          step={widget.step ?? 1}
+          onChange={(e) => handleValueChange(e.target.value === '' ? '' : Number(e.target.value))}
+          placeholder={widget.placeholder ?? 'Enter number…'}
+          className={INPUT_CLASS}
+        />
+      );
+    }
+
+    // ── datetime ───────────────────────────────────────────────────────────
+    if (widget?.kind === 'datetime') {
+      return (
+        <input
+          type="datetime-local"
+          value={currentValue ?? ''}
+          onChange={(e) => handleValueChange(e.target.value)}
+          className={INPUT_CLASS}
+        />
+      );
+    }
+
+    // ── tag-list (array, comma-separated) ──────────────────────────────────
+    if (widget?.kind === 'tag-list' || getFactValueType() === 'array') {
+      const arrayValue = Array.isArray(currentValue) ? currentValue.join(', ') : currentValue ?? '';
       return (
         <div>
           <input
             type="text"
             value={arrayValue}
             onChange={(e) => {
-              const values = e.target.value.split(',').map(v => v.trim()).filter(v => v);
+              const values = e.target.value.split(',').map((v: string) => v.trim()).filter(Boolean);
               handleValueChange(values);
             }}
-            placeholder="Enter values (comma-separated)..."
-            className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+            placeholder={widget?.kind === 'tag-list' && widget.placeholder
+              ? widget.placeholder
+              : 'Enter values (comma-separated)…'}
+            className={INPUT_CLASS}
           />
           <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Separate multiple values with commas
@@ -135,14 +160,16 @@ export default function ConditionBuilder({ value, onChange, showYAMLPreview = fa
       );
     }
 
-    // Default: string input
+    // ── text (default) ─────────────────────────────────────────────────────
     return (
       <input
         type="text"
-        value={currentValue || ''}
+        value={currentValue ?? ''}
         onChange={(e) => handleValueChange(e.target.value)}
-        placeholder="Enter value..."
-        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+        placeholder={widget?.kind === 'text' && widget.placeholder
+          ? widget.placeholder
+          : 'Enter value…'}
+        className={INPUT_CLASS}
       />
     );
   };
@@ -171,6 +198,7 @@ export default function ConditionBuilder({ value, onChange, showYAMLPreview = fa
               value={condition.operator}
               onChange={handleOperatorChange}
               factValueType={getFactValueType()}
+              allowedOperators={getAllowedOperators()}
               showDescription={true}
             />
           </div>
