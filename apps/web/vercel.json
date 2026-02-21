@@ -1,12 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "cd ../.. && corepack enable && corepack prepare pnpm@9.1.0 --activate && pnpm install --no-frozen-lockfile --force",
+  "installCommand": "cd ../.. && corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --no-frozen-lockfile",
   "buildCommand": "cd ../.. && pnpm turbo build --filter=@vertaai/web",
   "env": {
     "ENABLE_EXPERIMENTAL_COREPACK": "1",
     "NPM_CONFIG_REGISTRY": "https://registry.npmjs.org/",
-    "PNPM_VERSION": "9.1.0"
+    "PNPM_VERSION": "9.15.9"
   }
 }
 
