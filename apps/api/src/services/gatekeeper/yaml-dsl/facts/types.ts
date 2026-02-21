@@ -1,11 +1,14 @@
 /**
  * Fact Catalog Types
- * Phase 2.1 - Hybrid Comparator/Fact-Based Approach
- * 
- * Defines the type system for fact-based conditions
+ * FactCatalog v1 - Hybrid Comparator/Fact-Based Approach
+ *
+ * Defines the type system for fact-based conditions.
+ * Each Fact carries allowedOperators (for validation) and valueWidget
+ * (for the guided rule-builder UI) alongside its runtime resolver.
  */
 
 import type { PRContext } from '../comparators/types.js';
+import type { ComparisonOperator } from '../conditions/types.js';
 
 /**
  * Fact categories for organization
@@ -18,32 +21,66 @@ export type FactCategory =
   | 'terraform'   // Terraform plan changes
   | 'sbom'        // SBOM/dependency changes
   | 'drift'       // Drift detection (Track B)
-  | 'gate';       // Gate status (cross-gate dependencies)
+  | 'gate'        // Gate status (cross-gate dependencies)
+  | 'derived';    // Computed / composite risk signals
 
 /**
  * Supported value types for facts
  */
-export type FactValueType = 
-  | 'string' 
-  | 'number' 
-  | 'boolean' 
-  | 'array' 
+export type FactValueType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'array'
   | 'object';
+
+// ---------------------------------------------------------------------------
+// UI value-widget descriptor (FactCatalog v1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Widget kind used by the guided rule-builder to render the value input.
+ */
+export type ValueWidgetKind =
+  | 'text'        // Free-form single-line string
+  | 'number'      // Numeric spinner
+  | 'boolean'     // Toggle / checkbox
+  | 'select'      // Single-value dropdown (fixed options)
+  | 'multiselect' // Multi-value dropdown (fixed options)
+  | 'tag-list'    // Free-form tag chip input (array of strings)
+  | 'regex'       // Regex pattern input with syntax hint
+  | 'datetime';   // ISO date-time picker
+
+/**
+ * Descriptor for the UI widget used to collect a condition value.
+ */
+export interface ValueWidget {
+  kind: ValueWidgetKind;
+  placeholder?: string;
+  options?: string[];   // For 'select' / 'multiselect'
+  min?: number;         // For 'number'
+  max?: number;
+  step?: number;
+}
 
 /**
  * Fact definition
  */
 export interface Fact {
-  id: string;                           // e.g., "pr.approvals.count"
-  name: string;                         // e.g., "PR Approval Count"
-  description: string;                  // Human-readable description
-  category: FactCategory;               // Category for organization
-  valueType: FactValueType;             // Type of value returned
+  id: string;                            // e.g., "pr.approvals.count"
+  name: string;                          // e.g., "PR Approval Count"
+  description: string;                   // Human-readable description
+  category: FactCategory;                // Category for organization
+  valueType: FactValueType;              // Type of value returned
   resolver: (context: PRContext) => any; // Function to extract value from context
-  version: string;                      // Fact catalog version (e.g., "v1.0.0")
-  examples?: string[];                  // Example values
-  deprecated?: boolean;                 // If true, fact is deprecated
-  replacedBy?: string;                  // ID of replacement fact
+  version: string;                       // Fact catalog version (e.g., "v1.0.0")
+  examples?: string[];                   // Example values
+  deprecated?: boolean;                  // If true, fact is deprecated
+  replacedBy?: string;                   // ID of replacement fact
+  /** Operators valid for this fact (used by UI + runtime validator) */
+  allowedOperators?: ComparisonOperator[];
+  /** Widget hint for the guided rule-builder UI */
+  valueWidget?: ValueWidget;
 }
 
 /**

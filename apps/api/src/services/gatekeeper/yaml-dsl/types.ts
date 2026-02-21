@@ -270,6 +270,69 @@ export interface SpawnTrackBConfig {
 }
 
 // ============================================================================
+// PolicyPackSet – groups multiple packs into one composable unit (optional)
+// ============================================================================
+
+/**
+ * A PolicyPackSet bundles multiple PolicyPacks together, defining how they
+ * compose (merge strategy, precedence) and ships them as a single activatable
+ * unit.  This is the "meta-pack" concept that enables starter packs, org-wide
+ * bundles, and import/export of policy posture.
+ */
+export interface PolicyPackSet {
+  apiVersion: 'verta.ai/v1';
+  kind: 'PolicyPackSet';
+  metadata: {
+    setId: string;                         // Unique identifier for this set
+    name: string;
+    description?: string;
+    version: string;                       // Semver
+    owner?: string;
+    labels?: Record<string, string>;
+    audit?: {
+      createdBy?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    };
+  };
+  /** References to constituent PolicyPacks and per-pack overrides */
+  composition: {
+    packs: Array<{
+      packId: string;                      // ID of a PolicyPack
+      version?: string;                    // Semver range (e.g., "^1.0.0")
+      /** Override this pack's scopePriority within the set */
+      priority?: number;
+      /** Disable this pack in the set without removing it */
+      enabled?: boolean;
+    }>;
+    /**
+     * How to resolve conflicts when multiple packs' rules overlap.
+     * Overrides individual pack strategies at the set level.
+     */
+    mergeStrategy: MergeStrategy;
+    /**
+     * Tie-break ordering when mergeStrategy = HIGHEST_PRIORITY.
+     * 'first-wins' uses the pack list order; 'explicit' requires all
+     * conflicts to be manually resolved.
+     */
+    precedence?: 'first-wins' | 'last-wins' | 'explicit';
+  };
+  /** Defaults that cascade into every pack in this set (overridable per-pack) */
+  sharedDefaults?: PackDefaults;
+  /** Governance controls for this set */
+  governance?: {
+    /** Whether activating this set requires an approval workflow */
+    approvalRequired?: boolean;
+    /** Users or teams who can approve set activation */
+    approvers?: string[];
+    /** Whether this set can be exported / published to a registry */
+    exportable?: boolean;
+    /** Channels this set should be distributed to (e.g., OPA bundle, Terraform Cloud) */
+    distributionChannels?: string[];
+  };
+}
+
+// ============================================================================
 // Finding Codes (structured error codes)
 // ============================================================================
 

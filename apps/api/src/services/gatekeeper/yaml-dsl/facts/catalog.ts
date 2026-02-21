@@ -103,6 +103,8 @@ registerFact({
   category: 'universal',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'matches'],
+  valueWidget: { kind: 'text', placeholder: 'e.g. acme-corp' },
   resolver: (context: PRContext) => context.workspaceId || '',
   examples: ['workspace-123', 'acme-corp'],
 });
@@ -114,6 +116,8 @@ registerFact({
   category: 'universal',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'matches', 'startsWith'],
+  valueWidget: { kind: 'text', placeholder: 'e.g. acme/api-service' },
   resolver: (context: PRContext) => `${context.owner}/${context.repo}` || '',
   examples: ['acme/api-service', 'acme/web-app'],
 });
@@ -125,6 +129,8 @@ registerFact({
   category: 'universal',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'matches', 'startsWith', 'in'],
+  valueWidget: { kind: 'text', placeholder: 'e.g. main' },
   resolver: (context: PRContext) => context.baseBranch || '',
   examples: ['main', 'develop', 'release/v1.0'],
 });
@@ -136,6 +142,8 @@ registerFact({
   category: 'universal',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in', 'matches'],
+  valueWidget: { kind: 'text', placeholder: 'e.g. alice' },
   resolver: (context: PRContext) => context.author || '',
   examples: ['alice', 'bob', 'charlie'],
 });
@@ -147,6 +155,8 @@ registerFact({
   category: 'universal',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in'],
+  valueWidget: { kind: 'select', options: ['pull_request', 'pull_request_review', 'push', 'labeled'] },
   resolver: (context: PRContext) => (context as any).eventType || 'pull_request',
   examples: ['pull_request', 'pull_request_review', 'push'],
 });
@@ -158,6 +168,8 @@ registerFact({
   category: 'universal',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'datetime' },
   resolver: () => new Date().toISOString(),
   examples: ['2026-02-18T10:30:00Z'],
 });
@@ -170,6 +182,8 @@ registerFact({
   category: 'universal',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in'],
+  valueWidget: { kind: 'select', options: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] },
   resolver: () => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     return days[new Date().getDay()];
@@ -184,6 +198,8 @@ registerFact({
   category: 'universal',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '9', min: 0, max: 23 },
   resolver: () => new Date().getHours(),
   examples: ['9', '14', '23'],
 });
@@ -199,6 +215,8 @@ registerFact({
   category: 'pr',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '123', min: 1 },
   resolver: (context: PRContext) => context.prNumber || 0,
   examples: ['123', '456'],
 });
@@ -210,6 +228,8 @@ registerFact({
   category: 'pr',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'contains', 'matches', 'startsWith'],
+  valueWidget: { kind: 'text', placeholder: 'e.g. Add payment endpoint' },
   resolver: (context: PRContext) => context.title || '',
   examples: ['Add new feature', 'Fix bug in API'],
 });
@@ -221,6 +241,8 @@ registerFact({
   category: 'pr',
   valueType: 'array',
   version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. security, breaking-change' },
   resolver: (context: PRContext) => context.labels || [],
   examples: [['security', 'breaking-change'], ['bug', 'hotfix']],
 });
@@ -232,6 +254,8 @@ registerFact({
   category: 'pr',
   valueType: 'boolean',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!='],
+  valueWidget: { kind: 'boolean' },
   resolver: (context: PRContext) => (context as any).isDraft || false,
   examples: ['true', 'false'],
 });
@@ -244,6 +268,8 @@ registerFact({
   category: 'pr',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '2', min: 0 },
   resolver: async (context: PRContext) => {
     try {
       const reviews = await context.github.rest.pulls.listReviews({
@@ -270,6 +296,8 @@ registerFact({
   category: 'pr',
   valueType: 'array',
   version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. platform-team' },
   resolver: async (context: PRContext) => {
     try {
       // Get requested reviewers (teams)
@@ -296,6 +324,8 @@ registerFact({
   category: 'pr',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '2', min: 0 },
   resolver: (context: PRContext) => context.cache?.approvals?.length || 0,
   examples: ['0', '2', '5'],
 });
@@ -307,6 +337,8 @@ registerFact({
   category: 'pr',
   valueType: 'array',
   version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. alice, bob' },
   resolver: (context: PRContext) =>
     context.cache?.approvals?.map((a: any) => a.user) || [],
   examples: [['alice', 'bob'], ['charlie']],
@@ -319,6 +351,8 @@ registerFact({
   category: 'pr',
   valueType: 'array',
   version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. @acme/security' },
   resolver: (context: PRContext) =>
     context.cache?.approvals?.flatMap((a: any) => a.teams || []) || [],
   examples: [['@acme/security', '@acme/api-team'], []],
@@ -331,6 +365,8 @@ registerFact({
   category: 'pr',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'matches', 'startsWith', 'in'],
+  valueWidget: { kind: 'text', placeholder: 'e.g. main' },
   resolver: (context: PRContext) => context.baseBranch || '',
   examples: ['main', 'develop', 'release/v1.0'],
 });
@@ -342,6 +378,8 @@ registerFact({
   category: 'pr',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'matches', 'startsWith', 'in'],
+  valueWidget: { kind: 'text', placeholder: 'e.g. feature/new-api' },
   resolver: (context: PRContext) => context.headBranch || '',
   examples: ['feature/new-api', 'fix/bug-123'],
 });
@@ -357,6 +395,8 @@ registerFact({
   category: 'diff',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '5', min: 0 },
   resolver: (context: PRContext) => context.files?.length || 0,
   examples: ['1', '5', '20'],
 });
@@ -368,6 +408,8 @@ registerFact({
   category: 'diff',
   valueType: 'array',
   version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. src/api.ts' },
   resolver: (context: PRContext) =>
     context.files?.map(f => f.filename) || [],
   examples: [['src/api.ts', 'README.md'], ['openapi.yaml']],
@@ -380,6 +422,8 @@ registerFact({
   category: 'diff',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '50', min: 0 },
   resolver: (context: PRContext) => {
     // Use context.additions if available, otherwise sum from files
     if (context.additions !== undefined) {
@@ -397,6 +441,8 @@ registerFact({
   category: 'diff',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '30', min: 0 },
   resolver: (context: PRContext) => {
     // Use context.deletions if available, otherwise sum from files
     if (context.deletions !== undefined) {
@@ -414,6 +460,8 @@ registerFact({
   category: 'diff',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '80', min: 0 },
   resolver: (context: PRContext) => {
     // Use context.additions + context.deletions if available, otherwise sum from files
     if (context.additions !== undefined && context.deletions !== undefined) {
@@ -515,6 +563,8 @@ registerFact({
   category: 'openapi',
   valueType: 'boolean',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!='],
+  valueWidget: { kind: 'boolean' },
   resolver: (context: PRContext) => {
     const openapiFiles = findOpenApiFiles(context);
     return openapiFiles.length > 0;
@@ -529,6 +579,8 @@ registerFact({
   category: 'openapi',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return 0;
@@ -544,6 +596,8 @@ registerFact({
   category: 'openapi',
   valueType: 'array',
   version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. endpoint_removed' },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return [];
@@ -561,6 +615,8 @@ registerFact({
   category: 'openapi',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return 0;
@@ -576,6 +632,8 @@ registerFact({
   category: 'openapi',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return 0;
@@ -591,6 +649,8 @@ registerFact({
   category: 'openapi',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return 0;
@@ -606,6 +666,8 @@ registerFact({
   category: 'openapi',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in'],
+  valueWidget: { kind: 'select', options: ['major', 'minor', 'patch', 'none'] },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return 'none';
@@ -630,6 +692,8 @@ registerFact({
   category: 'openapi',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'matches'],
+  valueWidget: { kind: 'text', placeholder: 'e.g. 1.0.0' },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return '';
@@ -645,6 +709,8 @@ registerFact({
   category: 'openapi',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'matches'],
+  valueWidget: { kind: 'text', placeholder: 'e.g. 2.0.0' },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return '';
@@ -660,6 +726,8 @@ registerFact({
   category: 'openapi',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return 0;
@@ -681,6 +749,8 @@ registerFact({
   category: 'openapi',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return 0;
@@ -700,6 +770,8 @@ registerFact({
   category: 'openapi',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const diff = await getOpenApiDiffData(context);
     if (!diff) return 0;
@@ -820,6 +892,8 @@ registerFact({
   category: 'sbom',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '50', min: 0 },
   resolver: async (context: PRContext) => {
     const data = await getSBOMData(context);
     if (!data) return 0;
@@ -835,6 +909,8 @@ registerFact({
   category: 'sbom',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const data = await getSBOMData(context);
     if (!data) return 0;
@@ -850,6 +926,8 @@ registerFact({
   category: 'sbom',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const data = await getSBOMData(context);
     if (!data) return 0;
@@ -865,6 +943,8 @@ registerFact({
   category: 'sbom',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const data = await getSBOMData(context);
     if (!data) return 0;
@@ -887,6 +967,8 @@ registerFact({
   category: 'sbom',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const data = await getSBOMData(context);
     if (!data) return 0;
@@ -909,6 +991,8 @@ registerFact({
   category: 'sbom',
   valueType: 'array',
   version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. GPL-3.0' },
   resolver: async (context: PRContext) => {
     const data = await getSBOMData(context);
     if (!data) return [];
@@ -1059,6 +1143,8 @@ registerFact({
   category: 'gate',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in'],
+  valueWidget: { kind: 'select', options: ['pass', 'warn', 'block', 'unknown'] },
   resolver: async (context: PRContext) => {
     const gateStatus = await getGateStatusCached(context, {
       checkNameFilter: 'VertaAI Policy Pack',
@@ -1087,6 +1173,8 @@ registerFact({
   category: 'gate',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const gateStatus = await getGateStatusCached(context, {
       checkNameFilter: 'VertaAI Policy Pack',
@@ -1106,6 +1194,10 @@ registerFact({
   category: 'gate',
   valueType: 'string',
   version: 'v1.0.0',
+  deprecated: true,
+  replacedBy: 'gate.previous.status',
+  allowedOperators: ['==', '!=', 'in'],
+  valueWidget: { kind: 'select', options: ['pass', 'warn', 'block', 'unknown'] },
   resolver: async (context: PRContext) => {
     const gateStatus = await getGateStatusCached(context);
     return gateStatus?.status || 'unknown';
@@ -1120,6 +1212,10 @@ registerFact({
   category: 'gate',
   valueType: 'number',
   version: 'v1.0.0',
+  deprecated: true,
+  replacedBy: 'gate.previous.findings',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
   resolver: async (context: PRContext) => {
     const gateStatus = await getGateStatusCached(context);
     return gateStatus?.findings || 0;
@@ -1134,6 +1230,8 @@ registerFact({
   category: 'gate',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in'],
+  valueWidget: { kind: 'select', options: ['pass', 'warn', 'block', 'unknown'] },
   resolver: async (context: PRContext) => {
     // Track B doesn't currently post GitHub checks, so we return 'unknown' for now
     // This fact is reserved for future Track B YAML DSL integration
@@ -1196,6 +1294,8 @@ registerFact({
   category: 'drift',
   valueType: 'boolean',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!='],
+  valueWidget: { kind: 'boolean' },
   resolver: async (context: PRContext) => {
     const driftCandidate = await getDriftCandidateCached(context);
     if (!driftCandidate) {
@@ -1215,6 +1315,8 @@ registerFact({
   category: 'drift',
   valueType: 'array',
   version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. instruction' },
   resolver: async (context: PRContext) => {
     const driftCandidate = await getDriftCandidateCached(context);
     if (!driftCandidate || !driftCandidate.driftType) {
@@ -1234,6 +1336,8 @@ registerFact({
   category: 'drift',
   valueType: 'number',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0.8', min: 0, max: 1, step: 0.01 },
   resolver: async (context: PRContext) => {
     const driftCandidate = await getDriftCandidateCached(context);
     if (!driftCandidate || driftCandidate.confidence === null || driftCandidate.confidence === undefined) {
@@ -1252,6 +1356,8 @@ registerFact({
   category: 'drift',
   valueType: 'array',
   version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. deployment' },
   resolver: async (context: PRContext) => {
     const driftCandidate = await getDriftCandidateCached(context);
     if (!driftCandidate || !driftCandidate.driftDomains) {
@@ -1270,6 +1376,8 @@ registerFact({
   category: 'drift',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in'],
+  valueWidget: { kind: 'select', options: ['low', 'medium', 'high', 'unknown'] },
   resolver: async (context: PRContext) => {
     const driftCandidate = await getDriftCandidateCached(context);
     if (!driftCandidate || !driftCandidate.riskLevel) {
@@ -1288,24 +1396,281 @@ registerFact({
   category: 'drift',
   valueType: 'string',
   version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in'],
+  valueWidget: { kind: 'select', options: ['P0', 'P1', 'P2', 'unknown'] },
   resolver: async (context: PRContext) => {
     const driftCandidate = await getDriftCandidateCached(context);
-    if (!driftCandidate) {
-      return 'unknown';
-    }
-
-    // Map risk level to priority
-    // Note: DriftCandidate doesn't have a priority field, so we derive from riskLevel
-    if (driftCandidate.riskLevel === 'high') {
-      return 'P0';
-    } else if (driftCandidate.riskLevel === 'medium') {
-      return 'P1';
-    } else if (driftCandidate.riskLevel === 'low') {
-      return 'P2';
-    }
-
+    if (!driftCandidate) return 'unknown';
+    if (driftCandidate.riskLevel === 'high') return 'P0';
+    if (driftCandidate.riskLevel === 'medium') return 'P1';
+    if (driftCandidate.riskLevel === 'low') return 'P2';
     return 'unknown';
   },
   examples: ['P0', 'P1', 'P2', 'unknown'],
 });
+
+// ============================================================================
+// SCOPE / ENVIRONMENT FACT (FactCatalog v1 addition)
+// ============================================================================
+
+registerFact({
+  id: 'scope.env',
+  name: 'Environment',
+  description: 'Deployment environment derived from the target branch name (production, staging, dev, test)',
+  category: 'universal',
+  valueType: 'string',
+  version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in', 'matches'],
+  valueWidget: { kind: 'select', options: ['production', 'staging', 'dev', 'test'] },
+  resolver: (context: PRContext) => {
+    const branch = context.baseBranch || '';
+    if (branch === 'main' || branch === 'master' || branch.startsWith('release/')) return 'production';
+    if (branch === 'staging' || branch.startsWith('staging/')) return 'staging';
+    if (branch === 'dev' || branch === 'develop' || branch.startsWith('develop/')) return 'dev';
+    if (branch.startsWith('test') || branch.startsWith('qa')) return 'test';
+    return 'dev';
+  },
+  examples: ['production', 'staging', 'dev', 'test'],
+});
+
+// ============================================================================
+// TERRAFORM PLAN FACTS (FactCatalog v1)
+// ============================================================================
+
+/**
+ * Helper: find a terraform plan JSON artifact attached to the PR (if any).
+ * VertaAI expects a plan artifact named `tf-plan.json` or `terraform-plan.json`
+ * in the PR's changed files (typically uploaded as a PR comment artifact).
+ * Falls back to static .tf file detection when no plan is present.
+ */
+async function getTerraformPlanData(context: PRContext): Promise<any | null> {
+  if ((context as any)._tfPlanCache !== undefined) {
+    return (context as any)._tfPlanCache;
+  }
+
+  // Find a plan JSON file in the PR
+  const planFiles = context.files?.filter(f =>
+    f.filename.endsWith('tf-plan.json') ||
+    f.filename.endsWith('terraform-plan.json') ||
+    f.filename.match(/tfplan.*\.json$/i)
+  ) || [];
+
+  if (planFiles.length === 0) {
+    (context as any)._tfPlanCache = null;
+    return null;
+  }
+
+  try {
+    const content = await fetchFileContent(context, planFiles[0].filename, 'head');
+    if (!content) {
+      (context as any)._tfPlanCache = null;
+      return null;
+    }
+    const plan = JSON.parse(content);
+    (context as any)._tfPlanCache = plan;
+    return plan;
+  } catch {
+    (context as any)._tfPlanCache = null;
+    return null;
+  }
+}
+
+/** Count terraform resource changes of a given action from a plan JSON */
+function countTfChanges(plan: any, action: string): number {
+  const changes: any[] = plan?.resource_changes || [];
+  return changes.filter((c: any) =>
+    Array.isArray(c.change?.actions)
+      ? c.change.actions.includes(action)
+      : c.change?.actions === action
+  ).length;
+}
+
+registerFact({
+  id: 'tf.plan.resourceChanges.count',
+  name: 'Terraform Resource Changes',
+  description: 'Total number of resource changes in the Terraform plan (create + update + delete)',
+  category: 'terraform',
+  valueType: 'number',
+  version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
+  resolver: async (context: PRContext) => {
+    const plan = await getTerraformPlanData(context);
+    if (!plan) {
+      // Fallback: count .tf files changed
+      return context.files?.filter(f => f.filename.endsWith('.tf')).length || 0;
+    }
+    return (plan.resource_changes || []).length;
+  },
+  examples: ['0', '5', '20'],
+});
+
+registerFact({
+  id: 'tf.plan.changes.create.count',
+  name: 'Terraform Resources to Create',
+  description: 'Number of resources the Terraform plan will create',
+  category: 'terraform',
+  valueType: 'number',
+  version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
+  resolver: async (context: PRContext) => {
+    const plan = await getTerraformPlanData(context);
+    if (!plan) return 0;
+    return countTfChanges(plan, 'create');
+  },
+  examples: ['0', '2', '10'],
+});
+
+registerFact({
+  id: 'tf.plan.changes.update.count',
+  name: 'Terraform Resources to Update',
+  description: 'Number of resources the Terraform plan will update in-place',
+  category: 'terraform',
+  valueType: 'number',
+  version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
+  resolver: async (context: PRContext) => {
+    const plan = await getTerraformPlanData(context);
+    if (!plan) return 0;
+    return countTfChanges(plan, 'update');
+  },
+  examples: ['0', '3', '8'],
+});
+
+registerFact({
+  id: 'tf.plan.changes.delete.count',
+  name: 'Terraform Resources to Delete',
+  description: 'Number of resources the Terraform plan will destroy',
+  category: 'terraform',
+  valueType: 'number',
+  version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0 },
+  resolver: async (context: PRContext) => {
+    const plan = await getTerraformPlanData(context);
+    if (!plan) return 0;
+    return countTfChanges(plan, 'delete');
+  },
+  examples: ['0', '1', '5'],
+});
+
+registerFact({
+  id: 'tf.plan.resourceTypes.changed',
+  name: 'Terraform Resource Types Changed',
+  description: 'Unique Terraform resource types affected by this plan (e.g., aws_s3_bucket, google_compute_instance)',
+  category: 'terraform',
+  valueType: 'array',
+  version: 'v1.0.0',
+  allowedOperators: ['contains', 'containsAll'],
+  valueWidget: { kind: 'tag-list', placeholder: 'e.g. aws_s3_bucket' },
+  resolver: async (context: PRContext) => {
+    const plan = await getTerraformPlanData(context);
+    if (!plan) return [];
+    const types = new Set<string>(
+      (plan.resource_changes || []).map((c: any) => c.type).filter(Boolean)
+    );
+    return Array.from(types);
+  },
+  examples: [['aws_s3_bucket', 'aws_iam_role'], ['google_compute_instance']],
+});
+
+registerFact({
+  id: 'tf.plan.cost.deltaMonthlyUsd',
+  name: 'Terraform Monthly Cost Delta (USD)',
+  description: 'Estimated monthly cost change in USD from this Terraform plan (requires cost estimation metadata in plan JSON)',
+  category: 'terraform',
+  valueType: 'number',
+  version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', step: 0.01 },
+  resolver: async (context: PRContext) => {
+    const plan = await getTerraformPlanData(context);
+    if (!plan) return 0;
+    // Infracost / Terraform Cloud cost estimate metadata
+    return plan.cost_estimate?.delta_monthly_cost ?? plan.costDeltaMonthlyUsd ?? 0;
+  },
+  examples: ['0', '50.25', '-12.00'],
+});
+
+// ============================================================================
+// DERIVED / COMPOSITE RISK FACTS (FactCatalog v1)
+// ============================================================================
+
+registerFact({
+  id: 'risk.score',
+  name: 'Composite Risk Score',
+  description: 'Composite risk score (0–100) derived from CVE severity, drift risk level, OpenAPI breaking changes, and Terraform destructive operations',
+  category: 'derived',
+  valueType: 'number',
+  version: 'v1.0.0',
+  allowedOperators: ['==', '!=', '>', '>=', '<', '<='],
+  valueWidget: { kind: 'number', placeholder: '0', min: 0, max: 100 },
+  resolver: async (context: PRContext) => {
+    let score = 0;
+
+    // Critical CVEs: +25 each (capped at 50)
+    const criticalCves = await factCatalog.get('sbom.cves.critical.count')?.resolver(context);
+    score += Math.min((criticalCves || 0) * 25, 50);
+
+    // Drift risk: high=30, medium=15, low=5
+    const driftRisk = await factCatalog.get('drift.riskLevel')?.resolver(context);
+    if (driftRisk === 'high') score += 30;
+    else if (driftRisk === 'medium') score += 15;
+    else if (driftRisk === 'low') score += 5;
+
+    // OpenAPI breaking changes: +10 per (capped at 30)
+    const breakingChanges = await factCatalog.get('openapi.breakingChanges.count')?.resolver(context);
+    score += Math.min((breakingChanges || 0) * 10, 30);
+
+    // Terraform destructive ops: +5 per delete (capped at 20)
+    const tfDeletes = await factCatalog.get('tf.plan.changes.delete.count')?.resolver(context);
+    score += Math.min((tfDeletes || 0) * 5, 20);
+
+    return Math.min(score, 100);
+  },
+  examples: ['0', '35', '75', '100'],
+});
+
+registerFact({
+  id: 'risk.category',
+  name: 'Risk Category',
+  description: 'Risk category derived from composite risk score: low (<25), medium (25–49), high (50–74), critical (≥75)',
+  category: 'derived',
+  valueType: 'string',
+  version: 'v1.0.0',
+  allowedOperators: ['==', '!=', 'in'],
+  valueWidget: { kind: 'select', options: ['low', 'medium', 'high', 'critical'] },
+  resolver: async (context: PRContext) => {
+    const score = await factCatalog.get('risk.score')?.resolver(context);
+    if (score >= 75) return 'critical';
+    if (score >= 50) return 'high';
+    if (score >= 25) return 'medium';
+    return 'low';
+  },
+  examples: ['low', 'medium', 'high', 'critical'],
+});
+
+registerFact({
+  id: 'change.isSensitive',
+  name: 'Change Is Sensitive',
+  description: 'Whether the PR touches sensitive paths (secrets, auth, infra, billing, or production config)',
+  category: 'derived',
+  valueType: 'boolean',
+  version: 'v1.0.0',
+  allowedOperators: ['==', '!='],
+  valueWidget: { kind: 'boolean' },
+  resolver: (context: PRContext) => {
+    const sensitivePaths = [
+      /\.env/, /secret/, /password/, /credential/, /token/,
+      /auth/, /billing/, /payment/, /terraform/, /infra\//,
+      /\.pem$/, /\.key$/, /k8s\//, /helm\//,
+    ];
+    const changedPaths = context.files?.map(f => f.filename) || [];
+    return changedPaths.some(p => sensitivePaths.some(r => r.test(p)));
+  },
+  examples: ['true', 'false'],
+});
+
 
