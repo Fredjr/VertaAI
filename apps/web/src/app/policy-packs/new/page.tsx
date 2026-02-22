@@ -21,7 +21,7 @@ interface PolicyPackFormData {
   owner?: string;
   packMode?: 'observe' | 'enforce';
   strictness?: 'permissive' | 'balanced' | 'strict';
-  status: 'active' | 'draft' | 'archived';
+  status: 'DRAFT' | 'IN_REVIEW' | 'ACTIVE' | 'DEPRECATED' | 'ARCHIVED';
 
   // Scope
   scopeType: 'workspace' | 'service' | 'repo';
@@ -32,6 +32,8 @@ interface PolicyPackFormData {
   branchesInclude?: string[];
   branchesExclude?: string[];
   pathGlobs: string[];
+  scopePriority?: number;
+  scopeMergeStrategy?: 'MOST_RESTRICTIVE' | 'HIGHEST_PRIORITY' | 'EXPLICIT';
 
   // Track A
   trackAEnabled: boolean;
@@ -63,7 +65,7 @@ function NewPolicyPackContent() {
     owner: '',
     packMode: 'observe',
     strictness: 'balanced',
-    status: 'draft',
+    status: 'DRAFT',
     scopeType: 'workspace',
     scopeRef: '',
     repoAllowlist: [],
@@ -72,6 +74,8 @@ function NewPolicyPackContent() {
     branchesInclude: [],
     branchesExclude: [],
     pathGlobs: [],
+    scopePriority: 50,
+    scopeMergeStrategy: 'MOST_RESTRICTIVE',
     trackAEnabled: false,
     trackAConfig: {},
     trackAConfigYamlDraft: '',

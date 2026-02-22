@@ -3,6 +3,8 @@
  * Migration Plan v5.0 - Single Source of Truth
  */
 
+import type { Condition } from './conditions/types.js';
+
 // ============================================================================
 // Comparator IDs (Enum-based, versioned)
 // ============================================================================
@@ -217,6 +219,8 @@ export interface Obligation {
   message?: string;
   // PHASE 1 FIX: Add severity field from spec
   severity?: 'low' | 'medium' | 'high' | 'critical';
+  // GAP 2 FIX: Fact-based condition guard (used in YAML templates)
+  condition?: Condition;
 }
 
 export interface SkipCondition {

@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Navigation from '@/components/Navigation';
-import { Plus, Edit2, Trash2, Play, Archive, Copy } from 'lucide-react';
+import { Plus, Edit2, Trash2, BarChart2 } from 'lucide-react';
 import Link from 'next/link';
 import ConflictDetector from '@/components/policyPacks/ConflictDetector';
 
@@ -12,9 +12,11 @@ interface WorkspacePolicyPack {
   id: string;
   name: string;
   description: string | null;
-  status: 'active' | 'draft' | 'archived';
+  status: 'DRAFT' | 'IN_REVIEW' | 'ACTIVE' | 'DEPRECATED' | 'ARCHIVED';
   scopeType: 'workspace' | 'service' | 'repo';
   scopeRef: string | null;
+  scopePriority?: number;
+  scopeMergeStrategy?: 'MOST_RESTRICTIVE' | 'HIGHEST_PRIORITY' | 'EXPLICIT';
   trackAEnabled: boolean;
   trackBEnabled: boolean;
   version: number;
@@ -77,12 +79,14 @@ function PolicyPacksContent() {
   };
 
   const getStatusBadge = (status: string) => {
-    const colors = {
-      active: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-      draft: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-      archived: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
+    const colors: Record<string, string> = {
+      ACTIVE: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+      DRAFT: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+      IN_REVIEW: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+      DEPRECATED: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+      ARCHIVED: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
     };
-    return colors[status as keyof typeof colors] || colors.draft;
+    return colors[status] || colors.DRAFT;
   };
 
   const getScopeBadge = (scopeType: string) => {
@@ -110,13 +114,22 @@ function PolicyPacksContent() {
                 Unified configuration for Contract Integrity Gate (Track A) and Drift Remediation (Track B)
               </p>
             </div>
-            <Link
-              href={`/policy-packs/new?workspace=${workspaceId}`}
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              New Policy Pack
-            </Link>
+            <div className="flex items-center gap-3">
+              <Link
+                href={`/policy-packs/effective-policy?workspace=${workspaceId}`}
+                className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                <BarChart2 className="h-4 w-4 mr-2" />
+                Effective Policy
+              </Link>
+              <Link
+                href={`/policy-packs/new?workspace=${workspaceId}`}
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                New Policy Pack
+              </Link>
+            </div>
           </div>
         </div>
 
@@ -168,13 +181,16 @@ function PolicyPacksContent() {
                     Scope
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    Priority
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    Merge Strategy
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Tracks
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Version
                   </th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                     Actions
@@ -205,6 +221,31 @@ function PolicyPacksContent() {
                         {pack.scopeRef && `: ${pack.scopeRef}`}
                       </span>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                      <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-semibold text-xs">
+                        {pack.scopePriority ?? 50}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {(() => {
+                        const strategy = pack.scopeMergeStrategy || 'MOST_RESTRICTIVE';
+                        const styles: Record<string, string> = {
+                          MOST_RESTRICTIVE: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300',
+                          HIGHEST_PRIORITY: 'bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-300',
+                          EXPLICIT: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300',
+                        };
+                        const labels: Record<string, string> = {
+                          MOST_RESTRICTIVE: 'Most Restrictive',
+                          HIGHEST_PRIORITY: 'Highest Priority',
+                          EXPLICIT: 'Explicit',
+                        };
+                        return (
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${styles[strategy]}`}>
+                            {labels[strategy]}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex gap-2">
                         {pack.trackAEnabled && (
@@ -223,9 +264,6 @@ function PolicyPacksContent() {
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadge(pack.status)}`}>
                         {pack.status}
                       </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      v{pack.version}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <div className="flex items-center justify-end gap-2">
