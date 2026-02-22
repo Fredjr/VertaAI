@@ -416,13 +416,3 @@ export default function ChangeSurfaceWizard({ onGenerateRules }: ChangeSurfaceWi
   );
 }
 
-    pathGlobs: [], alwaysTrigger: true,
-    artifacts: [
-      { id: 'two_person_review', label: '2-person review', description: 'AI-authored changes need ≥2 human approvals', defaultDecision: 'block', comparator: 'MIN_APPROVALS', params: { minApprovals: 2 } },
-    ],
-    invariants: [],
-  },
-];
-
-const CATEGORIES = Array.from(new Set(SURFACE_CATALOG.map(s => s.category)));
-
