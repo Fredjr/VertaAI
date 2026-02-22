@@ -1,0 +1,405 @@
+# ======================================================================
+# SERVICE OVERLAY: Observability Integrity
+# ======================================================================
+# Pattern: ChangeSurface → RequiredArtifacts → Invariants → Decision
+#
+# Surfaces: dashboard_changed, alert_rule_changed, slo_threshold_changed,
+#           runbook_changed, oncall_rotation_changed
+#
+# Key design:
+#   - decisionOnUnknown: warn on ALL obligations (degrade to WARN when
+#     Datadog/Grafana/PagerDuty evidence is unavailable)
+#   - packType: SERVICE_OVERLAY — for services with paging + SLOs
+#   - Approval routing hooks:
+#       * oncall_rotation_changed: oncall owner must acknowledge
+#       * slo_threshold_changed: service owner must approve
+#   - Invariants:
+#       * dashboard ↔ alert parity
+#       * alert ↔ runbook parity
+#       * SLO ↔ alert alignment
+#       * oncall routing ↔ ownership parity
+# ======================================================================
+
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.observability-service-overlay.v1
+  name: Observability Service Overlay
+  version: 1.0.0
+  description: >
+    Service overlay for services with paging, SLOs, and dashboards.
+    Enforces dashboard↔alert parity, alert↔runbook parity, SLO↔alert
+    alignment, oncall owner-ack, and degrades gracefully when Datadog,
+    Grafana, or PagerDuty evidence is unavailable.
+  packType: SERVICE_OVERLAY
+  packMode: enforce
+  strictness: balanced
+  owner: platform-team
+  tags:
+    - service-overlay
+    - observability
+    - alerting
+    - slo
+    - runbooks
+    - oncall
+    - dashboard
+    - pagerduty
+
+scope:
+  type: service         # service-scoped — only for services with paging + SLOs
+  branches:
+    include: ["main", "master", "release/*"]
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: true
+
+rules:
+
+  # ── Invariant: dashboard ↔ alert parity ───────────────────────────────
+  # Rule 1: Dashboard changed → corresponding alert rules must also be
+  # reviewed or updated in this PR. A dashboard without matching alerts is
+  # a silent failure — data is visible but no one gets paged.
+  # Degrade to WARN when the Datadog/Grafana integration is unavailable.
+  - id: dashboard-alert-parity
+    name: Dashboard Changes Should Align with Alert Rules
+    description: >
+      When a dashboard is modified, verify that the corresponding alert
+      rules are still aligned. Dashboards and alerts should reflect the
+      same signals — a dashboard panel without a backing alert is a blind spot.
+    enabled: true
+    trigger:
+      changeSurface: dashboard_changed
+    obligations:
+      - condition:
+          or:
+            - fact: diff.files.modified
+              operator: contains
+              value: alert
+            - fact: diff.files.added
+              operator: contains
+              value: alert
+            - fact: pr.labels
+              operator: contains
+              value: dashboard-alert-ack
+        severity: medium
+        decisionOnFail: warn      # invariant — warn not block
+        decisionOnUnknown: warn   # degrade: Datadog/Grafana integration unavailable
+        message: >
+          Dashboard changed but no corresponding alert rule update found.
+          Ensure alert rules align with new dashboard panels. If this is
+          intentional (display-only change), add 'dashboard-alert-ack' label.
+    skipIf:
+      labels: ["dashboard-alert-ack", "cosmetic-dashboard-change"]
+
+  # ── Invariant: alert ↔ runbook parity ─────────────────────────────────
+  # Rule 2: Alert rule changed → runbook must be referenced or updated.
+  # An alert without a runbook is un-actionable. BLOCK on new alerts
+  # without a runbook link; WARN on modifications.
+  - id: alert-runbook-parity
+    name: Alert Rule Changes Require Runbook Reference
+    description: >
+      Every alert rule must reference a runbook URL or have a corresponding
+      runbook document. Alerts without runbooks leave on-call engineers
+      without guidance during incidents.
+    enabled: true
+    trigger:
+      changeSurface: alert_rule_changed
+    obligations:
+      - condition:
+          or:
+            - fact: diff.content
+              operator: contains
+              value: runbook_url
+            - fact: diff.content
+              operator: contains
+              value: "runbook_url:"
+            - fact: diff.content
+              operator: contains
+              value: annotations.runbook
+            - fact: diff.files.modified
+              operator: contains
+              value: runbook
+        severity: high
+        decisionOnFail: warn      # warn to surface parity drift
+        decisionOnUnknown: warn   # degrade: alert content scanner unavailable
+        message: >
+          Alert rule changed but no runbook reference found (runbook_url,
+          annotations.runbook, or runbook file update). Add a runbook_url
+          annotation or update the runbook doc before merging.
+    skipIf:
+      labels: ["runbook-ack", "alert-test-only"]
+
+  # ── Invariant: SLO ↔ alert alignment ─────────────────────────────────
+  # Rule 3: SLO threshold changed → alert rules must be reviewed.
+  # SLO burn-rate alerts must stay in sync with the SLO window.
+  # BLOCK when threshold changes without alert review — misaligned SLO
+  # alerts are the most common cause of missed SLO violations.
+  - id: slo-alert-alignment
+    name: SLO Threshold Changes Require Alert Rule Review
+    description: >
+      When an SLO error budget threshold or target changes, the corresponding
+      burn-rate alert rules must be updated to match. Misaligned alerts
+      fire at wrong burn rates and miss real SLO violations.
+    enabled: true
+    trigger:
+      changeSurface: slo_threshold_changed
+    obligations:
+      - condition:
+          or:
+            - fact: diff.files.modified
+              operator: contains
+              value: alert
+            - fact: diff.files.added
+              operator: contains
+              value: alert
+            - fact: pr.labels
+              operator: contains
+              value: slo-alert-reviewed
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: SLO scanner unavailable
+        message: >
+          SLO threshold changed but no alert rule update found. Update
+          burn-rate alert thresholds to match the new SLO target, or add
+          'slo-alert-reviewed' label if alert rules were manually verified.
+    skipIf:
+      labels: ["slo-alert-reviewed"]
+
+  # ── Approval routing hook: oncall owner-ack ────────────────────────────
+  # Rule 4: Oncall rotation changed → oncall owner must acknowledge.
+  # Silent rotation changes leave the wrong people on-call. This is the
+  # oncall-owner-ack gate. Degrade to WARN when approvals API is down.
+  - id: oncall-rotation-owner-ack
+    name: Oncall Rotation Changes Require Oncall Owner Acknowledgement
+    description: >
+      Changes to on-call rotation schedules (PagerDuty, OpsGenie,
+      schedule YAML) require approval from the current oncall owner
+      or the engineering manager. Silent rotation changes are a major
+      reliability risk.
+    enabled: true
+    trigger:
+      changeSurface: oncall_rotation_changed
+    obligations:
+      - comparator: APPROVER_IN_ALLOWED_SET
+        params:
+          allowedApprovers: ["oncall-owners", "engineering-managers"]
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: approvals API unavailable
+        message: >
+          Oncall rotation changed — the current oncall owner or engineering
+          manager must approve. Request their review before merging.
+      - comparator: MIN_APPROVALS
+        params:
+          minCount: 1
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade
+        message: >
+          Oncall rotation changes require at least 1 approval from the
+          oncall owner or engineering manager.
+    skipIf:
+      labels: ["oncall-owner-ack", "schedule-test-only"]
+
+  # ── Approval routing hook: service owner approval for SLO changes ─────
+  # Rule 5: SLO threshold changed → service owner must approve.
+  # SLO target changes affect error budget commitments and alerting
+  # thresholds. This is a separate approval gate from the alert-review check.
+  - id: slo-change-owner-approval
+    name: SLO Threshold Changes Require Service Owner Approval
+    description: >
+      SLO error budget targets and window changes must be approved by
+      the service owner. These changes affect error budget commitments
+      and burn-rate alert thresholds.
+    enabled: true
+    trigger:
+      changeSurface: slo_threshold_changed
+    obligations:
+      - comparator: APPROVER_IN_ALLOWED_SET
+        params:
+          allowedApprovers: ["service-owners", "platform-team"]
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: approvals API unavailable
+        message: >
+          SLO threshold changed — @service-owners approval required.
+          SLO changes affect error budget commitments; the service owner
+          must explicitly sign off before merging.
+    skipIf:
+      labels: ["slo-owner-ack"]
+
+  # ── Invariant: oncall routing ↔ ownership parity ──────────────────────
+  # Rule 6: Runbook changed → CODEOWNERS or service ownership docs must
+  # still be consistent. A runbook for Service A shouldn't route to
+  # Service B's on-call team. WARN (not block) — parity drift nudge.
+  - id: runbook-ownership-parity
+    name: Runbook Changes Should Align with CODEOWNERS
+    description: >
+      When runbooks change, verify the on-call escalation paths still
+      match the CODEOWNERS/service ownership mapping. Runbook routing
+      drift means the wrong team gets paged.
+    enabled: true
+    trigger:
+      changeSurface: runbook_changed
+    obligations:
+      - condition:
+          or:
+            - fact: diff.files.modified
+              operator: contains
+              value: CODEOWNERS
+            - fact: pr.labels
+              operator: contains
+              value: runbook-ownership-ack
+        severity: medium
+        decisionOnFail: warn      # invariant nudge — warn not block
+        decisionOnUnknown: warn   # degrade: CODEOWNERS scanner unavailable
+        message: >
+          Runbook changed but CODEOWNERS was not updated. Verify that
+          on-call escalation paths in the runbook still match the
+          CODEOWNERS ownership mapping. Add 'runbook-ownership-ack'
+          if the ownership mapping is intentionally unchanged.
+    skipIf:
+      labels: ["runbook-ownership-ack", "runbook-content-only"]
+
+  # ── Degrade pattern: missing Datadog/Grafana evidence ─────────────────
+  # Rule 7: Alert rule changed → if external monitoring system evidence
+  # is unavailable, degrade to WARN and always post the check run.
+  # This makes the "degrade to WARN on missing evidence" behavior explicit.
+  - id: monitoring-evidence-degrade
+    name: Alert Changes With Missing External Evidence Degrade to WARN
+    description: >
+      When alert rules change and external monitoring system validation
+      (Datadog, Grafana, Prometheus) is unavailable, degrade to WARN so
+      the check run still posts and the team is notified. Never hard-block
+      when the external system is down.
+    enabled: true
+    trigger:
+      changeSurface: alert_rule_changed
+    obligations:
+      - condition:
+          fact: drift.riskLevel
+          operator: "!="
+          value: none
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: warn   # degrade: Datadog/Grafana/Prometheus unavailable
+        message: >
+          Alert rule changed and external monitoring validation is unavailable
+          (or signals elevated risk). Manually verify: (1) alert thresholds are
+          correct, (2) alert routes to the right on-call team, (3) runbook_url
+          is present and accurate.
+    skipIf:
+      labels: ["monitoring-ack", "alert-test-only"]
+
+  # ── Action: drift_remediation_hook ────────────────────────────────────
+  # Rule 8: Drift remediation enqueue hook — ties Track A (gate) to Track B (remediation).
+  # When dashboard↔alert misalignment or missing runbook is detected,
+  # enqueue a remediation task. Decision is always PASS (informational side-effect only).
+  # Uses new vocabulary: when.changeSurfaces, checks.invariants, actions.
+  - id: obs-drift-remediation-hook
+    name: Enqueue Observability Drift Remediation When Misalignment Detected
+    description: >
+      When dashboard or alert rules change and no corresponding runbook or
+      routing update is found, enqueue a drift remediation task in the
+      observability platform. This is a non-blocking side-effect rule — the
+      actual gate is handled by dashboard-alert-parity and alert-runbook-parity.
+    enabled: true
+    when:
+      changeSurfaces:
+        anyOf:
+          - dashboard_changed
+          - alert_rule_changed
+    checks:
+      invariants:
+        - id: dashboard-alert-parity-check
+          description: Dashboard panels must have corresponding alert rules
+          type: parity
+          sources:
+            - "**/dashboards/**"
+            - "**/*.dashboard.json"
+          targets:
+            - "**/alerts/**"
+            - "**/*.alert.yaml"
+          allowMissing: true
+        - id: alert-runbook-parity-check
+          description: Alert rules must reference a runbook URL
+          type: alignment
+          sources:
+            - "**/alerts/**"
+          targets:
+            - "**/runbooks/**"
+          allowMissing: true
+    actions:
+      - type: enqueue_drift_remediation
+        target: observability
+        params:
+          priority: low
+          createCase: false
+    decision:
+      onViolation: pass
+      onMissingExternalEvidence: pass
+
+evaluation:
+  externalDependencyMode: soft_fail   # always degrade, never hard-block on infra down
+  unknownArtifactMode: warn
+  budgets:
+    maxTotalMs: 90000
+    perComparatorTimeoutMs: 20000
+    maxGitHubApiCalls: 50
+  maxFindings: 50
+  maxEvidenceSnippetsPerFinding: 3
+
+routing:
+  github:
+    checkRunName: "VertaAI / Observability Integrity"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: action_required
+    postSummaryComment: true
+    annotateFiles: true
+
+spawnTrackB:
+  enabled: true
+  when:
+    - onDecision: block
+    - onDecision: warn
+  createRemediationCase: true
+  remediationDefaults:
+    priority: high
+    targetSystems:
+      - github_readme
+    approvalChannelRef: platform-approvals
+  grouping:
+    strategy: by-drift-type-and-service
+    maxPerPR: 5
+
+# ======================================================================
+# Pack-level config — driven by UI "Observability Overlay" panel (4C)
+# Each key maps 1:1 to a UI control in the service overlay panel.
+# Teams override these defaults when applying the template via UI or YAML.
+# ======================================================================
+config:
+  obs:
+    # Observability provider — drives which evidence APIs are queried
+    provider: datadog                  # UI: "Provider" enum (datadog / grafana / newrelic / prometheus)
+
+    # Paging alerts must reference a runbook (maps to rule: paging-alert-runbook-required)
+    pagingAlertsRequireRunbook: true   # UI: "Paging alerts require runbook" bool
+
+    # Alert routing must reference the oncall owner from CODEOWNERS (maps to rule: alert-runbook-parity)
+    alertMustHaveOwnerRouting: true    # UI: "Routing must match ownership" bool
+
+    # Dashboard ↔ Alert parity invariant (maps to rule: dashboard-alert-parity)
+    dashboardAlertParity:              # UI: "Dashboard↔Alert parity enabled" bool
+      enabled: true
+      criticalSignalTags:              # UI: "Critical signal tags" list — service-defined
+        - "p0"
+
+    # SLO ↔ Alert alignment invariant (maps to rule: slo-alert-alignment)
+    sloAlignment:                      # UI: "SLO alignment enabled" bool
+      enabled: true
+

@@ -134,7 +134,8 @@ function NewPolicyPackContent() {
       }
 
       const data = await response.json();
-      router.push(`/policy-packs/${data.data.id}?workspace=${workspaceId}`);
+      // API returns { policyPack: { id, ... } }
+      router.push(`/policy-packs/${data.policyPack.id}?workspace=${workspaceId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save policy pack');
     } finally {

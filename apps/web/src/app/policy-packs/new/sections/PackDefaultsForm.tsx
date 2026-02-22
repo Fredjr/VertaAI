@@ -1,7 +1,18 @@
 'use client';
 
-import { useState } from 'react';
-import { Clock, AlertTriangle, CheckCircle, Shield, GitPullRequest, Plus, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Clock, AlertTriangle, CheckCircle, Shield, GitPullRequest, Plus, X, ChevronDown, ChevronRight, FileCode, Check, Eye } from 'lucide-react';
+
+interface TemplateMeta {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  ruleCount: number;
+  packMode: string;
+  strictness: string;
+}
 
 interface PackDefaultsFormProps {
   formData: any;
@@ -10,12 +21,86 @@ interface PackDefaultsFormProps {
 
 export default function PackDefaultsForm({ formData, setFormData }: PackDefaultsFormProps) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    timeouts: true,
+    template: true,
+    timeouts: false,
     severity: false,
     approvals: false,
     obligations: false,
     triggers: false,
   });
+
+  // Template picker state
+  const [templates, setTemplates] = useState<TemplateMeta[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [previewYaml, setPreviewYaml] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const workspaceId = formData.workspaceId || 'demo-workspace';
+
+  useEffect(() => {
+    const fetchTemplates = async () => {
+      setLoadingTemplates(true);
+      try {
+        const res = await fetch(`${apiBase}/api/workspaces/${workspaceId}/policy-packs/templates`);
+        if (res.ok) {
+          const data = await res.json();
+          setTemplates(data.templates || []);
+        }
+      } catch (err) {
+        console.error('Failed to load templates', err);
+      } finally {
+        setLoadingTemplates(false);
+      }
+    };
+    fetchTemplates();
+  }, [workspaceId]);
+
+  const handlePreviewTemplate = async (templateId: string) => {
+    try {
+      const res = await fetch(`${apiBase}/api/workspaces/${workspaceId}/policy-packs/templates/${templateId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPreviewYaml(data.template?.yaml || '');
+        setShowPreview(true);
+      }
+    } catch (err) {
+      console.error('Failed to preview template', err);
+    }
+  };
+
+  const handleUseTemplate = async (templateId: string) => {
+    try {
+      const res = await fetch(`${apiBase}/api/workspaces/${workspaceId}/policy-packs/templates/${templateId}`);
+      if (res.ok) {
+        const data = await res.json();
+        const yaml = data.template?.yaml || '';
+        setSelectedTemplateId(templateId);
+        setFormData({
+          ...formData,
+          trackAConfigYamlDraft: yaml,
+          trackAEnabled: true,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to use template', err);
+    }
+  };
+
+  const getCategoryColor = (category: string) => {
+    const colors: Record<string, string> = {
+      starter: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
+      standard: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+      strict: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+      security: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
+      documentation: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+      infrastructure: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+      microservices: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200',
+      packset: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200',
+    };
+    return colors[category] || 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
+  };
 
   const toggleSection = (section: string) => {
     setExpandedSections({
@@ -94,9 +179,109 @@ export default function PackDefaultsForm({ formData, setFormData }: PackDefaults
           Pack-Level Defaults
         </h2>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          Define default values that will be inherited by all rules in this pack. Rules can override these defaults if needed.
+          Start from one of the pre-built templates below, then fine-tune the defaults. Rules can always override pack-level defaults.
         </p>
       </div>
+
+      {/* ── Template Picker ── */}
+      <div className="border border-blue-200 dark:border-blue-700 rounded-lg">
+        <button
+          type="button"
+          onClick={() => toggleSection('template')}
+          className="w-full flex items-center justify-between p-4 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded-t-lg"
+        >
+          <div className="flex items-center gap-2">
+            <FileCode className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            <span className="font-medium text-gray-900 dark:text-white">Start from a Template</span>
+            {selectedTemplateId && (
+              <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 rounded-full">
+                <Check className="h-3 w-3" /> Template loaded
+              </span>
+            )}
+          </div>
+          {expandedSections.template ? (
+            <ChevronDown className="h-5 w-5 text-gray-500" />
+          ) : (
+            <ChevronRight className="h-5 w-5 text-gray-500" />
+          )}
+        </button>
+        {expandedSections.template && (
+          <div className="p-4">
+            {loadingTemplates ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">Loading templates…</p>
+            ) : templates.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-gray-400">No templates available.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {templates.map((tpl) => (
+                  <div
+                    key={tpl.id}
+                    className={`relative border rounded-lg p-3 transition-shadow hover:shadow-md ${
+                      selectedTemplateId === tpl.id
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                        : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800'
+                    }`}
+                  >
+                    {selectedTemplateId === tpl.id && (
+                      <span className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 text-xs bg-blue-500 text-white rounded-full">
+                        <Check className="h-3 w-3" /> Selected
+                      </span>
+                    )}
+                    <div className="mb-2">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${getCategoryColor(tpl.category)}`}>
+                        {tpl.category}
+                      </span>
+                    </div>
+                    <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-1">{tpl.name}</h4>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 line-clamp-2">{tpl.description}</p>
+                    <div className="flex items-center gap-2 text-xs text-gray-400 mb-3">
+                      <span>{tpl.ruleCount} rules</span>
+                      <span>·</span>
+                      <span className="capitalize">{tpl.packMode}</span>
+                      <span>·</span>
+                      <span className="capitalize">{tpl.strictness}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handlePreviewTemplate(tpl.id)}
+                        className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
+                      >
+                        <Eye className="h-3 w-3" /> Preview
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUseTemplate(tpl.id)}
+                        className="flex-1 px-2 py-1.5 text-xs text-white bg-blue-600 rounded hover:bg-blue-700"
+                      >
+                        Use
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Preview Modal */}
+      {showPreview && previewYaml && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-3xl w-full max-h-[75vh] flex flex-col">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-base font-medium text-gray-900 dark:text-white">Template YAML Preview</h3>
+              <button onClick={() => setShowPreview(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <pre className="text-xs text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 p-3 rounded overflow-x-auto whitespace-pre-wrap">{previewYaml}</pre>
+            </div>
+            <div className="flex justify-end p-4 border-t border-gray-200 dark:border-gray-700">
+              <button onClick={() => setShowPreview(false)} className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Timeouts Section */}
       <div className="border border-gray-200 dark:border-gray-700 rounded-lg">

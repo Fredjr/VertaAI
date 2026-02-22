@@ -29,7 +29,8 @@ export function enhancePackWithConditions(pack: PackYAML): PackYAML {
   let enhancementCount = 0;
 
   for (const rule of pack.rules) {
-    for (const obligation of rule.obligations) {
+    // GAP-4: obligations are now optional (approval-gate rules have none)
+    for (const obligation of (rule.obligations ?? [])) {
       const comparatorId = obligation.comparator || obligation.comparatorId;
 
       // Skip if no comparator or already has explicit condition
@@ -72,7 +73,7 @@ export function enhancePackWithConditions(pack: PackYAML): PackYAML {
  */
 export function isPackEnhanced(pack: PackYAML): boolean {
   for (const rule of pack.rules) {
-    for (const obligation of rule.obligations) {
+    for (const obligation of (rule.obligations ?? [])) {
       if ((obligation as any)._autoCondition) {
         return true;
       }
@@ -102,7 +103,7 @@ export function getEnhancementStats(pack: PackYAML): EnhancementStats {
   };
 
   for (const rule of pack.rules) {
-    for (const obligation of rule.obligations) {
+    for (const obligation of (rule.obligations ?? [])) {
       stats.totalObligations++;
 
       const comparatorId = obligation.comparator || obligation.comparatorId;
@@ -132,7 +133,7 @@ export function getEnhancementStats(pack: PackYAML): EnhancementStats {
  */
 export function stripAutoConditions(pack: PackYAML): PackYAML {
   for (const rule of pack.rules) {
-    for (const obligation of rule.obligations) {
+    for (const obligation of (rule.obligations ?? [])) {
       delete (obligation as any)._autoCondition;
     }
   }
@@ -145,7 +146,7 @@ export function stripAutoConditions(pack: PackYAML): PackYAML {
  */
 export function promoteAutoConditions(pack: PackYAML): PackYAML {
   for (const rule of pack.rules) {
-    for (const obligation of rule.obligations) {
+    for (const obligation of (rule.obligations ?? [])) {
       const autoCondition = (obligation as any)._autoCondition;
       if (autoCondition && !obligation.condition && !obligation.conditions) {
         // Promote auto-condition to explicit condition

@@ -18,6 +18,12 @@ interface CompositeCondition {
 
 type Condition = SimpleCondition | CompositeCondition;
 
+interface ApprovalRequirement {
+  resolver: string;
+  minCount: number;
+  when?: string;
+}
+
 interface Rule {
   id: string;
   name: string;
@@ -28,6 +34,8 @@ interface Rule {
     anyChangedPaths?: string[];
     anyFileExtensions?: string[];
     anyChangedPathsRef?: string;
+    /** Semantic ChangeSurface IDs that trigger this rule */
+    changeSurface?: string[];
   };
   obligations: Array<{
     // PHASE 2.4: Support both comparator-based and condition-based obligations
@@ -40,6 +48,8 @@ interface Rule {
     decisionOnUnknown: 'pass' | 'warn' | 'block';
     message?: string;
   }>;
+  /** REQUIRE grammar: structured approval requirements */
+  approvals?: ApprovalRequirement[];
   skipIf?: {
     labels?: string[];
     actors?: string[];

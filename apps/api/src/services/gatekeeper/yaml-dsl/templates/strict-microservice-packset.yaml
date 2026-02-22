@@ -1,0 +1,149 @@
+# ======================================================================
+# STRICT PACKSET: Microservice — Regulated / High-Criticality
+# Maturity Tier: Strict (§3A)
+# ======================================================================
+# Goals: Block on most parity failures + require explicit approvals.
+#   Designed for: PCI-DSS, HIPAA, SOC 2 Type II, or any service
+#   classified as high-criticality by your org's risk framework.
+#
+# Key differences from Standard:
+#   - All parity invariants BLOCK on protected branches (not just warn)
+#   - approvalRequired: true — governance sign-off on pack changes
+#   - requireApprovals: owner-ack + platform-ack on every API/infra change
+#   - IAM wildcard and plaintext secrets BLOCK at all branches
+#   - decisionOnUnknown: warn (still degrade, not hard-block)
+#   - externalDependencyMode: soft_fail (degrade on infra outage)
+#
+# Merge strategy: MOST_RESTRICTIVE
+# ======================================================================
+
+apiVersion: verta.ai/v1
+kind: PolicyPackSet
+
+metadata:
+  setId: verta.strict-microservice-packset.v1
+  name: Strict Microservice PackSet
+  description: >
+    "Regulated / high-criticality" tier. All parity failures BLOCK on
+    protected branches. Owner and platform-team approval required for
+    API contract and infra changes. Designed for PCI-DSS / HIPAA /
+    SOC 2 Type II or services with explicit high-criticality classification.
+  version: 1.0.0
+  owner: platform-team
+  labels:
+    domain: microservices
+    tier: strict
+
+composition:
+  mergeStrategy: MOST_RESTRICTIVE
+  precedence: first-wins
+
+  packs:
+    # ── Global baseline ──────────────────────────────────────────────
+    - packId: verta.baseline-contract-integrity.v1
+      version: "^1.0.0"
+      priority: 50
+      enabled: true
+
+    # ── API overlay ──────────────────────────────────────────────────
+    # Strict: BLOCK on breaking changes + parity failures on all branches.
+    # Requires owner-ack approval on every API contract change.
+    - packId: verta.api-service-overlay.v1
+      version: "^1.0.0"
+      priority: 60
+      enabled: true
+      configOverrides:
+        api:
+          breakingChangePolicy: block               # Block on all branches
+          requireChangelogOnBreaking: true
+          requireOwnerAckOnBreaking: true
+      requireApprovals:
+        - type: owner_ack
+          resolver: codeowners
+          minCount: 1
+          when:
+            predicate: openapi_changed
+
+    # ── DB overlay ───────────────────────────────────────────────────
+    # Strict: BLOCK on risky ops and missing migrations on all branches.
+    # Requires DBA or platform-team approval on destructive operations.
+    - packId: verta.db-service-overlay.v1
+      version: "^1.0.0"
+      priority: 60
+      enabled: true
+      configOverrides:
+        db:
+          riskyOps:
+            blockOnProtectedBranches: true
+          rollback:
+            requiredOnRiskyOps: true
+      requireApprovals:
+        - type: platform_ack
+          resolver: team:platform-dba
+          minCount: 1
+          when:
+            predicate: destructive_change_detected
+
+    # ── Infra overlay ────────────────────────────────────────────────
+    # Strict: BLOCK on public exposure + IAM changes everywhere.
+    # Requires security-team approval on any new public exposure or wildcard IAM.
+    - packId: verta.infra-service-overlay.v1
+      version: "^1.0.0"
+      priority: 80                               # Highest: security is non-negotiable
+      enabled: true
+      configOverrides:
+        infra:
+          terraform:
+            requirePlanEvidence: true
+          exposure:
+            blockNewPublicIngressOnProtectedBranches: true
+          iam:
+            blockWildcardAdminOnProtectedBranches: true
+          secrets:
+            blockPlaintextSecrets: true
+      requireApprovals:
+        - type: security_review
+          resolver: team:security-eng
+          minCount: 1
+          when:
+            predicate: new_public_ingress_detected
+        - type: security_review
+          resolver: team:security-eng
+          minCount: 1
+          when:
+            predicate: wildcard_privilege_detected
+
+    # ── Observability overlay ────────────────────────────────────────
+    # Strict: BLOCK on any paging alert missing runbook on all branches.
+    - packId: verta.observability-service-overlay.v1
+      version: "^1.0.0"
+      priority: 60
+      enabled: true
+      configOverrides:
+        obs:
+          pagingAlertsRequireRunbook: true
+          sloAlertsRequired: true
+          runbookMinSections:
+            - triage
+            - escalation
+            - remediation
+
+# Shared defaults cascade into every pack in this set (overridable per-pack).
+sharedDefaults:
+  obligations:
+    defaultDecisionOnFail: block
+    defaultDecisionOnUnknown: warn              # Always degrade, never hard-block
+    externalDependencyMode: soft_fail
+  triggers:
+    defaultPrEvents:
+      - opened
+      - synchronize
+      - ready_for_review
+
+governance:
+  approvalRequired: true                        # Governance sign-off required
+  exportable: true
+  distributionChannels:
+    - github_checks
+    - slack_notifications
+

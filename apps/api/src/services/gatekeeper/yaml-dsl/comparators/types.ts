@@ -123,6 +123,15 @@ export interface PRContext {
   // This allows comparators to access fact values without re-resolving
   facts?: Record<string, any>;
   factCatalogVersion?: string;
+
+  /**
+   * GAP-4 / §1C: Tier-2 heuristic predicate IDs detected by CI/analysis steps
+   * (e.g. OpenAPI diff classifiers, SQL migration parsers, Terraform plan parsers).
+   * Populated externally before evaluation; evaluator checks these when resolving
+   * `when.predicates` entries that are not valid ChangeSurfaceId values.
+   * Use HeuristicPredicateId enum values as canonical identifiers.
+   */
+  detectedHeuristics?: string[];
 }
 
 export interface GitHubFile {

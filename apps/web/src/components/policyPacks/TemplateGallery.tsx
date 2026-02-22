@@ -27,13 +27,16 @@ export default function TemplateGallery({ workspaceId, onSelectTemplate, current
   const [previewYaml, setPreviewYaml] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
 
+  // Use the backend API URL (no Next.js API proxy is configured)
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
   useEffect(() => {
     loadTemplates();
   }, [workspaceId]);
 
   const loadTemplates = async () => {
     try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/policy-packs/templates`);
+      const response = await fetch(`${apiBase}/api/workspaces/${workspaceId}/policy-packs/templates`);
       const data = await response.json();
       setTemplates(data.templates || []);
     } catch (error) {
@@ -45,7 +48,7 @@ export default function TemplateGallery({ workspaceId, onSelectTemplate, current
 
   const handlePreview = async (templateId: string) => {
     try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/policy-packs/templates/${templateId}`);
+      const response = await fetch(`${apiBase}/api/workspaces/${workspaceId}/policy-packs/templates/${templateId}`);
       const data = await response.json();
       setPreviewYaml(data.template.yaml);
       setShowPreview(true);
@@ -56,7 +59,7 @@ export default function TemplateGallery({ workspaceId, onSelectTemplate, current
 
   const handleUseTemplate = async (templateId: string) => {
     try {
-      const response = await fetch(`/api/workspaces/${workspaceId}/policy-packs/templates/${templateId}`);
+      const response = await fetch(`${apiBase}/api/workspaces/${workspaceId}/policy-packs/templates/${templateId}`);
       const data = await response.json();
       setSelectedTemplateId(templateId);
       onSelectTemplate(data.template.yaml);

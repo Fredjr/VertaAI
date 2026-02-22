@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { FileText, CheckCircle, XCircle, AlertCircle, Sparkles, Code, Eye, Wand2 } from 'lucide-react';
+import { FileText, CheckCircle, XCircle, AlertCircle, Sparkles, Code, Eye, Wand2, ShieldOff } from 'lucide-react';
 import TemplateGallery from '@/components/policyPacks/TemplateGallery';
 import RuleBuilder from '@/components/policyPacks/RuleBuilder';
 import PackPreview from '@/components/policyPacks/PackPreview';
@@ -36,14 +36,23 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
-  const [activeTab, setActiveTab] = useState<'surfaces' | 'templates' | 'builder' | 'yaml' | 'preview'>('surfaces');
+  const [activeTab, setActiveTab] = useState<'surfaces' | 'templates' | 'builder' | 'yaml' | 'preview' | 'waivers'>('surfaces');
+  const [waiversEnabled, setWaiversEnabled] = useState<boolean>(formData.waiversEnabled ?? false);
+  const [waiverMaxDays, setWaiverMaxDays] = useState<number>(formData.waiverMaxDays ?? 30);
+  const [waiverApprovers, setWaiverApprovers] = useState<string>(formData.waiverApprovers ?? '');
+  const [waiverRequiredFields, setWaiverRequiredFields] = useState<string[]>(
+    formData.waiverRequiredFields ?? ['reason', 'scope', 'expiry']
+  );
+
+  // Backend API base (no Next.js proxy; must use absolute URL)
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
   // Fetch templates on mount
   useEffect(() => {
     const fetchTemplates = async () => {
       try {
-        const workspaceId = formData.workspaceId || 'demo-workspace'; // TODO: Get from context
-        const response = await fetch(`/api/workspaces/${workspaceId}/policy-packs/templates`);
+        const workspaceId = formData.workspaceId || 'demo-workspace';
+        const response = await fetch(`${apiBase}/api/workspaces/${workspaceId}/policy-packs/templates`);
         if (response.ok) {
           const data = await response.json();
           setTemplates(data.templates || []);
@@ -76,7 +85,7 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
     try {
       const workspaceId = formData.workspaceId || 'demo-workspace';
       const packId = formData.id || 'new';
-      const response = await fetch(`/api/workspaces/${workspaceId}/policy-packs/${packId}/validate`, {
+      const response = await fetch(`${apiBase}/api/workspaces/${workspaceId}/policy-packs/${packId}/validate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ yaml: yamlContent }),
@@ -278,6 +287,20 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
                   Preview
                 </div>
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('waivers')}
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                  activeTab === 'waivers'
+                    ? 'border-orange-500 text-orange-600 dark:text-orange-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <ShieldOff className="h-4 w-4" />
+                  Exceptions &amp; Waivers
+                </div>
+              </button>
             </nav>
           </div>
 
@@ -387,10 +410,85 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
                   yamlContent={yamlContent}
                   workspaceId={formData.workspaceId || 'demo-workspace'}
                   onValidate={(isValid) => {
-                    // Optional: Update form validation state
                     console.log('Pack is valid:', isValid);
                   }}
                 />
+              </div>
+            )}
+
+            {/* Exceptions & Waivers Tab */}
+            {activeTab === 'waivers' && (
+              <div className="space-y-6">
+                <div className="p-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
+                  <h3 className="text-sm font-semibold text-orange-900 dark:text-orange-200 flex items-center gap-2">
+                    <ShieldOff className="h-4 w-4" />
+                    Exceptions &amp; Waivers
+                  </h3>
+                  <p className="text-xs text-orange-700 dark:text-orange-300 mt-1">
+                    Time-boxed waivers let teams bypass a rule with explicit approval and a stated reason. All waivers are audited.
+                  </p>
+                </div>
+
+                {/* Enable waivers toggle */}
+                <div className="flex items-center justify-between p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">Allow waivers on this pack</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Teams can request a temporary exemption with approval.</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" checked={waiversEnabled}
+                      onChange={e => { setWaiversEnabled(e.target.checked); setFormData({ ...formData, waiversEnabled: e.target.checked }); }}
+                      className="sr-only peer" />
+                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-orange-300 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500"></div>
+                  </label>
+                </div>
+
+                {waiversEnabled && (
+                  <div className="space-y-4">
+                    {/* Max waiver duration */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Maximum waiver duration (days)
+                      </label>
+                      <input type="number" min={1} max={365} value={waiverMaxDays}
+                        onChange={e => { const v = Number(e.target.value); setWaiverMaxDays(v); setFormData({ ...formData, waiverMaxDays: v }); }}
+                        className="w-32 rounded-md border-gray-300 dark:border-gray-600 shadow-sm text-sm dark:bg-gray-700 dark:text-white" />
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Waivers expire automatically after this many days.</p>
+                    </div>
+
+                    {/* Approver teams */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Approver team(s) <span className="font-normal text-gray-500">(comma-separated team slugs)</span>
+                      </label>
+                      <input type="text" value={waiverApprovers} placeholder="e.g. security-team, platform-eng"
+                        onChange={e => { setWaiverApprovers(e.target.value); setFormData({ ...formData, waiverApprovers: e.target.value }); }}
+                        className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm text-sm dark:bg-gray-700 dark:text-white" />
+                    </div>
+
+                    {/* Required fields */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Required fields in waiver request
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(['reason', 'scope', 'expiry', 'affected-parties', 'risk-assessment', 'mitigation-plan'] as const).map(field => {
+                          const checked = waiverRequiredFields.includes(field);
+                          return (
+                            <label key={field} className="flex items-center gap-2 cursor-pointer">
+                              <input type="checkbox" checked={checked} onChange={() => {
+                                const updated = checked ? waiverRequiredFields.filter(f => f !== field) : [...waiverRequiredFields, field];
+                                setWaiverRequiredFields(updated);
+                                setFormData({ ...formData, waiverRequiredFields: updated });
+                              }} className="h-4 w-4 text-orange-500 rounded border-gray-300" />
+                              <span className="text-sm text-gray-700 dark:text-gray-300">{field}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -134,6 +134,8 @@ const CreatePolicyPackSchema = z.object({
   pathGlobs: z.array(z.string()).optional(),
   trackAEnabled: z.boolean().optional(),
   trackAConfig: TrackAConfigSchema.optional(),
+  // YAML-DSL draft (the primary Track A authoring path via the wizard editor)
+  trackAConfigYamlDraft: z.string().optional(),
   trackBEnabled: z.boolean().optional(),
   trackBConfig: TrackBConfigSchema.optional(),
   approvalTiers: z.record(z.any()).optional(),
@@ -184,6 +186,79 @@ router.get('/workspaces/:workspaceId/policy-packs', async (req: Request, res: Re
   } catch (error) {
     console.error('[PolicyPacks] List error:', error);
     res.status(500).json({ error: 'Failed to list policy packs' });
+  }
+});
+
+// ======================================================================
+// TEMPLATE ENDPOINTS — must be registered BEFORE the /:id route so that
+// Express does not match "templates" as an :id parameter.
+// ======================================================================
+
+/**
+ * GET /api/workspaces/:workspaceId/policy-packs/templates
+ * Return metadata for all available pack templates (no YAML content)
+ */
+router.get('/workspaces/:workspaceId/policy-packs/templates', async (_req: Request, res: Response) => {
+  try {
+    const templates = getTemplateMetadata();
+    res.json({ templates });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Get templates error:', error);
+    res.status(500).json({ error: error.message || 'Failed to load templates' });
+  }
+});
+
+/**
+ * GET /api/workspaces/:workspaceId/policy-packs/templates/:templateId
+ * Return a specific template with full YAML content
+ */
+router.get('/workspaces/:workspaceId/policy-packs/templates/:templateId', async (req: Request, res: Response) => {
+  try {
+    const { templateId } = req.params;
+    const template = getTemplateById(templateId);
+    if (!template) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    res.json({ template });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Get template error:', error);
+    res.status(500).json({ error: error.message || 'Failed to load template' });
+  }
+});
+
+/**
+ * GET /api/workspaces/:workspaceId/policy-packs/conflicts
+ * Detect conflicts between published policy packs.
+ * Must be registered BEFORE the /:id route to avoid "conflicts" matching as :id.
+ */
+router.get('/workspaces/:workspaceId/policy-packs/conflicts', async (req: Request, res: Response) => {
+  try {
+    const { workspaceId } = req.params;
+
+    if (!workspaceId) {
+      return res.status(400).json({ error: 'Missing workspaceId' });
+    }
+
+    const { detectConflicts } = await import('../services/gatekeeper/yaml-dsl/conflictDetector.js');
+
+    const allPacks = await prisma.workspacePolicyPack.findMany({
+      where: { workspaceId, packStatus: 'published', trackAEnabled: true, trackAConfigYamlPublished: { not: null } },
+    });
+
+    const parsedPacks: any[] = [];
+    for (const dbPack of allPacks) {
+      try {
+        parsedPacks.push(yaml.parse(dbPack.trackAConfigYamlPublished!));
+      } catch (e) {
+        console.error(`[ConflictDetector] Failed to parse pack ${dbPack.id}:`, e);
+      }
+    }
+
+    const conflicts = detectConflicts(parsedPacks);
+    res.json({ totalPacks: parsedPacks.length, conflictCount: conflicts.length, conflicts });
+  } catch (error: any) {
+    console.error('[PolicyPacks] Conflict detection error:', error);
+    res.status(500).json({ error: error.message || 'Failed to detect conflicts' });
   }
 });
 
@@ -250,6 +325,8 @@ router.post('/workspaces/:workspaceId/policy-packs', async (req: Request, res: R
         pathGlobs: body.pathGlobs || [],
         trackAEnabled: body.trackAEnabled || false,
         trackAConfig: (body.trackAConfig || {}) as Prisma.InputJsonValue,
+        // Persist the YAML-DSL draft written in the wizard editor
+        trackAConfigYamlDraft: body.trackAConfigYamlDraft || null,
         trackBEnabled: body.trackBEnabled || false,
         trackBConfig: (body.trackBConfig || {}) as Prisma.InputJsonValue,
         approvalTiers: (body.approvalTiers || {}) as Prisma.InputJsonValue,
@@ -321,6 +398,10 @@ router.put('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, res
         pathGlobs: body.pathGlobs,
         trackAEnabled: body.trackAEnabled,
         trackAConfig: newTrackAConfig as Prisma.InputJsonValue,
+        // Persist YAML draft when editing via the wizard
+        ...(body.trackAConfigYamlDraft !== undefined && {
+          trackAConfigYamlDraft: body.trackAConfigYamlDraft || null,
+        }),
         trackBEnabled: body.trackBEnabled,
         trackBConfig: newTrackBConfig as Prisma.InputJsonValue,
         approvalTiers: newApprovalTiers as Prisma.InputJsonValue,
@@ -588,9 +669,17 @@ router.post('/workspaces/:workspaceId/policy-packs/:id/validate', async (req: Re
 
 /**
  * GET /api/workspaces/:workspaceId/policy-packs/templates
- * Get starter pack templates
+ * [LEGACY - kept for reference only; real endpoint is at line ~900]
+ * @deprecated Use the registry-based endpoint below instead.
  */
-router.get('/workspaces/:workspaceId/policy-packs/templates', async (req: Request, res: Response) => {
+// REMOVED: hardcoded inline templates endpoint.
+// The registry-based endpoint at line ~900 supersedes this.
+// Registering a duplicate route here would shadow the better one.
+
+// ---- placeholder comment to keep line numbers stable ---- //
+// get starter pack templates (old inline version removed — see templateRegistry endpoint)
+
+if (false) router.get('/workspaces/:workspaceId/policy-packs/templates-legacy', async (req: Request, res: Response) => {
   try {
     const templates = [
       {
@@ -806,7 +895,7 @@ rules:
     console.error('[PolicyPacks] Templates error:', error);
     res.status(500).json({ error: error.message || 'Failed to get templates' });
   }
-});
+}); // end legacy (dead code guarded by `if (false)`)
 
 /**
  * GET /api/workspaces/:workspaceId/defaults
@@ -891,44 +980,6 @@ router.put('/workspaces/:workspaceId/defaults', async (req: Request, res: Respon
 });
 
 // ======================================================================
-// TEMPLATE ENDPOINTS
-// ======================================================================
-
-/**
- * GET /api/workspaces/:workspaceId/policy-packs/templates
- * Get all available pack templates (metadata only)
- */
-router.get('/workspaces/:workspaceId/policy-packs/templates', async (req: Request, res: Response) => {
-  try {
-    const templates = getTemplateMetadata();
-    res.json({ templates });
-  } catch (error: any) {
-    console.error('[PolicyPacks] Get templates error:', error);
-    res.status(500).json({ error: error.message || 'Failed to load templates' });
-  }
-});
-
-/**
- * GET /api/workspaces/:workspaceId/policy-packs/templates/:templateId
- * Get a specific template with full YAML content
- */
-router.get('/workspaces/:workspaceId/policy-packs/templates/:templateId', async (req: Request, res: Response) => {
-  try {
-    const { templateId } = req.params;
-    const template = getTemplateById(templateId);
-
-    if (!template) {
-      return res.status(404).json({ error: 'Template not found' });
-    }
-
-    res.json({ template });
-  } catch (error: any) {
-    console.error('[PolicyPacks] Get template error:', error);
-    res.status(500).json({ error: error.message || 'Failed to load template' });
-  }
-});
-
-// ======================================================================
 // PHASE 3B.1: EFFECTIVE POLICY VIEW
 // ======================================================================
 
@@ -975,66 +1026,6 @@ router.post('/workspaces/:workspaceId/policy-packs/effective-policy', async (req
   } catch (error: any) {
     console.error('[PolicyPacks] Effective policy error:', error);
     res.status(500).json({ error: error.message || 'Failed to compute effective policy' });
-  }
-});
-
-// ======================================================================
-// PHASE 3C.2: CONFLICT DETECTION
-// ======================================================================
-
-/**
- * GET /api/workspaces/:workspaceId/policy-packs/conflicts
- * Detect conflicts between published policy packs
- *
- * Returns list of conflicts with severity, affected packs, and remediation steps
- */
-router.get('/workspaces/:workspaceId/policy-packs/conflicts', async (req: Request, res: Response) => {
-  try {
-    const { workspaceId } = req.params;
-
-    if (!workspaceId) {
-      return res.status(400).json({ error: 'Missing workspaceId' });
-    }
-
-    // Import conflict detector
-    const { detectConflicts } = await import('../services/gatekeeper/yaml-dsl/conflictDetector.js');
-
-    // Get all published packs for this workspace
-    const allPacks = await prisma.workspacePolicyPack.findMany({
-      where: {
-        workspaceId,
-        packStatus: 'published',
-        trackAEnabled: true,
-        trackAConfigYamlPublished: { not: null },
-      },
-    });
-
-    // Parse YAML for all packs
-    const parsedPacks: any[] = [];
-    for (const dbPack of allPacks) {
-      try {
-        const pack = yaml.parse(dbPack.trackAConfigYamlPublished!);
-        parsedPacks.push(pack);
-      } catch (error) {
-        console.error(`[ConflictDetector] Failed to parse pack ${dbPack.id}:`, error);
-      }
-    }
-
-    // Detect conflicts
-    const conflicts = detectConflicts(parsedPacks);
-
-    console.log(
-      `[PolicyPacks] Detected ${conflicts.length} conflicts across ${parsedPacks.length} packs`
-    );
-
-    res.json({
-      totalPacks: parsedPacks.length,
-      conflictCount: conflicts.length,
-      conflicts,
-    });
-  } catch (error: any) {
-    console.error('[PolicyPacks] Conflict detection error:', error);
-    res.status(500).json({ error: error.message || 'Failed to detect conflicts' });
   }
 });
 

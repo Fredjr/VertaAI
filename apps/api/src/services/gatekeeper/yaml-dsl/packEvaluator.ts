@@ -16,6 +16,8 @@ import { factCatalog } from './facts/catalog.js';
 // PHASE 2.3: Import condition evaluation
 import { evaluateCondition, evaluateConditions } from './conditions/evaluator.js';
 import type { Condition, ConditionEvaluationResult } from './conditions/types.js';
+// GAP-1 FIX: ChangeSurface → path-glob expansion
+import { resolveChangeSurfaceGlobs } from './changeSurfaceCatalog.js';
 
 export interface Finding {
   ruleId: string;
@@ -120,12 +122,40 @@ export class PackEvaluator {
         effectiveContext = filterExcludedFiles(context, rule.excludePaths);
       }
 
-      // Evaluate trigger (using filtered context)
-      if (!evaluateTrigger(rule.trigger, effectiveContext)) {
+      // GAP-4: Evaluate trigger — handle both `trigger` (path-glob) and rule-level `when` (predicates)
+      // If neither is defined, the rule always fires (e.g., approval-only rules).
+      const ruleAny = rule as any;
+      const hasTrigger = !!rule.trigger;
+      const hasWhen = !!ruleAny.when;
+      if (hasTrigger && !evaluateTrigger(rule.trigger, effectiveContext)) {
         continue;
       }
+      if (!hasTrigger && hasWhen) {
+        // Evaluate rule-level `when.predicates` and/or `when.changeSurfaces` using
+        // the same expansion logic. Pass the entire `when` block so evaluateTrigger
+        // can handle both sub-fields (GAP-4 + GAP-A).
+        if (!evaluateTrigger({ when: ruleAny.when }, effectiveContext)) {
+          continue;
+        }
+      }
+      // If neither trigger nor when is defined → rule always fires
 
       triggeredRules.push(rule.id);
+
+      // GAP-4: obligations are now optional (rules may use approvals/decision instead)
+      if (!rule.obligations || rule.obligations.length === 0) {
+        // Approval-only / decision-only rules: register as triggered with a synthetic PASS finding
+        // The approvals/decision blocks will be evaluated by the approval routing layer (future work).
+        findings.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          obligationIndex: -1,
+          comparatorResult: { status: 'unknown', findingCode: 'APPROVAL_GATE' as FindingCode, evidence: [], meta: { approvalRule: true } },
+          decisionOnFail: (ruleAny.decision?.onViolation) || 'warn',
+          decisionOnUnknown: (ruleAny.decision?.onMissingExternalEvidence) || 'warn',
+        });
+        continue;
+      }
 
       // Evaluate obligations (using same filtered context)
       for (let i = 0; i < rule.obligations.length; i++) {
@@ -345,6 +375,9 @@ function shouldSkipRule(skipIf: any, context: PRContext): boolean {
  * This prevents early returns from breaking allOf/anyOf composition
  */
 function evaluateTrigger(trigger: any, context: PRContext): boolean {
+  // Guard: undefined trigger → always fires (caller decides semantics)
+  if (!trigger) return true;
+
   // PHASE 1 FIX: Support trigger.always
   if (trigger.always === true) {
     return true;
@@ -365,6 +398,91 @@ function evaluateTrigger(trigger: any, context: PRContext): boolean {
   // Step 2: Evaluate ANY conditions (OR semantics)
   // Collect all OR conditions
   const anyConditions: boolean[] = [];
+
+  // GAP-1 FIX: changeSurface — expand semantic surface to path globs and match
+  // Surfaces may be a single id or an array of ids; union of all globs is OR'd.
+  if (trigger.changeSurface) {
+    const globs = resolveChangeSurfaceGlobs(trigger.changeSurface);
+    if (globs.length > 0) {
+      const matches = context.files.some(file =>
+        globs.some(pattern => minimatch(file.filename, pattern, { dot: true }))
+      );
+      anyConditions.push(matches);
+    }
+    // If globs is empty (e.g., AGENT_AUTHORED_SENSITIVE_CHANGE is actor-only),
+    // fall through — the rule will not trigger on file paths alone.
+  }
+
+  // GAP-4 / §1C: when.predicates.anyOf / allOf
+  // Dual-mode resolution: first try as ChangeSurfaceId (expand to path globs);
+  // if no globs found, treat as a HeuristicPredicateId and check detectedHeuristics.
+  if (trigger.when?.predicates) {
+    const { anyOf, allOf } = trigger.when.predicates;
+
+    // Helper: resolve one predicate string — returns { globs, isHeuristic }
+    const resolvePredicate = (id: string): { globs: string[]; isHeuristic: boolean } => {
+      const globs = resolveChangeSurfaceGlobs(id as any);
+      return globs.length > 0
+        ? { globs, isHeuristic: false }
+        : { globs: [], isHeuristic: true };
+    };
+
+    if (anyOf && anyOf.length > 0) {
+      // anyOf: at least one predicate must be satisfied
+      const satisfied = anyOf.some((id: string) => {
+        const { globs, isHeuristic } = resolvePredicate(id);
+        if (isHeuristic) {
+          // Tier-2: check detectedHeuristics list; unknown heuristics degrade gracefully
+          return (context.detectedHeuristics ?? []).includes(id);
+        }
+        // Tier-1: file path glob match
+        return context.files.some(file =>
+          globs.some(pattern => minimatch(file.filename, pattern, { dot: true }))
+        );
+      });
+      anyConditions.push(satisfied);
+    }
+
+    if (allOf && allOf.length > 0) {
+      // allOf: every predicate must be satisfied
+      const allSatisfied = allOf.every((id: string) => {
+        const { globs, isHeuristic } = resolvePredicate(id);
+        if (isHeuristic) {
+          return (context.detectedHeuristics ?? []).includes(id);
+        }
+        return globs.length === 0 ||
+          context.files.some(file =>
+            globs.some(pattern => minimatch(file.filename, pattern, { dot: true }))
+          );
+      });
+      if (!allSatisfied) return false;
+    }
+  }
+
+  // GAP-A FIX: when.changeSurfaces.anyOf / allOf — explicit ChangeSurfaceId-based trigger
+  // Distinct from `predicates` — always expands to file path globs via changeSurfaceCatalog.
+  if (trigger.when?.changeSurfaces) {
+    const { anyOf, allOf } = trigger.when.changeSurfaces;
+    if (anyOf && anyOf.length > 0) {
+      const globs = resolveChangeSurfaceGlobs(anyOf);
+      if (globs.length > 0) {
+        const matches = context.files.some(file =>
+          globs.some(pattern => minimatch(file.filename, pattern, { dot: true }))
+        );
+        anyConditions.push(matches);
+      }
+    }
+    if (allOf && allOf.length > 0) {
+      const allGlobs = allOf.map((s: string) => resolveChangeSurfaceGlobs(s as any));
+      const allMatch = allGlobs.every((globs: string[]) =>
+        globs.length === 0 ||
+        context.files.some(file =>
+          globs.some(pattern => minimatch(file.filename, pattern, { dot: true }))
+        )
+      );
+      if (!allMatch) return false;
+    }
+  }
 
   // anyChangedPaths (OR semantics)
   if (trigger.anyChangedPaths && trigger.anyChangedPaths.length > 0) {

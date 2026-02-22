@@ -45,6 +45,82 @@
     },
     "spawnTrackB": {
       "$ref": "#/$defs/spawnTrackB"
+    },
+    "config": {
+      "type": "object",
+      "description": "GAP-G: Service-specific configuration (open schema)",
+      "additionalProperties": true
+    },
+    "dataSources": {
+      "type": "object",
+      "description": "GAP-G: External data source integrations",
+      "additionalProperties": true,
+      "properties": {
+        "serviceCatalog": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "provider": { "type": "string" },
+            "url": { "type": "string" }
+          }
+        },
+        "github": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "org": { "type": "string" }
+          }
+        },
+        "observability": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "provider": { "type": "string" },
+            "url": { "type": "string" }
+          }
+        }
+      }
+    },
+    "enforcement": {
+      "type": "object",
+      "description": "GAP-G: When and how to post check-run results",
+      "additionalProperties": false,
+      "properties": {
+        "checkrun": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "alwaysPost": { "type": "boolean" }
+          }
+        },
+        "premerge": { "type": "boolean" },
+        "postmerge": { "type": "boolean" }
+      }
+    },
+    "exceptions": {
+      "type": "object",
+      "description": "GAP-G: Time-bound waivers and exception handling",
+      "additionalProperties": false,
+      "properties": {
+        "waivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "ruleIds": { "type": "array", "items": { "type": "string" } },
+              "expiresAt": { "type": "string" },
+              "approvedBy": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "requireApproval": { "type": "boolean" },
+        "approvers": { "type": "array", "items": { "type": "string" } }
+      }
     }
   },
   "$defs": {
@@ -81,8 +157,13 @@
         },
         "packMode": {
           "type": "string",
-          "enum": ["observe", "enforce"],
-          "description": "Pack mode: observe (monitor only) or enforce (block)"
+          "enum": ["observe", "warn", "enforce"],
+          "description": "Pack mode: observe (monitor only), warn (allow+warn), or enforce (block)"
+        },
+        "packType": {
+          "type": "string",
+          "enum": ["GLOBAL_BASELINE", "SERVICE_OVERLAY"],
+          "description": "Pack archetype — drives baseline/overlay composition"
         },
         "strictness": {
           "type": "string",
@@ -257,6 +338,24 @@
               "items": { "type": "string" }
             }
           }
+        },
+        "services": {
+          "type": "object",
+          "description": "Service allowlist/denylist for scope restriction",
+          "additionalProperties": false,
+          "properties": {
+            "allowlist": { "type": "array", "items": { "type": "string" } },
+            "denylist": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "paths": {
+          "type": "object",
+          "description": "Path glob filters for changeSurface detection and artifact matching",
+          "additionalProperties": false,
+          "properties": {
+            "includeGlobs": { "type": "array", "items": { "type": "string" } },
+            "excludeGlobs": { "type": "array", "items": { "type": "string" } }
+          }
         }
       }
     },
@@ -306,7 +405,7 @@
     },
     "rule": {
       "type": "object",
-      "required": ["id", "name", "trigger", "obligations"],
+      "required": ["id", "name"],
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -318,6 +417,15 @@
         "enabled": { "type": "boolean" },
         "trigger": {
           "$ref": "#/$defs/trigger"
+        },
+        "when": {
+          "$ref": "#/$defs/whenBlock"
+        },
+        "approvals": {
+          "$ref": "#/$defs/approvalsBlock"
+        },
+        "decision": {
+          "$ref": "#/$defs/decisionBlock"
         },
         "obligations": {
           "type": "array",
@@ -332,6 +440,17 @@
         "excludePaths": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "requires": {
+          "$ref": "#/$defs/requiresBlock"
+        },
+        "checks": {
+          "$ref": "#/$defs/checksBlock"
+        },
+        "actions": {
+          "type": "array",
+          "description": "Side-effect actions triggered when rule fires",
+          "items": { "$ref": "#/$defs/action" }
         }
       }
     },
@@ -360,7 +479,184 @@
           "items": {}
         },
         "always": { "type": "boolean" },
-        "anyChangedPathsRef": { "type": "string" }
+        "anyChangedPathsRef": { "type": "string" },
+        "changeSurface": {
+          "description": "Semantic surface(s) that expand to path globs at evaluation time",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        }
+      }
+    },
+    "whenBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Declarative trigger — abstract predicates and/or changeSurfaces",
+      "properties": {
+        "predicates": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Abstract fact-based predicates (e.g. always_true, prod_env_touched)",
+          "properties": {
+            "anyOf": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Any of these predicate strings match → rule fires"
+            },
+            "allOf": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "All of these predicate strings must match"
+            }
+          }
+        },
+        "changeSurfaces": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "GAP-A: ChangeSurfaceId-based trigger — expanded to path globs at evaluation time",
+          "properties": {
+            "anyOf": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Any of these ChangeSurfaceId strings match → rule fires"
+            },
+            "allOf": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "All of these ChangeSurfaceId strings must match"
+            }
+          }
+        }
+      }
+    },
+    "approvalsBlock": {
+      "type": "object",
+      "required": ["required"],
+      "additionalProperties": false,
+      "description": "Structured approval routing at rule level",
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "resolver"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Approval type (e.g. owner_ack, security_approval, platform_approval)"
+              },
+              "resolver": {
+                "type": "string",
+                "description": "Who resolves this approval (e.g. serviceOwner, securityTeam)"
+              },
+              "minCount": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Minimum number of approvals required (default: 1)"
+              },
+              "when": {
+                "type": "object",
+                "description": "GAP-E: Conditional — only require this approval when predicate is true",
+                "additionalProperties": false,
+                "properties": {
+                  "predicate": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "decisionBlock": {
+      "type": "object",
+      "required": ["onViolation", "onMissingExternalEvidence"],
+      "additionalProperties": false,
+      "description": "Deterministic outcome mapping at rule level",
+      "properties": {
+        "onViolation": {
+          "description": "GAP-D: Decision when rule violated — simple string or branch-specific object",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["pass", "warn", "block"]
+            },
+            {
+              "type": "object",
+              "required": ["protectedBranches", "featureBranches"],
+              "additionalProperties": false,
+              "properties": {
+                "protectedBranches": { "type": "string", "enum": ["pass", "warn", "block"] },
+                "featureBranches": { "type": "string", "enum": ["pass", "warn", "block"] }
+              }
+            }
+          ]
+        },
+        "onMissingExternalEvidence": {
+          "type": "string",
+          "enum": ["pass", "warn", "block"],
+          "description": "Decision when external evidence is unavailable (degrade-to-WARN pattern)"
+        }
+      }
+    },
+    "requiresBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GAP-B: Typed evidence requirements for the rule",
+      "properties": {
+        "ciEvidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "CI checks that must have passed",
+          "properties": {
+            "anyOf": { "type": "array", "items": { "type": "string" } },
+            "allOf": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "localArtifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Local file artifacts that must be present (path globs)",
+          "properties": {
+            "anyOf": { "type": "array", "items": { "type": "string" } },
+            "allOf": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "checksBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "GAP-C: Invariant / parity validation checks",
+      "properties": {
+        "invariants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "description": { "type": "string" },
+              "type": { "type": "string" },
+              "sources": { "type": "array", "items": { "type": "string" } },
+              "targets": { "type": "array", "items": { "type": "string" } },
+              "allowMissing": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "description": "GAP-F: Side-effect action triggered when rule fires",
+      "properties": {
+        "type": { "type": "string" },
+        "target": { "type": "string" },
+        "params": { "type": "object", "additionalProperties": true }
       }
     },
     "obligation": {
@@ -373,6 +669,31 @@
         "params": {
           "type": "object",
           "additionalProperties": true
+        },
+        "condition": {
+          "type": "object",
+          "description": "Fact-based condition (alternative to comparator)",
+          "properties": {
+            "fact": { "type": "string" },
+            "operator": { "type": "string" },
+            "value": {}
+          }
+        },
+        "conditions": {
+          "type": "array",
+          "description": "Multiple fact-based conditions (evaluated as AND)",
+          "items": {
+            "type": "object",
+            "properties": {
+              "fact": { "type": "string" },
+              "operator": { "type": "string" },
+              "value": {}
+            }
+          }
+        },
+        "_autoCondition": {
+          "type": "object",
+          "description": "Auto-generated condition (internal, populated from comparator in hybrid mode)"
         },
         "decisionOnFail": {
           "type": "string",
@@ -387,11 +708,7 @@
           "type": "string",
           "enum": ["low", "medium", "high", "critical"]
         }
-      },
-      "oneOf": [
-        { "required": ["comparator"] },
-        { "required": ["comparatorId"] }
-      ]
+      }
     },
     "skipIf": {
       "type": "object",

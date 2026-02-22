@@ -1,0 +1,117 @@
+# ======================================================================
+# STANDARD PACKSET: Microservice — Production Safe
+# Maturity Tier: Standard (§3A)
+# ======================================================================
+# Goals: Block on contract breakage and missing required artifacts.
+#   All overlays are ENABLED by default — disable any that are not
+#   relevant to this service in the UI overlay panels.
+#
+# Key differences from Starter:
+#   - All overlays enabled: true (Starter defaults to false)
+#   - Branch-specific blocking: protected branches get BLOCK,
+#     feature branches get WARN on parity failures
+#   - decisionOnUnknown: warn everywhere (degrade, never hard-block)
+#   - externalDependencyMode: soft_fail
+#
+# Merge strategy: MOST_RESTRICTIVE — strictest decision wins across packs.
+# ======================================================================
+
+apiVersion: verta.ai/v1
+kind: PolicyPackSet
+
+metadata:
+  setId: verta.standard-microservice-packset.v1
+  name: Standard Microservice PackSet
+  description: >
+    "Production safe" tier. Composes baseline + all four service overlays with
+    branch-specific enforcement: BLOCK on protected branches, WARN on feature
+    branches for most parity failures. All overlays are active by default.
+    Disable any overlay not relevant to your service in the UI.
+  version: 1.0.0
+  owner: platform-team
+  labels:
+    domain: microservices
+    tier: standard
+
+composition:
+  mergeStrategy: MOST_RESTRICTIVE
+  precedence: first-wins
+
+  packs:
+    # ── Global baseline ──────────────────────────────────────────────
+    - packId: verta.baseline-contract-integrity.v1
+      version: "^1.0.0"
+      priority: 50
+      enabled: true
+
+    # ── API overlay ──────────────────────────────────────────────────
+    # Enabled: blocks on breaking changes + missing spec updates on main.
+    - packId: verta.api-service-overlay.v1
+      version: "^1.0.0"
+      priority: 60
+      enabled: true            # Standard: ON by default
+      configOverrides:
+        api:
+          breakingChangePolicy: block_on_protected     # block main, warn feature
+          requireChangelogOnBreaking: true
+          requireOwnerAckOnBreaking: true
+
+    # ── DB overlay ───────────────────────────────────────────────────
+    # Enabled: blocks on missing migrations + risky ops on main.
+    - packId: verta.db-service-overlay.v1
+      version: "^1.0.0"
+      priority: 60
+      enabled: true            # Standard: ON by default
+      configOverrides:
+        db:
+          riskyOps:
+            blockOnProtectedBranches: true
+          rollback:
+            requiredOnRiskyOps: true
+
+    # ── Infra overlay ────────────────────────────────────────────────
+    # Enabled: blocks on missing plan evidence + wildcard IAM on main.
+    - packId: verta.infra-service-overlay.v1
+      version: "^1.0.0"
+      priority: 70
+      enabled: true            # Standard: ON by default
+      configOverrides:
+        infra:
+          terraform:
+            requirePlanEvidence: true
+          exposure:
+            blockNewPublicIngressOnProtectedBranches: true
+          iam:
+            blockWildcardAdminOnProtectedBranches: true
+          secrets:
+            blockPlaintextSecrets: true   # Block at all tiers (obvious footgun)
+
+    # ── Observability overlay ────────────────────────────────────────
+    # Enabled: blocks on paging alerts missing runbook on main.
+    - packId: verta.observability-service-overlay.v1
+      version: "^1.0.0"
+      priority: 60
+      enabled: true            # Standard: ON by default
+      configOverrides:
+        obs:
+          pagingAlertsRequireRunbook: true
+          sloAlertsRequired: true
+
+# Shared defaults cascade into every pack in this set (overridable per-pack).
+sharedDefaults:
+  obligations:
+    defaultDecisionOnFail: block
+    defaultDecisionOnUnknown: warn          # Degrade, never hard-block on missing evidence
+    externalDependencyMode: soft_fail       # Always degrade on infra outages
+  triggers:
+    defaultPrEvents:
+      - opened
+      - synchronize
+      - ready_for_review
+
+governance:
+  approvalRequired: false                   # Promote to true for regulated services
+  exportable: true
+  distributionChannels:
+    - github_checks
+

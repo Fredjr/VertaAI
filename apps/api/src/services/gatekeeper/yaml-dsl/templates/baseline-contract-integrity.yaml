@@ -1,0 +1,260 @@
+apiVersion: verta.ai/v1
+kind: PolicyPack
+metadata:
+  id: baseline-contract-integrity
+  name: Baseline — Workspace Contract Integrity
+  version: 1.0.0
+  description: >
+    Workspace-wide cross-cutting integrity baseline: check-run always posted,
+    CODEOWNERS present, service ownership defined, ownership↔docs parity,
+    runbooks required for Tier-1 services, alert routing ownership, and
+    time-bound waiver policy. Applies to all repos/services in the workspace.
+  packType: GLOBAL_BASELINE
+  packMode: warn
+  status: ACTIVE
+  labels:
+    domain: baseline
+    tier: platform
+  scopePriority: 10
+  scopeMergeStrategy: MOST_RESTRICTIVE
+  tags:
+    - baseline
+    - ownership
+    - contract-integrity
+    - workspace
+
+scope:
+  type: workspace
+  branches:
+    include:
+      - main
+      - "release/*"
+      - "hotfix/*"
+
+enforcement:
+  checkrun:
+    name: "VertaAI / Baseline Contract Integrity"
+    alwaysPost: true
+
+rules:
+  # ── Invariant: checkrun_always ─────────────────────────────────────────
+  # Rule 1: CHECKRUN_POSTED must happen even with partial evidence.
+  # This rule always fires — ensures the gate is always visible in GitHub.
+  - id: checkrun-always
+    name: Check-Run Must Always Be Posted (Even With Partial Evidence)
+    description: >
+      The VertaAI contract-integrity gate must always post a check-run to GitHub,
+      even when evidence is partial or external dependencies are unavailable.
+      This ensures the gate is always visible and the PR cannot silently pass.
+    enabled: true
+    trigger:
+      always: true
+    obligations:
+      - comparator: CHECKRUNS_PASSED
+        params:
+          checkRunName: "VertaAI / Baseline Contract Integrity"
+          allowPartialEvidence: true
+        decisionOnFail: warn
+        decisionOnUnknown: warn
+        message: >
+          Baseline check-run gate was not posted. This indicates a configuration
+          issue. Contact the platform team.
+
+  # ── RequiredArtifact: codeowners ──────────────────────────────────────
+  # Rule 2: Every repo must have a CODEOWNERS file.
+  - id: codeowners-required
+    name: CODEOWNERS File Required in Every Repository
+    description: >
+      Every repository must have a CODEOWNERS file (root or .github/) so
+      that code ownership is explicit and reviewers can be auto-assigned.
+    enabled: true
+    trigger:
+      always: true
+    requires:
+      localArtifacts:
+        anyOf:
+          - "CODEOWNERS"
+          - ".github/CODEOWNERS"
+          - "docs/CODEOWNERS"
+    decision:
+      onViolation:
+        protectedBranches: warn
+        featureBranches: pass
+      onMissingExternalEvidence: warn
+
+  # ── RequiredArtifact: service_owner ────────────────────────────────────
+  # Rule 3: Every service must declare a service owner in catalog-info.yaml.
+  - id: service-owner-required
+    name: Service Owner Must Be Declared in Service Catalog
+    description: >
+      Every service must have a catalog-info.yaml (Backstage) or equivalent
+      service catalog entry declaring a service owner. Degrades to WARN when
+      catalog is unavailable.
+    enabled: true
+    trigger:
+      always: true
+    requires:
+      localArtifacts:
+        anyOf:
+          - "**/catalog-info.yaml"
+          - "**/backstage.yaml"
+          - "**/service.yaml"
+    decision:
+      onViolation: warn
+      onMissingExternalEvidence: warn
+
+  # ── Invariant: ownership_docs_parity ──────────────────────────────────
+  # Rule 4: CODEOWNERS↔docs parity — owners listed in CODEOWNERS must be
+  # reflected in the service's ownership docs.
+  - id: ownership-docs-parity
+    name: CODEOWNERS Must Be Reflected in Ownership Documentation
+    description: >
+      Ownership drift risk: CODEOWNERS file was changed but corresponding
+      ownership docs (docs/ownership/, OWNERS) were not updated. Keep
+      ownership in sync across all sources of truth.
+    enabled: true
+    when:
+      changeSurfaces:
+        anyOf:
+          - codeowners_changed
+    checks:
+      invariants:
+        - id: codeowners-docs-parity
+          description: CODEOWNERS entries must be reflected in ownership docs
+          type: parity
+          sources:
+            - "CODEOWNERS"
+            - ".github/CODEOWNERS"
+          targets:
+            - "**/docs/ownership/**"
+            - "**/OWNERS"
+            - "**/team-registry/**"
+          allowMissing: true
+    decision:
+      onViolation: warn
+      onMissingExternalEvidence: warn
+
+  # ── RequiredArtifact: runbook (Tier-1 only) ───────────────────────────
+  # Rule 5: Tier-1 services must have a RUNBOOK.md before merging to main.
+  # Degrades to WARN on feature branches and when tier metadata is unavailable.
+  - id: runbook-required-tier1
+    name: Runbook Required for Tier-1 Services
+    description: >
+      Tier-1 services (directly customer-facing or in the critical path) must
+      maintain an up-to-date runbook at RUNBOOK.md or docs/runbook/. This rule
+      fires on every PR to main for services whose catalog-info.yaml declares
+      tier: 1. Degrades to WARN when tier metadata is unavailable.
+    enabled: true
+    trigger:
+      always: true
+    requires:
+      localArtifacts:
+        anyOf:
+          - "RUNBOOK.md"
+          - "runbook.md"
+          - "**/docs/runbook/**"
+          - "**/runbooks/**"
+    decision:
+      onViolation:
+        protectedBranches: warn
+        featureBranches: pass
+      onMissingExternalEvidence: warn
+
+  # ── Invariant: alert_routing_ownership ───────────────────────────────
+  # Rule 6: Alert routing must reference service ownership / on-call team.
+  # When alert rules change, they must map to an on-call team drawn from CODEOWNERS.
+  - id: alert-routing-ownership
+    name: Alert Routing Must Reference On-Call Ownership
+    description: >
+      Alert rule changes must reference an on-call team that is reflected in
+      CODEOWNERS. Prevents alert rules routing to stale or missing teams.
+      Degrades to WARN when monitoring platform is unavailable.
+    enabled: true
+    when:
+      changeSurfaces:
+        anyOf:
+          - alert_rule_changed
+    checks:
+      invariants:
+        - id: alert-oncall-parity
+          description: Alert routes must reference a team declared in CODEOWNERS
+          type: alignment
+          sources:
+            - "**/alerts/**"
+            - "**/*.alert.yaml"
+            - "**/*.alert.json"
+          targets:
+            - "CODEOWNERS"
+            - ".github/CODEOWNERS"
+          allowMissing: true
+    approvals:
+      required:
+        - type: owner_ack
+          resolver: serviceOwner
+          minCount: 1
+          when:
+            predicate: alert_route_changed
+    decision:
+      onViolation: warn
+      onMissingExternalEvidence: warn
+
+  # ── Decision: waiver_policy ───────────────────────────────────────────
+  # Rule 7: Time-bound waivers require explicit approval from platform team.
+  # Any PR that carries a policy-waiver label must have platform team approval.
+  - id: waiver-policy
+    name: Policy Waivers Require Platform Team Approval
+    description: >
+      A PR that carries the 'policy-waiver' label or a waiver entry in the
+      pack's exceptions block requires an explicit approval from the platform
+      team. Waivers are time-bound (max 30 days) and must reference a Jira/
+      GitHub issue. Degrades to WARN when reviewer data is unavailable.
+    enabled: true
+    when:
+      predicates:
+        anyOf:
+          - pr_has_waiver_label
+    approvals:
+      required:
+        - type: platform_approval
+          resolver: platformTeam
+          minCount: 1
+    decision:
+      onViolation:
+        protectedBranches: block
+        featureBranches: warn
+      onMissingExternalEvidence: warn
+
+evaluation:
+  externalDependencyMode: soft_fail   # always degrade, never hard-block on infra down
+  unknownArtifactMode: warn
+  budgets:
+    maxTotalMs: 60000
+    perComparatorTimeoutMs: 15000
+    maxGitHubApiCalls: 30
+  maxFindings: 30
+  maxEvidenceSnippetsPerFinding: 3
+
+routing:
+  github:
+    checkRunName: "VertaAI / Baseline Contract Integrity"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: action_required
+    postSummaryComment: true
+    annotateFiles: false
+
+spawnTrackB:
+  enabled: true
+  when:
+    - onDecision: block
+    - onDecision: warn
+  createRemediationCase: true
+  remediationDefaults:
+    priority: medium
+    targetSystems:
+      - github_readme
+    approvalChannelRef: platform-approvals
+  grouping:
+    strategy: by-drift-type-and-service
+    maxPerPR: 5

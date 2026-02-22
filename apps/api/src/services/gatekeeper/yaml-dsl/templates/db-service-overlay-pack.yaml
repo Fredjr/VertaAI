@@ -1,0 +1,398 @@
+# ======================================================================
+# SERVICE OVERLAY: Database Migration Safety
+# ======================================================================
+# Pattern: ChangeSurface → RequiredArtifacts → Invariants → Decision
+#
+# Surfaces: db_schema_changed, migration_added_or_missing, orm_model_changed
+#
+# Key design:
+#   - decisionOnUnknown: warn on ALL obligations (degrade to WARN when
+#     table-size data, PII classifier, or migration scanner unavailable)
+#   - packType: SERVICE_OVERLAY — for services owning data/DB
+#   - Approval routing hook: DBA approval required for schema-altering changes
+#
+# This is a SERVICE OVERLAY, not a replacement for the workspace-level
+# database-migration-safety-pack. It adds the semantic ChangeSurface
+# model, invariant rules, and the degrade-to-WARN evidence pattern.
+# ======================================================================
+
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.db-service-overlay.v1
+  name: DB Service Overlay
+  version: 1.0.0
+  description: >
+    Service overlay for data-owning services. Enforces migration presence,
+    rollback readiness, unsafe-DDL prevention, ORM↔migration parity, DBA
+    approval, and degrades gracefully when table-size or PII evidence is
+    unavailable.
+  packType: SERVICE_OVERLAY
+  packMode: enforce
+  strictness: strict
+  owner: dba-team
+  tags:
+    - service-overlay
+    - database
+    - migrations
+    - rollback
+    - dba-approval
+    - data-safety
+
+scope:
+  type: service         # service-scoped — only for services owning data
+  branches:
+    include: ["main", "master", "release/*"]
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: true
+
+rules:
+
+  # ── RequiredArtifact: migration_present ───────────────────────────
+  # Rule 1: Schema changed → a migration file must exist in this PR.
+  # No migration = schema drift in production. BLOCK on fail.
+  # Degrade to WARN when the schema diff scanner can't detect changes.
+  - id: migration-required-for-schema-change
+    name: Schema Change Requires Migration File
+    description: >
+      When DB schema changes are detected (ORM models, schema files, DDL),
+      a corresponding migration file must be present in this PR.
+      Prevents schema drift between code and database state.
+    enabled: true
+    trigger:
+      changeSurface: db_schema_changed
+    obligations:
+      - condition:
+          or:
+            - fact: diff.files.added
+              operator: contains
+              value: migration
+            - fact: diff.files.added
+              operator: contains
+              value: migrate
+            - fact: diff.files.added
+              operator: contains
+              value: alembic
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: schema diff scanner unavailable
+        message: >
+          DB schema change detected but no migration file found in this PR.
+          Add a migration file (e.g., migrations/, alembic/versions/, db/migrate/)
+          before merging, or label 'schema-change-justified' with explanation.
+    skipIf:
+      labels: ["schema-change-justified", "no-db-change"]
+
+  # ── RequiredArtifact: rollback_notes_present ──────────────────────
+  # Rule 2: Migration added → a rollback/down script must be present.
+  # No rollback = unrecoverable schema change risk.
+  - id: rollback-required-for-migration
+    name: Migration Requires Rollback Script
+    description: >
+      Every forward migration must have a corresponding rollback/down
+      script. Ensures the deployment can be safely reversed if issues arise.
+    enabled: true
+    trigger:
+      changeSurface: migration_added_or_missing
+    obligations:
+      - condition:
+          or:
+            - fact: diff.files.added
+              operator: contains
+              value: rollback
+            - fact: diff.files.added
+              operator: contains
+              value: _down
+            - fact: diff.files.added
+              operator: contains
+              value: down_
+            - fact: pr.body
+              operator: contains
+              value: rollback
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: file scanner unavailable
+        message: >
+          Migration detected without a rollback/down script.
+          Add a rollback script (e.g., *_rollback.sql, down migration, or
+          describe the rollback procedure in the PR body).
+    skipIf:
+      labels: ["rollback-not-applicable", "additive-only-migration"]
+
+  # ── Invariant: unsafe migration patterns ──────────────────────────
+  # Rule 3: Migration present → no unsafe DDL (DROP TABLE, TRUNCATE,
+  # DROP COLUMN) without an explicit approval label.
+  # Degrade to WARN when we can't scan migration file contents.
+  - id: no-unsafe-migration-without-approval
+    name: Unsafe DDL Requires Explicit Approval
+    description: >
+      DROP TABLE, TRUNCATE TABLE, and DROP COLUMN are destructive and
+      irreversible. They require the 'destructive-ddl-approved' label
+      before merge. Degrade to WARN when migration content can't be scanned.
+    enabled: true
+    trigger:
+      changeSurface: migration_added_or_missing
+    obligations:
+      - condition:
+          and:
+            - or:
+                - fact: diff.content
+                  operator: contains
+                  value: DROP TABLE
+                - fact: diff.content
+                  operator: contains
+                  value: TRUNCATE TABLE
+                - fact: diff.content
+                  operator: contains
+                  value: DROP COLUMN
+            - fact: pr.labels
+              operator: notContains
+              value: destructive-ddl-approved
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: content scanner unavailable
+        message: >
+          Destructive DDL detected (DROP TABLE / TRUNCATE TABLE / DROP COLUMN)
+          without the 'destructive-ddl-approved' label. Get DBA team approval
+          and add the label, or verify the migration scanner found a false positive.
+
+  # ── Invariant: ORM model ↔ migration parity ───────────────────────
+  # Rule 4: ORM model changed → migration must exist in the same PR.
+  # Prevents the classic "I updated the model but forgot the migration" bug.
+  - id: orm-model-migration-parity
+    name: ORM Model Change Requires Migration
+    description: >
+      When ORM model files change (Prisma schema, SQLAlchemy models,
+      ActiveRecord models, TypeORM entities), a migration must be present.
+    enabled: true
+    trigger:
+      changeSurface: orm_model_changed
+    obligations:
+      - condition:
+          or:
+            - fact: diff.files.added
+              operator: contains
+              value: migration
+            - fact: diff.files.added
+              operator: contains
+              value: migrate
+            - fact: diff.files.modified
+              operator: contains
+              value: migration
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: ORM model scanner unavailable
+        message: >
+          ORM model changed but no migration file found in this PR.
+          Generate and include the migration before merging (e.g., prisma migrate,
+          alembic revision, rails generate migration).
+    skipIf:
+      labels: ["no-db-change", "virtual-field-only"]
+
+  # ── Approval routing hook: DBA approval ───────────────────────────
+  # Rule 5: Schema-altering change → DBA team approval + 2 total approvals.
+  # This is the approval routing gate. Degrade to WARN when the GitHub
+  # Approvals API is unavailable, but CHECKRUN always posts.
+  - id: dba-approval-required-for-schema-changes
+    name: Schema Changes Require DBA Team Approval
+    description: >
+      Any schema-altering migration requires review from the DBA team and
+      at least 2 total approvals (service owner + DBA).
+    enabled: true
+    trigger:
+      changeSurface:
+        - db_schema_changed
+        - migration_added_or_missing
+    obligations:
+      - comparator: APPROVER_IN_ALLOWED_SET
+        params:
+          allowedApprovers: ["dba-team", "database-team"]
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: approvals API unavailable
+        message: >
+          Schema-altering changes require DBA team approval.
+          Request review from @dba-team before merging.
+      - comparator: MIN_APPROVALS
+        params:
+          minCount: 2
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade
+        message: >
+          Schema-altering changes require at least 2 approvals
+          (service owner + DBA team member).
+    skipIf:
+      labels: ["dba-approved", "test-db-only"]
+
+  # ── RequiredArtifact: runbook updated ─────────────────────────────
+  # Rule 6: Schema changed → runbook/operational notes updated.
+  # WARN (not block) — this is a documentation hygiene nudge.
+  - id: runbook-updated-for-schema-change
+    name: Runbook Should Be Updated for Schema Changes
+    description: >
+      Schema changes have operational impact (index rebuilds, lock times,
+      migration windows). Update the runbook or add migration notes to
+      the PR body.
+    enabled: true
+    trigger:
+      changeSurface: db_schema_changed
+    obligations:
+      - condition:
+          or:
+            - fact: diff.files.modified
+              operator: contains
+              value: RUNBOOK
+            - fact: diff.files.modified
+              operator: contains
+              value: runbook
+            - fact: pr.body
+              operator: contains
+              value: migration window
+            - fact: pr.body
+              operator: contains
+              value: operational impact
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: warn   # degrade: scanner unavailable
+        message: >
+          Schema change detected but no runbook update or migration notes found.
+          Update RUNBOOK.md or describe the migration window and operational
+          impact in the PR body.
+    skipIf:
+      labels: ["skip-runbook", "minor-schema-change"]
+
+  # ── Degrade pattern: large-table / PII risk ────────────────────────
+  # Rule 7: Migration on a table → degrade to WARN when table-size or
+  # PII classifier data is unavailable. Always posts a CHECKRUN.
+  # This rule exists to make the "degrade to WARN on missing evidence"
+  # behavior explicit and visible in the check run output.
+  - id: large-table-migration-risk
+    name: Large Table or PII Migration Risk Assessment
+    description: >
+      Migrations on large tables (millions of rows) or PII-classified tables
+      carry elevated risk (lock escalation, long-running transactions, data
+      exposure). When table-size or PII evidence is unavailable, degrade to
+      WARN so the check run still posts and the team is notified.
+    enabled: true
+    trigger:
+      changeSurface: migration_added_or_missing
+    obligations:
+      - condition:
+          or:
+            - fact: drift.riskLevel
+              operator: "=="
+              value: high
+            - fact: drift.riskLevel
+              operator: "=="
+              value: critical
+        severity: high
+        decisionOnFail: warn
+        decisionOnUnknown: warn   # degrade: table-size / PII data unavailable
+        message: >
+          Migration risk assessment: table-size or PII classification data is
+          unavailable (or signals high/critical risk). Manually verify: (1) table
+          row count, (2) whether the table contains PII, (3) expected lock duration,
+          and (4) whether a maintenance window is required.
+
+  # ── Approval Gate ─────────────────────────────────────────────────
+  # Rule 8: PII / data classification acknowledgement (optional, configurable).
+  # Uses the new rule-level `when` / `approvals` / `decision` vocabulary.
+  # The `when.predicates` expand to path globs at evaluation time;
+  # the `approvals` block drives the approval-routing layer.
+  # Decision degrades to WARN when external classification evidence is missing.
+  - id: db-pii-ack
+    name: PII Acknowledgement Required When Sensitive Tables Touched
+    description: >
+      When schema changes affect tables flagged as PII or sensitive (detected
+      by the data-classification fact or column-name heuristics), the security
+      team must approve before merge. Degrade to WARN if classification service
+      is unavailable — never hard-block on missing external evidence.
+    when:
+      predicates:
+        anyOf:
+          - db_schema_changed   # any schema change is a candidate; classification narrows it
+    approvals:
+      required:
+        - type: security_approval
+          resolver: securityTeam
+          minCount: 1
+    decision:
+      onViolation: block
+      onMissingExternalEvidence: warn   # degrade — never hard-block on infra down
+
+evaluation:
+  externalDependencyMode: soft_fail   # always degrade, never hard-block on infra down
+  unknownArtifactMode: warn
+  budgets:
+    maxTotalMs: 90000
+    perComparatorTimeoutMs: 20000
+    maxGitHubApiCalls: 50
+  maxFindings: 50
+  maxEvidenceSnippetsPerFinding: 3
+
+routing:
+  github:
+    checkRunName: "VertaAI / DB Migration Safety"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: action_required
+    postSummaryComment: true
+    annotateFiles: true
+
+spawnTrackB:
+  enabled: true
+  when:
+    - onDecision: block
+    - onDecision: warn
+  createRemediationCase: true
+  remediationDefaults:
+    priority: high
+    targetSystems:
+      - github_readme
+    approvalChannelRef: dba-approvals
+  grouping:
+    strategy: by-drift-type-and-service
+    maxPerPR: 5
+
+# ======================================================================
+# Pack-level config — driven by UI "DB Overlay" panel (4C)
+# Each key maps 1:1 to a UI control in the service overlay panel.
+# Teams override these defaults when applying the template via UI or YAML.
+# ======================================================================
+config:
+  db:
+    # DB framework — selects which detectors and migration file patterns are used
+    framework: flyway                  # UI: "DB framework" enum (flyway / liquibase / alembic / golang-migrate / prisma)
+
+    # Glob patterns for ORM model / schema definition files
+    schemaGlobs:                       # UI: "Schema globs" list
+      - "src/models/**/*.py"
+      - "src/entities/**/*.ts"
+      - "pkg/models/**/*.go"
+      - "app/models/**/*.rb"
+
+    # Glob patterns for migration files — used for migration-presence detection
+    migrationGlobs:                    # UI: "Migration globs" list
+      - "migrations/**/*.sql"
+      - "db/migrations/**/*.sql"
+      - "alembic/versions/**/*.py"
+      - "flyway/**/*.sql"
+
+    # Risky DDL operations blocked on protected branches
+    riskyOps:                          # UI: "Block destructive ops on protected" list
+      blockOnProtectedBranches:
+        - "DROP TABLE"
+        - "DROP COLUMN"
+        - "TRUNCATE"
+        - "ALTER TABLE.*DROP"
+
+    # Rollback note requirements (applies to risky / large-table migrations)
+    rollback:                          # UI: "Require rollback notes on risky" bool
+      requiredOnRiskyOps: true
+

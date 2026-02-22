@@ -20,6 +20,13 @@ interface CompositeCondition {
 
 type Condition = SimpleCondition | CompositeCondition;
 
+/** One entry in the REQUIRE approvals grammar */
+interface ApprovalRequirement {
+  resolver: string;    // team slug or role, e.g. "security-team", "service-owner"
+  minCount: number;    // minimum approvers required
+  when?: string;       // optional predicate string, e.g. "endpoint_added"
+}
+
 interface Rule {
   id: string;
   name: string;
@@ -30,6 +37,8 @@ interface Rule {
     anyChangedPaths?: string[];
     anyFileExtensions?: string[];
     anyChangedPathsRef?: string;
+    /** Semantic ChangeSurface IDs that trigger this rule */
+    changeSurface?: string[];
   };
   obligations: Array<{
     // PHASE 2.4: Support both comparator-based and condition-based obligations
@@ -42,6 +51,8 @@ interface Rule {
     decisionOnUnknown: 'pass' | 'warn' | 'block';
     message?: string;
   }>;
+  /** REQUIRE grammar: structured approval requirements */
+  approvals?: ApprovalRequirement[];
   skipIf?: {
     labels?: string[];
     actors?: string[];
@@ -56,6 +67,22 @@ interface RuleEditorProps {
   onSave: (rule: Rule) => void;
 }
 
+// All semantic ChangeSurface IDs (subset of canonical catalog — shown in picker)
+const CHANGE_SURFACE_OPTIONS = [
+  { id: 'openapi_changed', label: '📋 OpenAPI Spec Changed' },
+  { id: 'graphql_schema_changed', label: '🔷 GraphQL Schema Changed' },
+  { id: 'proto_changed', label: '⚡ Protobuf Schema Changed' },
+  { id: 'db_schema_changed', label: '🗄️ DB Schema Changed' },
+  { id: 'migration_added', label: '📦 Migration Added' },
+  { id: 'terraform_changed', label: '🏗️ Terraform Changed' },
+  { id: 'k8s_manifest_changed', label: '☸️ K8s Manifest Changed' },
+  { id: 'alert_rule_changed', label: '🔔 Alert Rule Changed' },
+  { id: 'slo_threshold_changed', label: '📈 SLO Threshold Changed' },
+  { id: 'codeowners_changed', label: '👥 CODEOWNERS Changed' },
+  { id: 'authz_policy_changed', label: '🔐 AuthZ Policy Changed' },
+  { id: 'agent_authored_sensitive_change', label: '🤖 AI Agent Authored Change' },
+];
+
 export default function RuleEditor({ rule, isOpen, onClose, onSave }: RuleEditorProps) {
   const [editedRule, setEditedRule] = useState<Rule>(rule);
   const [newPath, setNewPath] = useState('');
@@ -63,6 +90,9 @@ export default function RuleEditor({ rule, isOpen, onClose, onSave }: RuleEditor
   const [newExcludePath, setNewExcludePath] = useState('');
   const [newLabel, setNewLabel] = useState('');
   const [newActor, setNewActor] = useState('');
+  const [newApprovalResolver, setNewApprovalResolver] = useState('');
+  const [newApprovalMinCount, setNewApprovalMinCount] = useState(1);
+  const [newApprovalWhen, setNewApprovalWhen] = useState('');
   // PHASE 2.4: Track obligation mode (comparator vs condition) for each obligation
   const [obligationModes, setObligationModes] = useState<Array<'comparator' | 'condition'>>([]);
 
@@ -235,6 +265,32 @@ export default function RuleEditor({ rule, isOpen, onClose, onSave }: RuleEditor
     });
   };
 
+  const handleToggleChangeSurface = (surfaceId: string) => {
+    const current = editedRule.trigger.changeSurface || [];
+    const updated = current.includes(surfaceId)
+      ? current.filter(s => s !== surfaceId)
+      : [...current, surfaceId];
+    setEditedRule({ ...editedRule, trigger: { ...editedRule.trigger, changeSurface: updated } });
+  };
+
+  const handleAddApproval = () => {
+    if (!newApprovalResolver.trim()) return;
+    setEditedRule({
+      ...editedRule,
+      approvals: [
+        ...(editedRule.approvals || []),
+        { resolver: newApprovalResolver.trim(), minCount: newApprovalMinCount, when: newApprovalWhen.trim() || undefined },
+      ],
+    });
+    setNewApprovalResolver('');
+    setNewApprovalMinCount(1);
+    setNewApprovalWhen('');
+  };
+
+  const handleRemoveApproval = (index: number) => {
+    setEditedRule({ ...editedRule, approvals: editedRule.approvals?.filter((_, i) => i !== index) });
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -322,6 +378,24 @@ export default function RuleEditor({ rule, isOpen, onClose, onSave }: RuleEditor
                 <label htmlFor="always" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
                   Always trigger (run on every PR)
                 </label>
+              </div>
+
+              {/* ChangeSurface picker (available regardless of always flag) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Trigger on Change Surfaces <span className="font-normal text-gray-500">(semantic surfaces — auto-maps to paths)</span>
+                </label>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {CHANGE_SURFACE_OPTIONS.map(opt => {
+                    const active = editedRule.trigger.changeSurface?.includes(opt.id) ?? false;
+                    return (
+                      <button key={opt.id} type="button" onClick={() => handleToggleChangeSurface(opt.id)}
+                        className={`text-left px-2 py-1.5 rounded border text-xs transition-colors ${active ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 font-medium' : 'border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'}`}>
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {!editedRule.trigger.always && (
@@ -578,6 +652,59 @@ export default function RuleEditor({ rule, isOpen, onClose, onSave }: RuleEditor
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Approvals — REQUIRE grammar */}
+            <div className="space-y-4 border-t border-gray-200 dark:border-gray-700 pt-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">Approvals <span className="text-sm font-normal text-gray-500">(REQUIRE)</span></h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Who must approve before this rule can pass. Resolver = team slug or role.</p>
+                </div>
+              </div>
+
+              {/* Existing approvals */}
+              {(editedRule.approvals || []).length > 0 && (
+                <div className="space-y-2">
+                  {(editedRule.approvals || []).map((ap, idx) => (
+                    <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 text-sm">
+                      <span className="font-medium text-purple-800 dark:text-purple-200">{ap.resolver}</span>
+                      <span className="text-purple-600 dark:text-purple-300">×{ap.minCount}</span>
+                      {ap.when && <span className="text-xs text-purple-500 dark:text-purple-400 italic">when: {ap.when}</span>}
+                      <button type="button" onClick={() => handleRemoveApproval(idx)} className="ml-auto text-purple-400 hover:text-red-500">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add approval row */}
+              <div className="grid grid-cols-12 gap-2 items-end">
+                <div className="col-span-5">
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Resolver (team/role)</label>
+                  <input type="text" value={newApprovalResolver} onChange={e => setNewApprovalResolver(e.target.value)}
+                    placeholder="e.g. security-team"
+                    className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm text-sm dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Min count</label>
+                  <input type="number" min={1} max={10} value={newApprovalMinCount} onChange={e => setNewApprovalMinCount(Number(e.target.value))}
+                    className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm text-sm dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div className="col-span-4">
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">When (optional predicate)</label>
+                  <input type="text" value={newApprovalWhen} onChange={e => setNewApprovalWhen(e.target.value)}
+                    placeholder="e.g. endpoint_added"
+                    className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm text-sm dark:bg-gray-700 dark:text-white" />
+                </div>
+                <div className="col-span-1">
+                  <button type="button" onClick={handleAddApproval}
+                    className="w-full px-2 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 flex items-center justify-center">
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Exclude Paths */}

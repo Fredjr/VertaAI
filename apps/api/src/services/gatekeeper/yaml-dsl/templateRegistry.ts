@@ -8,15 +8,30 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import yaml from 'yaml';
 import { PackYAML } from './types.js';
+import { PolicyPackSetYAML } from './packValidator.js';
 
 export interface PackTemplate {
   id: string;
   name: string;
   description: string;
-  category: 'observe' | 'enforce' | 'security' | 'documentation' | 'infrastructure' | 'microservices' | 'api-contract' | 'sbom' | 'database' | 'dependencies' | 'time-based' | 'team-routing' | 'deployment';
+  category: 'observe' | 'enforce' | 'security' | 'documentation' | 'infrastructure' | 'microservices' | 'api-contract' | 'sbom' | 'database' | 'dependencies' | 'time-based' | 'team-routing' | 'deployment' | 'service-overlay' | 'baseline';
   tags: string[];
   yaml: string;
   parsed: PackYAML;
+}
+
+/**
+ * PackSet template — distinct from PackTemplate because PolicyPackSet
+ * has a different structure (no rules[], uses composition.packs[]).
+ */
+export interface PackSetTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: 'packset';
+  tags: string[];
+  yaml: string;
+  parsed: PolicyPackSetYAML;
 }
 
 // ES module equivalent of __dirname
@@ -47,6 +62,13 @@ export function loadAllTemplates(): PackTemplate[] {
     'time-based-restrictions-pack.yaml',       // Option C Phase 1: Template A9
     'team-based-routing-pack.yaml',            // Option C Phase 1: Template A10
     'deploy-gate-pack.yaml',                   // Option C Phase 2: Template A8
+    // Service Overlay Packs — SERVICE_OVERLAY type, service-scoped
+    'api-service-overlay-pack.yaml',           // Service Overlay: API Contract Integrity
+    'db-service-overlay-pack.yaml',            // Service Overlay: DB Migration Safety
+    'infra-service-overlay-pack.yaml',         // Service Overlay: Infrastructure & IaC Safety
+    'observability-service-overlay-pack.yaml', // Service Overlay: Observability Integrity
+    // Baseline Pack — GLOBAL_BASELINE type, workspace-scoped
+    'baseline-contract-integrity.yaml',        // Baseline: Workspace Contract Integrity
   ];
 
   for (const filename of templateFiles) {
@@ -98,6 +120,56 @@ export function getTemplatesByTag(tag: string): PackTemplate[] {
   return templates.filter(t => t.tags.includes(tag));
 }
 
+// ============================================================================
+// GAP-O: PolicyPackSet template loader
+// PackSet templates are kept separate from PackTemplate because they have a
+// different structure (composition.packs[] instead of rules[]).
+// ============================================================================
+
+const PACKSET_TEMPLATE_FILES = [
+  'starter-microservice-packset.yaml',  // Baseline + all 4 overlays — disabled by default (Starter tier)
+  'standard-microservice-packset.yaml', // Baseline + all 4 overlays — all enabled, branch-aware blocking (Standard tier)
+  'strict-microservice-packset.yaml',   // Baseline + all 4 overlays — block+approve, regulated environments (Strict tier)
+];
+
+/**
+ * Load all PackSet templates from the templates directory.
+ */
+export function loadPackSetTemplates(): PackSetTemplate[] {
+  const templates: PackSetTemplate[] = [];
+
+  for (const filename of PACKSET_TEMPLATE_FILES) {
+    try {
+      const filePath = path.join(TEMPLATES_DIR, filename);
+      const yamlContent = fs.readFileSync(filePath, 'utf-8');
+      const parsed = yaml.parse(yamlContent) as PolicyPackSetYAML;
+
+      const template: PackSetTemplate = {
+        id: parsed.metadata.setId,
+        name: parsed.metadata.name,
+        description: parsed.metadata.description || '',
+        category: 'packset',
+        tags: parsed.metadata.labels ? Object.values(parsed.metadata.labels) : [],
+        yaml: yamlContent,
+        parsed,
+      };
+
+      templates.push(template);
+    } catch (error) {
+      console.error(`Failed to load PackSet template ${filename}:`, error);
+    }
+  }
+
+  return templates;
+}
+
+/**
+ * Get a specific PackSet template by setId.
+ */
+export function getPackSetTemplateById(setId: string): PackSetTemplate | null {
+  return loadPackSetTemplates().find(t => t.id === setId) || null;
+}
+
 /**
  * Derive category from template ID
  */
@@ -115,6 +187,8 @@ function getCategoryFromId(id: string): PackTemplate['category'] {
   if (id.includes('time-based') || id.includes('time-restrictions')) return 'time-based';
   if (id.includes('team-based') || id.includes('team-routing')) return 'team-routing';
   if (id.includes('deploy') || id.includes('deployment')) return 'deployment';
+  if (id.includes('service-overlay') || id.includes('overlay')) return 'service-overlay';
+  if (id.includes('baseline') || id.includes('contract-integrity')) return 'baseline';
   return 'enforce'; // default
 }
 

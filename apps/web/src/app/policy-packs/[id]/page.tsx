@@ -20,7 +20,9 @@ interface PolicyPackFormData {
   pathGlobs: string[];
   trackAEnabled: boolean;
   trackAConfig: any;
+  /** YAML-DSL draft — primary Track A authoring path */
   trackAConfigYamlDraft?: string;
+  /** Passed to child components (TrackAFormYAML, PackDefaultsForm) for API calls */
   workspaceId?: string;
   trackBEnabled: boolean;
   trackBConfig: any;
@@ -63,6 +65,8 @@ function EditPolicyPackContent() {
     pathGlobs: [],
     trackAEnabled: false,
     trackAConfig: {},
+    trackAConfigYamlDraft: '',
+    workspaceId: workspaceId,
     trackBEnabled: false,
     trackBConfig: {},
     approvalTiers: {},
@@ -104,6 +108,10 @@ function EditPolicyPackContent() {
           pathGlobs: pack.pathGlobs || [],
           trackAEnabled: pack.trackAEnabled || false,
           trackAConfig: typeof pack.trackAConfig === 'string' ? JSON.parse(pack.trackAConfig) : (pack.trackAConfig || {}),
+          // Load YAML draft so the Track A editor is pre-populated
+          trackAConfigYamlDraft: pack.trackAConfigYamlDraft || '',
+          // Pass workspaceId down so child components can make API calls
+          workspaceId: workspaceId,
           trackBEnabled: pack.trackBEnabled || false,
           trackBConfig: typeof pack.trackBConfig === 'string' ? JSON.parse(pack.trackBConfig) : (pack.trackBConfig || {}),
           approvalTiers: typeof pack.approvalTiers === 'string' ? JSON.parse(pack.approvalTiers) : (pack.approvalTiers || {}),

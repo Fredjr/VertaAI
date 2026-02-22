@@ -1,0 +1,381 @@
+# ======================================================================
+# SERVICE OVERLAY: API Contract Integrity
+# ======================================================================
+# Pattern: ChangeSurface → RequiredArtifacts → Invariants → Decision
+#
+# Surfaces: openapi_changed, graphql_schema_changed, proto_changed,
+#           api_handler_changed, routing_changed, authz_policy_changed
+#
+# Key design:
+#   - decisionOnUnknown: warn on ALL obligations (degrade to WARN on
+#     missing evidence; CHECKRUN always posts)
+#   - packType: SERVICE_OVERLAY — scoped to a single service, not workspace
+#   - Approval routing hooks: owner-ack gates on service owner approval
+# ======================================================================
+
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.api-service-overlay.v1
+  name: API Service Overlay
+  version: 1.0.0
+  description: >
+    Service overlay for API-owning services. Enforces contract integrity
+    across OpenAPI/GraphQL/Proto specs, spec↔impl parity, spec↔gateway
+    parity, auth parity, breaking-change governance, and owner acknowledgement.
+  packType: SERVICE_OVERLAY
+  packMode: enforce
+  strictness: balanced
+  owner: platform-team
+  tags:
+    - service-overlay
+    - api-contract
+    - openapi
+    - graphql
+    - proto
+    - breaking-changes
+    - owner-ack
+
+scope:
+  type: service         # service-scoped — configure ref per-team
+  branches:
+    include: ["main", "master", "release/*"]
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: true
+
+rules:
+
+  # ── RequiredArtifact ──────────────────────────────────────────────
+  # Rule 1: Handler changed → spec must also be updated in this PR.
+  # Invariant: impl↔spec parity. Degrade to WARN when spec scanner
+  # cannot confirm (e.g., non-standard spec path).
+  - id: api-handler-needs-spec-update
+    name: API Handler Change Requires Spec Update
+    description: >
+      When API handler/route code changes, the OpenAPI/GraphQL/Proto spec
+      must be updated in the same PR. Prevents impl↔spec drift.
+    enabled: true
+    trigger:
+      changeSurface: api_handler_changed
+    obligations:
+      - comparator: ARTIFACT_UPDATED
+        params:
+          artifactId: openapi-spec
+          withinCommits: 1
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: spec scanner unavailable
+        message: >
+          API handler code changed but no OpenAPI/GraphQL/Proto spec update found
+          in this PR. Update the spec to keep impl↔spec in sync, or add
+          'skip-spec-update' label with a justification.
+    skipIf:
+      labels: ["skip-spec-update", "internal-only", "refactor-only"]
+
+  # ── RequiredArtifact ──────────────────────────────────────────────
+  # Rule 2: Spec changed → spec must parse/validate correctly.
+  - id: api-spec-must-be-valid
+    name: API Spec Must Be Valid
+    description: >
+      OpenAPI, GraphQL schema, or Proto file must be syntactically valid
+      whenever they change. Malformed specs break downstream consumers.
+    enabled: true
+    trigger:
+      changeSurface:
+        - openapi_changed
+        - graphql_schema_changed
+        - proto_changed
+    obligations:
+      - comparator: OPENAPI_SCHEMA_VALID
+        params: {}
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: validator unavailable
+        message: >
+          Spec validation failed. Fix schema errors before merging —
+          invalid specs break SDK generation and consumer tooling.
+
+  # ── Invariant: backward compatibility ─────────────────────────────
+  # Rule 3: Breaking change → major version bump required.
+  # Degrade to WARN when the diff analyser cannot determine breakage
+  # (e.g., private/internal schema beyond our analysis window).
+  - id: breaking-change-requires-version-bump
+    name: Breaking Change Requires Major Version Bump
+    description: >
+      Any breaking change in the OpenAPI diff must be accompanied by a
+      major version bump in the spec. No version bump = contract violation.
+    enabled: true
+    trigger:
+      changeSurface: openapi_changed
+    obligations:
+      - condition:
+          and:
+            - fact: openapi.breakingChanges.count
+              operator: ">"
+              value: 0
+            - fact: openapi.versionBumpRequired
+              operator: "!="
+              value: major
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: diff analyser unavailable
+        message: >
+          Breaking changes detected ({openapi.breakingChanges.count} changes)
+          but no major version bump found. Bump the major version and
+          communicate the change to API consumers.
+
+  # ── Invariant: spec↔gateway parity ────────────────────────────────
+  # Rule 4: Gateway routing changed → spec endpoints must match.
+  # This is a parity invariant; evidence may be partial, so always
+  # degrade to WARN rather than block when routing scanner is down.
+  - id: spec-gateway-parity
+    name: Spec↔Gateway Route Parity
+    description: >
+      When gateway routing config changes, the OpenAPI spec must reflect
+      the same set of exposed endpoints. Mismatches mean undocumented or
+      ghost routes in production.
+    enabled: true
+    trigger:
+      changeSurface: routing_changed
+    obligations:
+      - comparator: ARTIFACT_UPDATED
+        params:
+          artifactId: openapi-spec
+          withinCommits: 1
+        severity: medium
+        decisionOnFail: warn      # invariant check — warn not block
+        decisionOnUnknown: warn   # degrade: route mapper unavailable
+        message: >
+          Gateway routing changed but OpenAPI spec was not updated in this PR.
+          Ensure spec endpoints match the gateway routes to avoid undocumented
+          or ghost routes. Update the spec or label 'spec-gateway-ack'.
+    skipIf:
+      labels: ["spec-gateway-ack", "internal-route-only"]
+
+  # ── Invariant: auth parity ─────────────────────────────────────────
+  # Rule 5: Auth/authz policy changed → spec security schemes updated.
+  # Auth drift (policy says one thing, spec says another) creates
+  # both security holes and consumer confusion.
+  - id: authz-policy-spec-parity
+    name: Auth Policy Change Requires Spec Security Scheme Update
+    description: >
+      When auth/authz policy files change, the OpenAPI spec security
+      schemes must be updated in the same PR to maintain auth parity.
+    enabled: true
+    trigger:
+      changeSurface: authz_policy_changed
+    obligations:
+      - comparator: ARTIFACT_UPDATED
+        params:
+          artifactId: openapi-spec
+          withinCommits: 1
+        severity: high
+        decisionOnFail: warn      # invariant — warn to surface the drift
+        decisionOnUnknown: warn   # degrade: spec scanner unavailable
+        message: >
+          Auth/authz policy changed but OpenAPI spec security schemes were
+          not updated. Update the spec securitySchemes/scopes to reflect
+          the new policy, or label 'auth-spec-ack' if this is intentional.
+    skipIf:
+      labels: ["auth-spec-ack", "internal-authz-only"]
+
+  # ── RequiredArtifact: consumer notification ────────────────────────
+  # Rule 6: Breaking changes → PR must have breaking-change label AND
+  # changelog updated. Degrade to WARN when changelog scanner fails.
+  - id: consumer-notification-on-breaking-change
+    name: Breaking Changes Require Consumer Notification
+    description: >
+      When breaking changes are introduced, consumers must be notified:
+      add the 'breaking-change' label and update CHANGELOG.md in this PR.
+    enabled: true
+    trigger:
+      changeSurface: openapi_changed
+    obligations:
+      - condition:
+          and:
+            - fact: openapi.breakingChanges.count
+              operator: ">"
+              value: 0
+            - fact: pr.labels
+              operator: contains
+              value: breaking-change
+        severity: high
+        decisionOnFail: warn      # notification gap — warn, not block
+        decisionOnUnknown: warn   # degrade: label scanner unavailable
+        message: >
+          Breaking changes detected but 'breaking-change' label is missing.
+          Add the label and update CHANGELOG.md so consumers know what changed.
+      - condition:
+          and:
+            - fact: openapi.breakingChanges.count
+              operator: ">"
+              value: 0
+            - or:
+                - fact: diff.files.modified
+                  operator: contains
+                  value: CHANGELOG
+                - fact: diff.files.added
+                  operator: contains
+                  value: CHANGELOG
+        severity: high
+        decisionOnFail: warn
+        decisionOnUnknown: warn   # degrade: diff scanner unavailable
+        message: >
+          Breaking changes detected but CHANGELOG.md was not updated.
+          Document what broke and how consumers should migrate.
+
+  # ── Approval routing hook: owner-ack ──────────────────────────────
+  # Rule 7: Any API contract change requires the service owner to approve.
+  # This is where the approval routing hook lives. Degrade to WARN when
+  # the GitHub Approvals API is unavailable.
+  - id: owner-ack-for-api-contract-changes
+    name: Service Owner Must Acknowledge API Contract Changes
+    description: >
+      Any change to the API contract (spec or handler) requires at least
+      one approval from the service owner or API platform team. This is the
+      owner-ack gate — it prevents unreviewed contract changes from shipping.
+    enabled: true
+    trigger:
+      changeSurface:
+        - openapi_changed
+        - api_handler_changed
+        - graphql_schema_changed
+        - proto_changed
+    obligations:
+      - comparator: APPROVER_IN_ALLOWED_SET
+        params:
+          allowedApprovers: ["api-platform-team", "service-owners"]
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: GitHub approvals API down
+        message: >
+          API contract changes require approval from @api-platform-team or
+          the service owner. Request their review before merging.
+      - comparator: MIN_APPROVALS
+        params:
+          minCount: 1
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade
+        message: >
+          API contract changes require at least 1 approval.
+    skipIf:
+      labels: ["owner-ack-override"]
+
+  # ── RequiredArtifact ──────────────────────────────────────────────
+  # Rule 8: Tests required for API changes.
+  # Invariant: every API change must have a corresponding test update.
+  # Degrade to WARN when test scanner cannot confirm (missing CI report).
+  - id: api-tests-required
+    name: Tests Required for API Changes
+    description: >
+      When OpenAPI spec or API handler code changes, test files covering
+      the affected endpoints must also be updated in the same PR. Prevents
+      untested API surface from reaching production.
+    trigger:
+      changeSurface:
+        - openapi_changed
+        - api_handler_changed
+        - graphql_schema_changed
+        - proto_changed
+    obligations:
+      - comparator: CHECKRUNS_PASSED
+        params:
+          checkName: "api-test-coverage"
+          allowedConclusions: ["success"]
+        severity: high
+        decisionOnFail: warn    # warn (not block) to allow fast CI re-runs
+        decisionOnUnknown: warn # degrade — missing CI report is not a block
+        message: >
+          API changes detected but no passing test suite check found.
+          Ensure test files are updated and CI passes before merging.
+      - comparator: ARTIFACT_UPDATED
+        params:
+          artifactId: api-test-suite
+          matchAny:
+            - "**/__tests__/**"
+            - "**/*.test.ts"
+            - "**/*.spec.ts"
+            - "**/*.test.js"
+            - "**/*.spec.js"
+            - "**/test/**"
+        severity: medium
+        decisionOnFail: warn    # warn — not a hard block; CI is the authoritative gate
+        decisionOnUnknown: warn # degrade gracefully
+        message: >
+          No test file changes detected alongside API handler/spec changes.
+          Add or update tests to cover the changed API surface.
+    skipIf:
+      labels: ["skip-api-tests", "docs-only"]
+
+evaluation:
+  externalDependencyMode: soft_fail   # degrade, never hard-block on infra down
+  unknownArtifactMode: warn
+  budgets:
+    maxTotalMs: 90000
+    perComparatorTimeoutMs: 20000
+    maxGitHubApiCalls: 50
+  maxFindings: 50
+  maxEvidenceSnippetsPerFinding: 3
+
+routing:
+  github:
+    checkRunName: "VertaAI / API Contract Integrity"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: action_required
+    postSummaryComment: true
+    annotateFiles: true
+
+spawnTrackB:
+  enabled: true
+  when:
+    - onDecision: block
+    - onDecision: warn
+  createRemediationCase: true
+  remediationDefaults:
+    priority: high
+    targetSystems:
+      - github_readme
+    approvalChannelRef: api-platform-approvals
+  grouping:
+    strategy: by-drift-type-and-service
+    maxPerPR: 5
+
+# ======================================================================
+# Pack-level config — driven by UI "API Overlay" panel (4C)
+# Each key maps 1:1 to a UI control in the service overlay panel.
+# Teams override these defaults when applying the template via UI or YAML.
+# ======================================================================
+config:
+  api:
+    # Contract type drives which invariants run (openapi / graphql / proto)
+    contractType: openapi              # UI: "Contract type" enum
+
+    # Glob patterns for spec files — used for artifact detection + parity checks
+    specGlobs:                         # UI: "Spec globs" list
+      - "openapi/**/*.yaml"
+      - "openapi/**/*.json"
+      - "proto/**/*.proto"
+      - "graphql/**/*.graphql"
+
+    # Glob patterns for gateway route definitions — enables gateway parity rule
+    gatewayRouteGlobs:                 # UI: "Gateway route globs" list
+      - "gateway/routes/**/*.yaml"
+      - "kong/**/*.yaml"
+      - "nginx/**/*.conf"
+
+    # Breaking-change enforcement policy (maps to rule: breaking-change-requires-version-bump)
+    breakingChangePolicy:              # UI: "Enforce breaking policy" enum
+      protectedBranches: block         # block on main/release/* (default: strictest)
+      featureBranches: warn            # warn on feature/* (degrade gracefully)
+
+    # Rule-level toggles — bound to specific rule IDs at evaluation time
+    requireChangelogOnBreaking: true   # UI: "Require changelog on breaking" bool → rule: consumer-notification-on-breaking-change
+    requireOwnerAckOnBreaking: true    # UI: "Require owner ack on breaking" bool → rule: owner-ack-for-api-contract-changes
+

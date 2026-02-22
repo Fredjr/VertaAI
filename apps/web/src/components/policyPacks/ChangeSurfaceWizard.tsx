@@ -14,6 +14,12 @@ interface InvariantOption {
   id: string; label: string; description: string;
   defaultDecision: 'warn' | 'block';
   fact?: string; operator?: string; value?: any;
+  /** Where evidence for this invariant comes from */
+  evidenceSource?: 'github-checks' | 'terraform-plan' | 'datadog' | 'backstage' | 'custom';
+  /** Which branches this invariant enforces on */
+  branchScope?: 'all' | 'protected' | 'feature';
+  /** Human-readable description of when this invariant runs */
+  runsWhen?: string;
 }
 interface SurfaceEntry {
   id: string; label: string; category: string; emoji: string; description: string;
@@ -42,8 +48,12 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
       { id: 'two_person_review', label: '2-person review', description: 'Requires ≥2 human approvals', defaultDecision: 'block', comparator: 'MIN_APPROVALS', params: { minApprovals: 2 } },
     ],
     invariants: [
-      { id: 'schema_compatibility_backward', label: 'Backward-compatible schema', description: 'No breaking changes in OpenAPI spec', defaultDecision: 'block', fact: 'openapi.breakingChanges.count', operator: '==', value: 0 },
-      { id: 'endpoint_parity_spec_vs_gateway', label: 'Spec ↔ Gateway parity', description: 'Spec endpoints must exist in gateway', defaultDecision: 'warn' },
+      { id: 'schema_compatibility_backward', label: 'Backward-compatible schema', description: 'No breaking changes in OpenAPI spec', defaultDecision: 'block', fact: 'openapi.breakingChanges.count', operator: '==', value: 0, evidenceSource: 'github-checks', branchScope: 'protected', runsWhen: 'OpenAPI spec changes on protected branch' },
+      { id: 'endpoint_parity_spec_vs_gateway', label: 'Spec ↔ Gateway parity', description: 'Spec endpoints must exist in gateway', defaultDecision: 'warn', evidenceSource: 'github-checks', runsWhen: 'OpenAPI spec changes' },
+      { id: 'auth_endpoint_parity', label: 'Auth policy on all endpoints', description: 'Every new/changed endpoint must declare an auth policy', defaultDecision: 'warn', evidenceSource: 'github-checks', branchScope: 'protected', runsWhen: 'New endpoint detected in spec' },
+      { id: 'error_contract_parity', label: 'Error contract parity', description: 'Error response shapes must match spec definitions', defaultDecision: 'warn', evidenceSource: 'github-checks', runsWhen: 'Error schema changed in spec' },
+      { id: 'deprecation_window', label: 'Deprecation window enforced', description: 'Deprecated endpoints must have a sunset date ≥ 30 days out', defaultDecision: 'warn', evidenceSource: 'github-checks', runsWhen: 'Endpoint marked deprecated' },
+      { id: 'sensitive_field_tagging', label: 'PII fields tagged in spec', description: 'Fields containing PII must be annotated with x-pii: true', defaultDecision: 'warn', evidenceSource: 'custom', runsWhen: 'New field added to response schema' },
     ],
   },
   {
@@ -54,7 +64,8 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
       { id: 'changelog_updated', label: 'CHANGELOG updated', description: 'Schema changelog must be updated', defaultDecision: 'warn', comparator: 'ARTIFACT_UPDATED', params: { artifactId: 'changelog' } },
     ],
     invariants: [
-      { id: 'schema_compatibility_backward', label: 'Backward-compatible schema', description: 'GraphQL changes must not break existing queries', defaultDecision: 'block' },
+      { id: 'schema_compatibility_backward', label: 'Backward-compatible schema', description: 'GraphQL changes must not break existing queries', defaultDecision: 'block', evidenceSource: 'github-checks', branchScope: 'protected', runsWhen: 'GraphQL schema file changes' },
+      { id: 'auth_policy_parity', label: 'Auth consistently applied', description: 'All resolvers must declare authorization directives', defaultDecision: 'warn', evidenceSource: 'github-checks', runsWhen: 'New resolver or type added' },
     ],
   },
   {
@@ -66,7 +77,8 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
       { id: 'consumer_notification_sent', label: 'Consumer notification', description: 'Consumers notified via PR body', defaultDecision: 'warn', comparator: 'PR_TEMPLATE_FIELD_PRESENT', params: { field: 'consumer-notification' } },
     ],
     invariants: [
-      { id: 'schema_compatibility_backward', label: 'Wire-compatible schema', description: 'Proto changes must be wire-compatible', defaultDecision: 'block' },
+      { id: 'schema_compatibility_backward', label: 'Wire-compatible schema', description: 'Proto changes must be wire-compatible', defaultDecision: 'block', evidenceSource: 'github-checks', branchScope: 'protected', runsWhen: '.proto file changes' },
+      { id: 'field_deprecation_policy', label: 'Deprecated fields have migration notice', description: 'Fields marked reserved or deprecated must have a migration notice in PR', defaultDecision: 'warn', evidenceSource: 'custom', runsWhen: 'Field removed or deprecated' },
     ],
   },
   {
@@ -78,7 +90,11 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
       { id: 'rollback_notes_present', label: 'Rollback notes present', description: 'PR must contain rollback instructions', defaultDecision: 'warn', comparator: 'PR_TEMPLATE_FIELD_PRESENT', params: { field: 'rollback-notes' } },
     ],
     invariants: [
-      { id: 'db_migration_matches_schema_diff', label: 'Migration ↔ Schema parity', description: 'Migration must match schema diff exactly', defaultDecision: 'warn' },
+      { id: 'db_migration_matches_schema_diff', label: 'Migration ↔ Schema parity', description: 'Migration must match schema diff exactly', defaultDecision: 'warn', evidenceSource: 'github-checks', runsWhen: 'Schema file and migration file both present in PR' },
+      { id: 'migration_append_only', label: 'Migrations are append-only', description: 'Existing migration files must not be rewritten', defaultDecision: 'block', evidenceSource: 'github-checks', runsWhen: 'Existing migration file modified' },
+      { id: 'risky_ops_detection', label: 'No DROP/TRUNCATE without approval', description: 'Destructive SQL operations require explicit DBA approval', defaultDecision: 'block', evidenceSource: 'custom', branchScope: 'protected', runsWhen: 'DROP or TRUNCATE detected in migration' },
+      { id: 'sensitive_table_approval', label: 'PII table changes need security approval', description: 'Changes to tables tagged as PII require security team sign-off', defaultDecision: 'block', evidenceSource: 'backstage', branchScope: 'protected', runsWhen: 'PII-tagged table detected in schema diff' },
+      { id: 'index_safety', label: 'Index operations are online-safe', description: 'Index creation/drop must use CONCURRENTLY or equivalent', defaultDecision: 'warn', evidenceSource: 'custom', runsWhen: 'CREATE INDEX or DROP INDEX detected' },
     ],
   },
   {
@@ -89,7 +105,10 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
       { id: 'rollback_notes_present', label: 'Rollback notes present', description: 'PR must document rollback procedure', defaultDecision: 'block', comparator: 'PR_TEMPLATE_FIELD_PRESENT', params: { field: 'rollback-notes' } },
       { id: 'two_person_review', label: '2-person review', description: 'Migrations require ≥2 approvals', defaultDecision: 'block', comparator: 'MIN_APPROVALS', params: { minApprovals: 2 } },
     ],
-    invariants: [],
+    invariants: [
+      { id: 'rollback_test_present', label: 'Rollback is testable', description: 'PR must describe how rollback will be validated', defaultDecision: 'warn', evidenceSource: 'custom', runsWhen: 'New migration file added' },
+      { id: 'destructive_op_approval', label: 'Destructive ops need DBA approval', description: 'Migrations with DROP/ALTER COLUMN require DBA sign-off', defaultDecision: 'block', evidenceSource: 'github-checks', branchScope: 'protected', runsWhen: 'Destructive operation detected in migration' },
+    ],
   },
   {
     id: 'terraform_changed', label: 'Terraform Changed', category: 'Infrastructure', emoji: '🏗️',
@@ -99,7 +118,13 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
       { id: 'runbook_updated', label: 'Runbook updated', description: 'Operations runbook must be updated', defaultDecision: 'warn', comparator: 'ARTIFACT_UPDATED', params: { artifactId: 'runbook' } },
       { id: 'two_person_review', label: '2-person review', description: 'Infrastructure changes require ≥2 approvals', defaultDecision: 'block', comparator: 'MIN_APPROVALS', params: { minApprovals: 2 } },
     ],
-    invariants: [],
+    invariants: [
+      { id: 'plan_evidence_present', label: 'Terraform plan attached', description: 'A terraform plan output must be linked in the PR', defaultDecision: 'block', evidenceSource: 'terraform-plan', runsWhen: '.tf file changes' },
+      { id: 'public_exposure_check', label: 'No unintended public exposure', description: 'No new public-facing resources without explicit tag', defaultDecision: 'block', evidenceSource: 'terraform-plan', branchScope: 'protected', runsWhen: 'New ingress or public resource detected in plan' },
+      { id: 'iam_wildcard_check', label: 'No IAM * permissions', description: 'IAM policies must not grant wildcard (*) actions', defaultDecision: 'block', evidenceSource: 'terraform-plan', branchScope: 'protected', runsWhen: 'IAM policy resource in diff' },
+      { id: 'secrets_hygiene', label: 'No secrets in Terraform vars', description: 'Sensitive values must use secret references, not literals', defaultDecision: 'block', evidenceSource: 'custom', runsWhen: '.tfvars or variable value detected' },
+      { id: 'required_tags_present', label: 'Required resource tags present', description: 'All resources must have owner, env, and cost-center tags', defaultDecision: 'warn', evidenceSource: 'terraform-plan', runsWhen: 'New resource added to plan' },
+    ],
   },
   {
     id: 'k8s_manifest_changed', label: 'K8s Manifest Changed', category: 'Infrastructure', emoji: '☸️',
@@ -108,7 +133,11 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
     artifacts: [
       { id: 'runbook_updated', label: 'Runbook updated', description: 'Operations runbook must be updated', defaultDecision: 'warn', comparator: 'ARTIFACT_UPDATED', params: { artifactId: 'runbook' } },
     ],
-    invariants: [],
+    invariants: [
+      { id: 'network_policy_required', label: 'NetworkPolicy required', description: 'All workloads must have a NetworkPolicy defined', defaultDecision: 'warn', evidenceSource: 'github-checks', runsWhen: 'New Deployment or StatefulSet added' },
+      { id: 'resource_limits_required', label: 'CPU/memory limits set', description: 'All containers must declare resource limits', defaultDecision: 'warn', evidenceSource: 'github-checks', runsWhen: 'Container spec changed' },
+      { id: 'image_tag_pinned', label: 'Image tags pinned (no :latest)', description: 'Container images must reference a specific digest or version tag', defaultDecision: 'block', evidenceSource: 'github-checks', runsWhen: 'Image field changed in manifest' },
+    ],
   },
   {
     id: 'alert_rule_changed', label: 'Alert Rule Changed', category: 'Observability', emoji: '🔔',
@@ -119,7 +148,10 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
       { id: 'dashboard_updated', label: 'Dashboard updated', description: 'Dashboard must reflect alert changes', defaultDecision: 'warn', comparator: 'ARTIFACT_UPDATED', params: { artifactId: 'dashboard' } },
     ],
     invariants: [
-      { id: 'runbook_alert_parity', label: 'Alert ↔ Runbook parity', description: 'Every alert must have a linked runbook', defaultDecision: 'warn' },
+      { id: 'runbook_alert_parity', label: 'Alert ↔ Runbook parity', description: 'Every paging alert must link to a runbook', defaultDecision: 'warn', evidenceSource: 'custom', runsWhen: 'Alert rule added or severity changed' },
+      { id: 'routing_ownership_parity', label: 'Routing ↔ Ownership parity', description: 'Alert routing must match service CODEOWNERS', defaultDecision: 'warn', evidenceSource: 'backstage', runsWhen: 'Alert routing target changes' },
+      { id: 'dashboard_alert_parity', label: 'Dashboard ↔ Alert parity', description: 'A dashboard panel must exist for every paging alert', defaultDecision: 'warn', evidenceSource: 'datadog', runsWhen: 'New alert rule added' },
+      { id: 'min_runbook_quality', label: 'Runbook minimum requirements', description: 'Runbook must contain Overview, Steps, and Escalation sections', defaultDecision: 'warn', evidenceSource: 'custom', runsWhen: 'Runbook file changed alongside alert' },
     ],
   },
   {
@@ -130,7 +162,9 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
       { id: 'alert_rule_updated', label: 'Alert rule updated', description: 'Matching alert must be updated with SLO', defaultDecision: 'block', comparator: 'ARTIFACT_UPDATED', params: { artifactId: 'alert-rule' } },
     ],
     invariants: [
-      { id: 'slo_alert_parity', label: 'SLO ↔ Alert parity', description: 'SLO thresholds must match alert thresholds', defaultDecision: 'warn' },
+      { id: 'slo_alert_parity', label: 'SLO ↔ Alert parity', description: 'SLO thresholds must match alert thresholds', defaultDecision: 'warn', evidenceSource: 'datadog', runsWhen: 'SLO target value changed' },
+      { id: 'burn_rate_alert_alignment', label: 'Burn-rate alert alignment', description: 'Burn-rate alert thresholds must be consistent with SLO budget', defaultDecision: 'warn', evidenceSource: 'datadog', runsWhen: 'SLO error budget or window changed' },
+      { id: 'obs_triangle_consistency', label: 'Observability triangle complete', description: 'Dashboard + Alert + Runbook must all exist for tier-1 services', defaultDecision: 'warn', evidenceSource: 'backstage', branchScope: 'protected', runsWhen: 'SLO file changes for tier-1 service' },
     ],
   },
   {
@@ -141,8 +175,10 @@ const SURFACE_CATALOG: SurfaceEntry[] = [
       { id: 'owner_ack_required', label: 'Owner acknowledgment', description: 'Team lead must approve CODEOWNERS changes', defaultDecision: 'block', comparator: 'HUMAN_APPROVAL_PRESENT' },
     ],
     invariants: [
-      { id: 'codeowners_docs_parity', label: 'CODEOWNERS ↔ Docs parity', description: 'CODEOWNERS must match ownership docs', defaultDecision: 'warn' },
-      { id: 'ownership_oncall_parity', label: 'Ownership ↔ On-call parity', description: 'Owners must have on-call coverage', defaultDecision: 'warn' },
+      { id: 'codeowners_docs_parity', label: 'CODEOWNERS ↔ Docs parity', description: 'CODEOWNERS must match ownership docs', defaultDecision: 'warn', evidenceSource: 'custom', runsWhen: 'CODEOWNERS file changes' },
+      { id: 'ownership_oncall_parity', label: 'Ownership ↔ On-call parity', description: 'Owners must have on-call coverage', defaultDecision: 'warn', evidenceSource: 'backstage', runsWhen: 'Team entry changed in CODEOWNERS' },
+      { id: 'service_catalog_owner', label: 'Service catalog owner registered', description: 'CODEOWNERS team must be registered in service catalog', defaultDecision: 'warn', evidenceSource: 'backstage', runsWhen: 'New team added to CODEOWNERS' },
+      { id: 'runbook_alert_reciprocal', label: 'Runbook ↔ Alert reciprocal references', description: 'Runbooks must reference alerts and alerts must link back to runbooks', defaultDecision: 'warn', evidenceSource: 'custom', runsWhen: 'CODEOWNERS or runbook changed together' },
     ],
   },
   {
@@ -230,26 +266,58 @@ export default function ChangeSurfaceWizard({ onGenerateRules }: ChangeSurfaceWi
   const selectedCount = Object.keys(surfaceConfigs).length;
 
   // ── Item row (artifact or invariant) ────────────────────────────────────────
+  const EVIDENCE_LABELS: Record<string, string> = {
+    'github-checks': '🔍 GitHub',
+    'terraform-plan': '🏗️ TF Plan',
+    'datadog': '📊 Datadog',
+    'backstage': '📚 Backstage',
+    'custom': '⚙️ Custom',
+  };
+  const BRANCH_LABELS: Record<string, string> = { all: '🌿 All', protected: '🔒 Protected', feature: '🌱 Feature' };
+
   const renderItem = (surfaceId: string, kind: 'artifacts' | 'invariants', item: ArtifactOption | InvariantOption) => {
     const cfg = surfaceConfigs[surfaceId]?.[kind]?.[item.id];
     if (!cfg) return null;
+    const inv = kind === 'invariants' ? (item as InvariantOption) : null;
     return (
-      <div key={item.id} className="flex items-center justify-between py-2 px-3 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <button type="button" onClick={() => toggleItem(surfaceId, kind, item.id)} className="flex-shrink-0 text-gray-400 hover:text-blue-600">
-            {cfg.enabled ? <CheckSquare className="h-4 w-4 text-blue-600" /> : <Square className="h-4 w-4" />}
-          </button>
-          <div className="min-w-0">
-            <p className={`text-sm font-medium truncate ${cfg.enabled ? 'text-gray-900 dark:text-white' : 'text-gray-400 line-through'}`}>{item.label}</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{item.description}</p>
+      <div key={item.id} className="py-2 px-3 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700/50">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <button type="button" onClick={() => toggleItem(surfaceId, kind, item.id)} className="flex-shrink-0 text-gray-400 hover:text-blue-600">
+              {cfg.enabled ? <CheckSquare className="h-4 w-4 text-blue-600" /> : <Square className="h-4 w-4" />}
+            </button>
+            <div className="min-w-0">
+              <p className={`text-sm font-medium truncate ${cfg.enabled ? 'text-gray-900 dark:text-white' : 'text-gray-400 line-through'}`}>{item.label}</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{item.description}</p>
+            </div>
           </div>
+          {cfg.enabled && (
+            <select value={cfg.decision} onChange={e => setItemDecision(surfaceId, kind, item.id, e.target.value as 'warn' | 'block')}
+              className="ml-2 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-1 py-0.5 flex-shrink-0">
+              <option value="warn">⚠️ Warn</option>
+              <option value="block">🚫 Block</option>
+            </select>
+          )}
         </div>
-        {cfg.enabled && (
-          <select value={cfg.decision} onChange={e => setItemDecision(surfaceId, kind, item.id, e.target.value as 'warn' | 'block')}
-            className="ml-2 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-1 py-0.5 flex-shrink-0">
-            <option value="warn">⚠️ Warn</option>
-            <option value="block">🚫 Block</option>
-          </select>
+        {/* Contextual badges for invariants */}
+        {inv && (inv.evidenceSource || inv.branchScope || inv.runsWhen) && (
+          <div className="ml-6 mt-1 flex flex-wrap gap-1">
+            {inv.evidenceSource && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+                {EVIDENCE_LABELS[inv.evidenceSource] ?? inv.evidenceSource}
+              </span>
+            )}
+            {inv.branchScope && inv.branchScope !== 'all' && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                {BRANCH_LABELS[inv.branchScope]}
+              </span>
+            )}
+            {inv.runsWhen && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-300 italic">
+                {inv.runsWhen}
+              </span>
+            )}
+          </div>
         )}
       </div>
     );

@@ -1,0 +1,111 @@
+# ======================================================================
+# STARTER PACKSET: Microservice Baseline + All Overlays
+# ======================================================================
+# A PolicyPackSet bundles a baseline + service overlays into a single
+# activatable unit. This is the recommended starting point for teams
+# adopting Verta AI policy enforcement for microservices.
+#
+# Usage:
+#   1. Apply this PackSet template to a service (UI: "Apply template")
+#   2. Configure each overlay's spec.config.* in the UI panels (4C)
+#   3. Enable only the overlays relevant to your service
+#   4. Export as YAML for GitOps customers (governance.exportable: true)
+#
+# Pack composition:
+#   - baseline-contract-integrity (GLOBAL_BASELINE, workspace-scoped)
+#   - api-service-overlay (SERVICE_OVERLAY, service-scoped) [disabled by default]
+#   - db-service-overlay  (SERVICE_OVERLAY, service-scoped) [disabled by default]
+#   - infra-service-overlay (SERVICE_OVERLAY, service-scoped) [disabled by default]
+#   - observability-service-overlay (SERVICE_OVERLAY, service-scoped) [disabled by default]
+#
+# Pack precedence (higher = higher priority when rules conflict):
+#   50: baseline (workspace-wide, permissive floor)
+#   60: api-overlay, db-overlay, obs-overlay
+#   70: infra-overlay (security-critical, highest priority)
+#
+# Merge strategy: MOST_RESTRICTIVE
+#   When two packs both fire on the same PR, the most restrictive decision
+#   wins (BLOCK > WARN > PASS). This is the safest default for new adopters.
+# ======================================================================
+
+apiVersion: verta.ai/v1
+kind: PolicyPackSet
+
+metadata:
+  setId: verta.starter-microservice-packset.v1
+  name: Starter Microservice PackSet
+  description: >
+    Composes the baseline contract integrity pack with all four service overlays
+    (API, DB, Infra, Observability). Apply to any microservice team as a starting
+    point — enable only the overlays relevant to your service, configure via UI
+    panels or export to YAML for GitOps workflows.
+  version: 1.0.0
+  owner: platform-team
+  labels:
+    domain: microservices
+    tier: starter
+
+composition:
+  # How to resolve conflicts when multiple packs fire on the same PR.
+  # MOST_RESTRICTIVE: strictest decision wins (BLOCK > WARN > PASS)
+  mergeStrategy: MOST_RESTRICTIVE
+
+  # Tie-break by pack list order (highest priority first)
+  precedence: first-wins
+
+  packs:
+    # ── Global baseline ──────────────────────────────────────────────
+    # Always active; covers CODEOWNERS, service ownership, and
+    # workspace-wide checkrun-always behavior.
+    - packId: verta.baseline-contract-integrity.v1
+      version: "^1.0.0"
+      priority: 50          # Lowest priority — overlays add stricter rules
+      enabled: true         # Always on; cannot be disabled in UI
+
+    # ── API overlay ──────────────────────────────────────────────────
+    # Enable for services owning REST/GraphQL/gRPC contracts.
+    # Configure: spec.config.api.* (contractType, specGlobs, breakingChangePolicy…)
+    - packId: verta.api-service-overlay.v1
+      version: "^1.0.0"
+      priority: 60
+      enabled: false        # UI: "Enable API Overlay" toggle (4C)
+
+    # ── DB overlay ───────────────────────────────────────────────────
+    # Enable for services owning database schemas / migrations.
+    # Configure: spec.config.db.* (framework, schemaGlobs, migrationGlobs…)
+    - packId: verta.db-service-overlay.v1
+      version: "^1.0.0"
+      priority: 60
+      enabled: false        # UI: "Enable DB Overlay" toggle (4C)
+
+    # ── Infra overlay ────────────────────────────────────────────────
+    # Enable for services owning Terraform / K8s / Helm IaC.
+    # Configure: spec.config.infra.* (terraform.requirePlanEvidence, iam…)
+    - packId: verta.infra-service-overlay.v1
+      version: "^1.0.0"
+      priority: 70          # Higher: infra/security rules are safety-critical
+      enabled: false        # UI: "Enable Infra Overlay" toggle (4C)
+
+    # ── Observability overlay ────────────────────────────────────────
+    # Enable for services with paging, SLOs, and dashboards.
+    # Configure: spec.config.obs.* (provider, pagingAlertsRequireRunbook…)
+    - packId: verta.observability-service-overlay.v1
+      version: "^1.0.0"
+      priority: 60
+      enabled: false        # UI: "Enable Observability Overlay" toggle (4C)
+
+# Defaults cascaded into every pack in this set (overridable per-pack).
+sharedDefaults:
+  obligations:
+    defaultDecisionOnFail: block      # Default: block on failed obligations
+  triggers:
+    defaultPrEvents:
+      - opened
+      - synchronize
+
+governance:
+  approvalRequired: false             # Set to true for regulated environments
+  exportable: true                    # Allow YAML export for GitOps customers
+  distributionChannels:
+    - github_checks
+

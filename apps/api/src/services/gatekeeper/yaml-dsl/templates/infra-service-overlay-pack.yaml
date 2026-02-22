@@ -1,0 +1,396 @@
+# ======================================================================
+# SERVICE OVERLAY: Infrastructure & IaC Safety
+# ======================================================================
+# Pattern: ChangeSurface → RequiredArtifacts → Invariants → Decision
+#
+# Surfaces: terraform_changed, k8s_manifest_changed, iam_changed,
+#           ingress_changed, secrets_changed, network_policy_changed
+#
+# Key design:
+#   - decisionOnUnknown: warn on ALL obligations (degrade to WARN when
+#     terraform plan, drift detector, or secrets scanner unavailable)
+#   - packType: SERVICE_OVERLAY — for services owning infra, or use
+#     platform-owned variant with scope.type: workspace
+#   - Approval routing hooks:
+#       * IAM changes: 2-person review (security + platform)
+#       * Exposure/ingress changes: security team approval
+# ======================================================================
+
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.infra-service-overlay.v1
+  name: Infra Service Overlay
+  version: 1.0.0
+  description: >
+    Service overlay for services owning IaC (Terraform, Kubernetes, Helm).
+    Enforces plan-before-apply, IAM least-privilege review, secrets hygiene,
+    exposure/ingress approval, environment-parity invariants, and degrades
+    gracefully when terraform plan or drift evidence is unavailable.
+  packType: SERVICE_OVERLAY
+  packMode: enforce
+  strictness: strict
+  owner: platform-team
+  tags:
+    - service-overlay
+    - infrastructure
+    - terraform
+    - kubernetes
+    - iam
+    - secrets
+    - security
+    - exposure
+
+scope:
+  type: service         # service-scoped; set scope.type: workspace for platform variant
+  branches:
+    include: ["main", "master", "release/*"]
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: true
+
+rules:
+
+  # ── RequiredArtifact: plan_attached_or_ci_plan_passed ─────────────────
+  # Rule 1: Terraform changed → plan must be attached or CI plan must pass.
+  # No plan = blind apply. BLOCK on fail.
+  # Degrade to WARN when the plan scanner or CI integration is unavailable.
+  - id: terraform-plan-required
+    name: Terraform Changes Require Plan Attached or CI Plan Passed
+    description: >
+      When Terraform files change, a terraform plan must be attached to the
+      PR (as a comment, artifact, or check run) or the CI plan check must
+      pass. Prevents blind applies that can cause outages or data loss.
+    enabled: true
+    trigger:
+      changeSurface: terraform_changed
+    obligations:
+      - condition:
+          or:
+            - fact: pr.body
+              operator: contains
+              value: "terraform plan"
+            - fact: pr.comments
+              operator: contains
+              value: "terraform plan"
+            - fact: ci.checkRuns
+              operator: contains
+              value: terraform
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: CI integration or plan scanner unavailable
+        message: >
+          Terraform changes detected but no plan found. Attach the terraform
+          plan output (paste in PR body/comment or as CI check) before merging.
+          Label 'plan-not-required' only for trivial variable/comment changes.
+    skipIf:
+      labels: ["plan-not-required", "terraform-docs-only"]
+
+  # ── RequiredArtifact: two_person_review_required ───────────────────────
+  # Rule 2: IAM policy changed → 2-person review (security + platform).
+  # IAM changes can silently grant/revoke access across services. Always
+  # require a second set of eyes. Degrade to WARN when approvals API is down.
+  - id: iam-two-person-review
+    name: IAM Changes Require Two-Person Review
+    description: >
+      IAM policy changes (roles, bindings, policies, SAs) require a minimum
+      of 2 approvals including at least one from @security-team or @platform-team.
+      Enforces least-privilege review before merging.
+    enabled: true
+    trigger:
+      changeSurface: iam_changed
+    obligations:
+      - comparator: APPROVER_IN_ALLOWED_SET
+        params:
+          allowedApprovers: ["security-team", "platform-team"]
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: approvals API unavailable
+        message: >
+          IAM change requires review from @security-team or @platform-team.
+          Request their review — unreviewed IAM changes can silently
+          grant or revoke cross-service access.
+      - comparator: MIN_APPROVALS
+        params:
+          minCount: 2
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade
+        message: >
+          IAM changes require at least 2 approvals (security/platform + service owner).
+    skipIf:
+      labels: ["iam-approved", "iam-revoke-only-cleanup"]
+
+  # ── RequiredArtifact: security_approval_required (exposure) ───────────
+  # Rule 3: Ingress/network exposure changed → security team must approve.
+  # Degrade to WARN when the security approvals channel is unavailable.
+  - id: exposure-change-requires-security-approval
+    name: Exposure Changes Require Security Team Approval
+    description: >
+      Changes to ingress rules, network policies, or public-facing routes
+      that increase the attack surface require security team approval.
+    enabled: true
+    trigger:
+      changeSurface:
+        - ingress_changed
+        - network_policy_changed
+    obligations:
+      - comparator: APPROVER_IN_ALLOWED_SET
+        params:
+          allowedApprovers: ["security-team", "infosec-team"]
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: approvals API unavailable
+        message: >
+          Ingress or network policy changed — @security-team approval required.
+          Exposure changes increase the attack surface and must be explicitly
+          reviewed before merging.
+    skipIf:
+      labels: ["security-approved", "internal-network-only"]
+
+  # ── Invariant: secrets hygiene ─────────────────────────────────────────
+  # Rule 4: Secrets surface changed → no hardcoded secrets, secrets manager
+  # reference must be used. Degrade to WARN when secrets scanner is down.
+  - id: no-hardcoded-secrets
+    name: Secrets Changes Must Use Secrets Manager References
+    description: >
+      When secret-related files change (Vault, AWS Secrets Manager, K8s
+      Secrets, .env files), verify no hardcoded credentials appear in the
+      diff and that a secrets manager reference is used instead.
+    enabled: true
+    trigger:
+      changeSurface: secrets_changed
+    obligations:
+      - condition:
+          and:
+            - fact: diff.content
+              operator: notContains
+              value: "password="
+            - fact: diff.content
+              operator: notContains
+              value: "secret="
+            - fact: diff.content
+              operator: notContains
+              value: "api_key="
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: warn   # degrade: content scanner unavailable
+        message: >
+          Potential hardcoded credential detected in secrets-related file.
+          Use a secrets manager reference (Vault path, AWS SSM parameter,
+          K8s Secret ref) instead of hardcoded values. If this is a false
+          positive, add 'secrets-scan-false-positive' label with justification.
+    skipIf:
+      labels: ["secrets-scan-false-positive", "example-values-only"]
+
+  # ── Invariant: K8s manifest safety ────────────────────────────────────
+  # Rule 5: K8s manifest changed → resource limits, security context, and
+  # image tag must be present (not 'latest'). WARN not BLOCK — this is a
+  # hygiene check that degrades gracefully on scanner failure.
+  - id: k8s-manifest-safety
+    name: Kubernetes Manifests Must Have Resource Limits and Non-Latest Image Tags
+    description: >
+      K8s manifests must define CPU/memory resource limits and must not use
+      'latest' image tags. Missing limits cause noisy-neighbor outages;
+      'latest' tags break reproducibility and rollbacks.
+    enabled: true
+    trigger:
+      changeSurface: k8s_manifest_changed
+    obligations:
+      - condition:
+          fact: diff.content
+          operator: notContains
+          value: ":latest"
+        severity: high
+        decisionOnFail: warn      # hygiene check — warn not block
+        decisionOnUnknown: warn   # degrade: manifest parser unavailable
+        message: >
+          Kubernetes manifest uses ':latest' image tag. Pin to a specific
+          digest or semver tag to ensure reproducible deployments and
+          safe rollbacks.
+      - condition:
+          fact: diff.content
+          operator: contains
+          value: "resources:"
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: warn   # degrade
+        message: >
+          Kubernetes manifest does not appear to define resource limits.
+          Add 'resources.limits' (CPU/memory) to prevent noisy-neighbor issues.
+    skipIf:
+      labels: ["k8s-safety-ack", "cron-job-only"]
+
+  # ── Invariant: environment parity / drift risk ─────────────────────────
+  # Rule 6: Terraform or K8s changed → check for environment parity.
+  # This is a degrade-to-WARN rule: when drift detection evidence is
+  # unavailable, WARN and surface the risk. Never hard-block on missing data.
+  - id: environment-parity-drift-risk
+    name: Infrastructure Changes Risk Environment Parity Drift
+    description: >
+      When infra changes are merged without corresponding staging/prod parity
+      checks, environments drift. Warn when drift detection signals high risk
+      or when drift evidence is unavailable.
+    enabled: true
+    trigger:
+      changeSurface:
+        - terraform_changed
+        - k8s_manifest_changed
+    obligations:
+      - condition:
+          or:
+            - fact: drift.riskLevel
+              operator: "=="
+              value: high
+            - fact: drift.riskLevel
+              operator: "=="
+              value: critical
+        severity: high
+        decisionOnFail: warn
+        decisionOnUnknown: warn   # degrade: drift detector unavailable
+        message: >
+          Infrastructure drift risk detected (or drift detector unavailable).
+          Verify that staging and production environments will remain in parity
+          after this change. If a maintenance window or staged rollout is needed,
+          document it in the PR body.
+    skipIf:
+      labels: ["drift-ack", "dev-env-only"]
+
+  # ── RequiredArtifact: runbook_updated ─────────────────────────────────
+  # Rule 7: Significant infra change → runbook updated.
+  # IAM, ingress, or network policy changes with operational impact must
+  # update the runbook. WARN not BLOCK — documentation hygiene nudge.
+  - id: runbook-updated-for-infra-changes
+    name: Runbook Should Be Updated for Significant Infra Changes
+    description: >
+      IAM, ingress, or network policy changes have operational impact (on-call
+      alert patterns, incident response steps). Update the runbook or add
+      operational notes to the PR body.
+    enabled: true
+    trigger:
+      changeSurface:
+        - iam_changed
+        - ingress_changed
+        - network_policy_changed
+    obligations:
+      - condition:
+          or:
+            - fact: diff.files.modified
+              operator: contains
+              value: RUNBOOK
+            - fact: diff.files.modified
+              operator: contains
+              value: runbook
+            - fact: pr.body
+              operator: contains
+              value: operational impact
+            - fact: pr.body
+              operator: contains
+              value: rollback steps
+        severity: medium
+        decisionOnFail: warn
+        decisionOnUnknown: warn   # degrade: scanner unavailable
+        message: >
+          IAM/ingress/network-policy change detected but no runbook update or
+          operational notes found. Update RUNBOOK.md or describe rollback
+          steps and on-call impact in the PR body.
+    skipIf:
+      labels: ["skip-runbook", "cleanup-only"]
+
+  # ── ApprovalGate + RequiredArtifact: ownership_metadata ───────────────
+  # Rule 8: Exposure or IAM changes require service ownership metadata to be present.
+  # Runbook recommended; owner acknowledgement required on protected branches.
+  # Uses new vocabulary: when.changeSurfaces, requires.localArtifacts, decision (branch-specific).
+  - id: infra-ownership-metadata-required
+    name: Service Ownership Metadata Required for Exposure/IAM Changes
+    description: >
+      When IAM or ingress (exposure) changes are introduced, the service must have
+      a valid catalog-info.yaml or CODEOWNERS present. Owner acknowledgement is
+      required on protected branches. Degrades gracefully when evidence is absent.
+    enabled: true
+    when:
+      changeSurfaces:
+        anyOf:
+          - iam_changed
+          - ingress_changed
+    requires:
+      localArtifacts:
+        anyOf:
+          - "**/catalog-info.yaml"
+          - "**/backstage.yaml"
+          - "CODEOWNERS"
+          - ".github/CODEOWNERS"
+    approvals:
+      required:
+        - type: owner_ack
+          resolver: serviceOwner
+          minCount: 1
+          when:
+            predicate: prod_env_touched
+    decision:
+      onViolation:
+        protectedBranches: warn
+        featureBranches: pass
+      onMissingExternalEvidence: warn
+
+evaluation:
+  externalDependencyMode: soft_fail   # always degrade, never hard-block on infra down
+  unknownArtifactMode: warn
+  budgets:
+    maxTotalMs: 90000
+    perComparatorTimeoutMs: 20000
+    maxGitHubApiCalls: 50
+  maxFindings: 50
+  maxEvidenceSnippetsPerFinding: 3
+
+routing:
+  github:
+    checkRunName: "VertaAI / Infra Safety"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: action_required
+    postSummaryComment: true
+    annotateFiles: true
+
+spawnTrackB:
+  enabled: true
+  when:
+    - onDecision: block
+    - onDecision: warn
+  createRemediationCase: true
+  remediationDefaults:
+    priority: high
+    targetSystems:
+      - github_readme
+    approvalChannelRef: platform-approvals
+  grouping:
+    strategy: by-drift-type-and-service
+    maxPerPR: 5
+
+# ======================================================================
+# Pack-level config — driven by UI "Infra Overlay" panel (4C)
+# Each key maps 1:1 to a UI control in the service overlay panel.
+# Teams override these defaults when applying the template via UI or YAML.
+# ======================================================================
+config:
+  infra:
+    # Terraform plan evidence gate (maps to rule: terraform-plan-required)
+    terraform:                         # UI: "Require terraform plan evidence" bool
+      requirePlanEvidence: true        # If CI missing → degrade to warn per checkrun policy
+
+    # Public ingress / exposure controls (maps to rule: exposure-change-requires-security-approval)
+    exposure:                          # UI: "Block new public ingress" bool
+      blockNewPublicIngressOnProtectedBranches: true
+
+    # IAM least-privilege enforcement (maps to rule: iam-two-person-review)
+    iam:                               # UI: "Block wildcard IAM" bool
+      blockWildcardAdminOnProtectedBranches: true
+
+    # Secrets hygiene (maps to rule: no-hardcoded-secrets)
+    secrets:                           # UI: "Block plaintext secrets" bool
+      blockPlaintextSecrets: true
+
