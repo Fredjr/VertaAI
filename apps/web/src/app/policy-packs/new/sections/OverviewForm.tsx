@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, X, Users, Tag } from 'lucide-react';
+import { Plus, X, Users, Tag, Globe, Layers } from 'lucide-react';
 
 interface OverviewFormProps {
   formData: any;
@@ -158,39 +158,92 @@ export default function OverviewForm({ formData, setFormData }: OverviewFormProp
             </p>
           </div>
 
-          {/* Pack Mode */}
+          {/* Pack Type */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Pack Mode *
+              Pack Type *
             </label>
-            <div className="flex gap-4">
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  value="observe"
-                  checked={formData.packMode === 'observe'}
-                  onChange={(e) => setFormData({ ...formData, packMode: e.target.value })}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-gray-600"
-                />
-                <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-                  Observe (monitor only)
-                </span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                formData.packType === 'GLOBAL_BASELINE'
+                  ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                  : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+              }`}>
+                <input type="radio" value="GLOBAL_BASELINE" checked={formData.packType === 'GLOBAL_BASELINE'}
+                  onChange={(e) => setFormData({ ...formData, packType: e.target.value })}
+                  className="mt-0.5 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 dark:border-gray-600" />
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <Globe className="h-4 w-4 text-indigo-500" />
+                    <span className="text-sm font-semibold text-gray-900 dark:text-white">Global Baseline</span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Cross-cutting invariants applied workspace-wide. Service overlays stack on top.</p>
+                </div>
               </label>
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  value="enforce"
-                  checked={formData.packMode === 'enforce'}
-                  onChange={(e) => setFormData({ ...formData, packMode: e.target.value })}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-gray-600"
-                />
-                <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-                  Enforce (block PRs)
-                </span>
+              <label className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                formData.packType === 'SERVICE_OVERLAY'
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                  : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+              }`}>
+                <input type="radio" value="SERVICE_OVERLAY" checked={formData.packType === 'SERVICE_OVERLAY'}
+                  onChange={(e) => setFormData({ ...formData, packType: e.target.value })}
+                  className="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-gray-600" />
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <Layers className="h-4 w-4 text-blue-500" />
+                    <span className="text-sm font-semibold text-gray-900 dark:text-white">Service Overlay</span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Service- or repo-specific rules that extend or override the global baseline.</p>
+                </div>
               </label>
             </div>
+          </div>
+
+          {/* Enforcement Mode */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Enforcement Mode *
+            </label>
+            <div className="flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden">
+              {([
+                { value: 'observe', label: '👁 Monitor', hint: 'Log only, never block' },
+                { value: 'warn',    label: '⚠️ Warn',    hint: 'Allow but annotate PR' },
+                { value: 'enforce', label: '🚫 Block',   hint: 'Block PRs on violations' },
+              ] as const).map(({ value, label, hint }, idx) => (
+                <button key={value} type="button"
+                  onClick={() => setFormData({ ...formData, packMode: value })}
+                  className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${idx > 0 ? 'border-l border-gray-300 dark:border-gray-600' : ''} ${
+                    formData.packMode === value
+                      ? value === 'enforce' ? 'bg-red-600 text-white' : value === 'warn' ? 'bg-amber-500 text-white' : 'bg-blue-600 text-white'
+                      : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  }`}>
+                  <div>{label}</div>
+                  <div className={`text-xs mt-0.5 ${formData.packMode === value ? 'opacity-80' : 'text-gray-400'}`}>{hint}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Evidence Health Defaults */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Evidence Health Defaults
+            </label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+              What to do when a fact value cannot be resolved (e.g., scanner didn't run, data unavailable)
+            </p>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap">On unknown evidence:</span>
+              <select value={formData.defaultDecisionOnUnknown || 'warn'}
+                onChange={(e) => setFormData({ ...formData, defaultDecisionOnUnknown: e.target.value })}
+                className="rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm">
+                <option value="pass">✅ Pass (assume OK)</option>
+                <option value="warn">⚠️ Warn (flag but allow)</option>
+                <option value="block">🚫 Block (fail safe)</option>
+              </select>
+            </div>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              Observe mode logs violations without blocking; Enforce mode blocks PRs
+              Individual rules can override this default via <code className="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">decisionOnUnknown</code>.
             </p>
           </div>
 

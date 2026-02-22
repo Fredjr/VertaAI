@@ -47,6 +47,33 @@ export enum ComparatorId {
 }
 
 // ============================================================================
+// Change Surface IDs — semantic surfaces that trigger policy evaluation
+// ============================================================================
+
+export enum ChangeSurfaceId {
+  OPENAPI_CHANGED = 'openapi_changed',
+  GRAPHQL_SCHEMA_CHANGED = 'graphql_schema_changed',
+  PROTO_CHANGED = 'proto_changed',
+  API_HANDLER_CHANGED = 'api_handler_changed',
+  ROUTING_CHANGED = 'routing_changed',
+  AUTHZ_POLICY_CHANGED = 'authz_policy_changed',
+  DB_SCHEMA_CHANGED = 'db_schema_changed',
+  MIGRATION_ADDED_OR_MISSING = 'migration_added_or_missing',
+  TERRAFORM_CHANGED = 'terraform_changed',
+  K8S_MANIFEST_CHANGED = 'k8s_manifest_changed',
+  SLO_THRESHOLD_CHANGED = 'slo_threshold_changed',
+  DASHBOARD_CHANGED = 'dashboard_changed',
+  ALERT_RULE_CHANGED = 'alert_rule_changed',
+  RUNBOOK_CHANGED = 'runbook_changed',
+  ONCALL_ROTATION_CHANGED = 'oncall_rotation_changed',
+  CODEOWNERS_CHANGED = 'codeowners_changed',
+  OWNERSHIP_DOCS_CHANGED = 'ownership_docs_changed',
+  EVENT_SCHEMA_CHANGED = 'event_schema_changed',
+  ETL_CONTRACT_CHANGED = 'etl_contract_changed',
+  AGENT_AUTHORED_SENSITIVE_CHANGE = 'agent_authored_sensitive_change',
+}
+
+// ============================================================================
 // Pack YAML Schema
 // ============================================================================
 
@@ -104,6 +131,7 @@ export interface PackDefaults {
   // Obligation defaults
   obligations?: {
     defaultDecisionOnFail?: 'block' | 'warn' | 'pass';
+    defaultDecisionOnUnknown?: 'pass' | 'warn' | 'block'; // Evidence health: what to do when fact value is unavailable
     defaultSeverity?: 'low' | 'medium' | 'high' | 'critical';
   };
 
@@ -120,8 +148,10 @@ export interface PackMetadata {
   description?: string;
   tags?: string[];
   // PHASE 1 FIX: Align enum values with spec
-  packMode?: 'observe' | 'enforce';
+  packMode?: 'observe' | 'warn' | 'enforce';  // observe=monitor-only, warn=allow+warn, enforce=block
   strictness?: 'permissive' | 'balanced' | 'strict';
+  // Pack archetype — drives baseline/overlay composition
+  packType?: 'GLOBAL_BASELINE' | 'SERVICE_OVERLAY';
   // PHASE 1 FIX: Add missing fields from spec
   owner?: string;
   defaultsRef?: string;
@@ -207,6 +237,8 @@ export interface Trigger {
   // PHASE 1 FIX: Add always and anyChangedPathsRef from spec
   always?: boolean;
   anyChangedPathsRef?: string;  // Reference to workspace defaults paths
+  // ChangeSurface model: semantic trigger that expands to path globs at evaluation time
+  changeSurface?: ChangeSurfaceId | ChangeSurfaceId[];
 }
 
 export interface Obligation {

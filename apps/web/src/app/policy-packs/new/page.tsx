@@ -19,9 +19,11 @@ interface PolicyPackFormData {
   name: string;
   description: string;
   owner?: string;
-  packMode?: 'observe' | 'enforce';
+  packType?: 'GLOBAL_BASELINE' | 'SERVICE_OVERLAY';
+  packMode?: 'observe' | 'warn' | 'enforce';
   strictness?: 'permissive' | 'balanced' | 'strict';
   status: 'DRAFT' | 'IN_REVIEW' | 'ACTIVE' | 'DEPRECATED' | 'ARCHIVED';
+  defaultDecisionOnUnknown?: 'pass' | 'warn' | 'block';
 
   // Scope
   scopeType: 'workspace' | 'service' | 'repo';
@@ -63,9 +65,11 @@ function NewPolicyPackContent() {
     name: '',
     description: '',
     owner: '',
+    packType: 'SERVICE_OVERLAY',
     packMode: 'observe',
     strictness: 'balanced',
     status: 'DRAFT',
+    defaultDecisionOnUnknown: 'warn',
     scopeType: 'workspace',
     scopeRef: '',
     repoAllowlist: [],

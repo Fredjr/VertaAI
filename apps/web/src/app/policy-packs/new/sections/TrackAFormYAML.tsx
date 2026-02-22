@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { FileText, CheckCircle, XCircle, AlertCircle, Sparkles, Code, Eye } from 'lucide-react';
+import { FileText, CheckCircle, XCircle, AlertCircle, Sparkles, Code, Eye, Wand2 } from 'lucide-react';
 import TemplateGallery from '@/components/policyPacks/TemplateGallery';
 import RuleBuilder from '@/components/policyPacks/RuleBuilder';
 import PackPreview from '@/components/policyPacks/PackPreview';
+import ChangeSurfaceWizard from '@/components/policyPacks/ChangeSurfaceWizard';
 import yaml from 'js-yaml';
 
 // Dynamically import Monaco Editor to avoid SSR issues
@@ -35,7 +36,7 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
   const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
-  const [activeTab, setActiveTab] = useState<'templates' | 'builder' | 'yaml' | 'preview'>('templates');
+  const [activeTab, setActiveTab] = useState<'surfaces' | 'templates' | 'builder' | 'yaml' | 'preview'>('surfaces');
 
   // Fetch templates on mount
   useEffect(() => {
@@ -106,11 +107,19 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
 
   const handleTemplateSelect = (templateYaml: string) => {
     setYamlContent(templateYaml);
-    setFormData({
-      ...formData,
-      trackAConfigYamlDraft: templateYaml,
-    });
-    setActiveTab('yaml'); // Switch to YAML editor after selecting template
+    setFormData({ ...formData, trackAConfigYamlDraft: templateYaml });
+    setActiveTab('yaml');
+  };
+
+  // Merge wizard-generated rules into existing YAML (append new, don't overwrite existing)
+  const handleSurfaceRules = (newRules: any[]) => {
+    const existingRules = parseRulesFromYAML(yamlContent);
+    const existingIds = new Set(existingRules.map((r: any) => r.id));
+    const merged = [...existingRules, ...newRules.filter(r => !existingIds.has(r.id))];
+    const updatedYaml = convertRulesToYAML(merged);
+    setYamlContent(updatedYaml);
+    setFormData({ ...formData, trackAConfigYamlDraft: updatedYaml });
+    setActiveTab('yaml'); // Jump to YAML so user can see what was generated
   };
 
   // Parse YAML to extract rules
@@ -197,11 +206,26 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
         <>
           {/* Tab Switcher */}
           <div className="border-b border-gray-200 dark:border-gray-700">
-            <nav className="flex gap-4">
+            <nav className="flex gap-4 overflow-x-auto">
+              {/* Surfaces tab — first-class wizard */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('surfaces')}
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                  activeTab === 'surfaces'
+                    ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Wand2 className="h-4 w-4" />
+                  Surfaces
+                </div>
+              </button>
               <button
                 type="button"
                 onClick={() => setActiveTab('templates')}
-                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                   activeTab === 'templates'
                     ? 'border-blue-600 text-blue-600 dark:text-blue-400'
                     : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
@@ -259,6 +283,11 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
 
           {/* Tab Content */}
           <div className="mt-6">
+            {/* Surfaces Tab — ChangeSurface → RequiredArtifacts + Invariants → Decision */}
+            {activeTab === 'surfaces' && (
+              <ChangeSurfaceWizard onGenerateRules={handleSurfaceRules} />
+            )}
+
             {/* Templates Tab */}
             {activeTab === 'templates' && (
               <TemplateGallery
