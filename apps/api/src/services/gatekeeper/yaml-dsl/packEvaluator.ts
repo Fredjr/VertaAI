@@ -151,8 +151,20 @@ export class PackEvaluator {
 
       triggeredRules.push(rule.id);
 
-      // GAP-4: obligations are now optional (rules may use approvals/decision instead)
+      // NEW: Handle rules with requires/checks/decision blocks (baseline pack pattern)
       if (!rule.obligations || rule.obligations.length === 0) {
+        // Check if rule uses new pattern with requires/checks/decision
+        const hasRequires = !!(ruleAny.requires);
+        const hasChecks = !!(ruleAny.checks);
+        const hasDecision = !!(ruleAny.decision);
+
+        if (hasRequires || hasChecks) {
+          // Evaluate new pattern rules
+          const newPatternFindings = await evaluateNewPatternRule(rule, effectiveContext, ruleAny);
+          findings.push(...newPatternFindings);
+          continue;
+        }
+
         // Approval-only / decision-only rules: register as triggered with a synthetic PASS finding
         // The approvals/decision blocks will be evaluated by the approval routing layer (future work).
         findings.push({
@@ -343,6 +355,198 @@ export class PackEvaluator {
       coverage,
     };
   }
+}
+
+/**
+ * Evaluate rules with new pattern (requires/checks/decision blocks)
+ * This handles baseline pack rules that use requires.localArtifacts, checks.invariants, etc.
+ */
+async function evaluateNewPatternRule(
+  rule: any,
+  context: PRContext,
+  ruleAny: any
+): Promise<Finding[]> {
+  const findings: Finding[] = [];
+
+  // Extract decision settings
+  const decision = ruleAny.decision;
+  const decisionOnFail = extractDecisionOnFail(decision, context);
+  const decisionOnUnknown = decision?.onMissingExternalEvidence || 'warn';
+
+  // Evaluate requires.localArtifacts
+  if (ruleAny.requires?.localArtifacts) {
+    const localArtifacts = ruleAny.requires.localArtifacts;
+
+    // Check anyOf - at least one file must exist
+    if (localArtifacts.anyOf && Array.isArray(localArtifacts.anyOf)) {
+      const anyMatch = localArtifacts.anyOf.some((pattern: string) =>
+        context.files.some(file => minimatch(file.filename, pattern, { dot: true }))
+      );
+
+      if (!anyMatch) {
+        // No matching files found - violation
+        findings.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          obligationIndex: -1,
+          comparatorResult: {
+            status: 'fail',
+            findingCode: 'MISSING_REQUIRED_ARTIFACT' as FindingCode,
+            evidence: [],
+            message: `Required artifact not found. Expected one of: ${localArtifacts.anyOf.join(', ')}`,
+          },
+          decisionOnFail,
+          decisionOnUnknown,
+          evaluationStatus: 'evaluated',
+        });
+      } else {
+        // Found matching file - pass
+        const matchedFiles = context.files
+          .filter(file => localArtifacts.anyOf.some((pattern: string) => minimatch(file.filename, pattern, { dot: true })))
+          .map(f => f.filename);
+
+        findings.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          obligationIndex: -1,
+          comparatorResult: {
+            status: 'pass',
+            findingCode: 'ARTIFACT_PRESENT' as FindingCode,
+            evidence: matchedFiles.map(f => ({ type: 'file', value: f })),
+            message: `Required artifact found: ${matchedFiles.join(', ')}`,
+          },
+          decisionOnFail,
+          decisionOnUnknown,
+          evaluationStatus: 'evaluated',
+        });
+      }
+    }
+
+    // Check allOf - all files must exist
+    if (localArtifacts.allOf && Array.isArray(localArtifacts.allOf)) {
+      const missingPatterns: string[] = [];
+      const foundPatterns: string[] = [];
+
+      for (const pattern of localArtifacts.allOf) {
+        const hasMatch = context.files.some(file => minimatch(file.filename, pattern, { dot: true }));
+        if (hasMatch) {
+          foundPatterns.push(pattern);
+        } else {
+          missingPatterns.push(pattern);
+        }
+      }
+
+      if (missingPatterns.length > 0) {
+        // Some required files missing - violation
+        findings.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          obligationIndex: -1,
+          comparatorResult: {
+            status: 'fail',
+            findingCode: 'MISSING_REQUIRED_ARTIFACT' as FindingCode,
+            evidence: [],
+            message: `Missing required artifacts: ${missingPatterns.join(', ')}`,
+          },
+          decisionOnFail,
+          decisionOnUnknown,
+          evaluationStatus: 'evaluated',
+        });
+      } else {
+        // All required files found - pass
+        findings.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          obligationIndex: -1,
+          comparatorResult: {
+            status: 'pass',
+            findingCode: 'ARTIFACT_PRESENT' as FindingCode,
+            evidence: foundPatterns.map(p => ({ type: 'file', value: p })),
+            message: `All required artifacts found: ${foundPatterns.join(', ')}`,
+          },
+          decisionOnFail,
+          decisionOnUnknown,
+          evaluationStatus: 'evaluated',
+        });
+      }
+    }
+  }
+
+  // Evaluate requires.ciEvidence (future work - would need to query GitHub API for check runs)
+  if (ruleAny.requires?.ciEvidence) {
+    // For now, mark as not_evaluable since we don't have CI evidence in context
+    findings.push({
+      ruleId: rule.id,
+      ruleName: rule.name,
+      obligationIndex: -1,
+      comparatorResult: {
+        status: 'unknown',
+        findingCode: 'MISSING_EXTERNAL_EVIDENCE' as FindingCode,
+        evidence: [],
+        message: 'CI evidence evaluation not yet implemented',
+      },
+      decisionOnFail,
+      decisionOnUnknown,
+      evaluationStatus: 'not_evaluable',
+    });
+  }
+
+  // Evaluate checks.invariants (future work - would need invariant comparators)
+  if (ruleAny.checks?.invariants) {
+    // For now, mark as not_evaluable since invariant evaluation is not yet implemented
+    findings.push({
+      ruleId: rule.id,
+      ruleName: rule.name,
+      obligationIndex: -1,
+      comparatorResult: {
+        status: 'unknown',
+        findingCode: 'MISSING_EXTERNAL_EVIDENCE' as FindingCode,
+        evidence: [],
+        message: 'Invariant checks not yet implemented',
+      },
+      decisionOnFail,
+      decisionOnUnknown,
+      evaluationStatus: 'not_evaluable',
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * Extract decision from decision block, handling branch-specific decisions
+ */
+function extractDecisionOnFail(decision: any, context: PRContext): 'pass' | 'warn' | 'block' {
+  if (!decision?.onViolation) {
+    return 'warn';
+  }
+
+  const onViolation = decision.onViolation;
+
+  // Simple string decision
+  if (typeof onViolation === 'string') {
+    return onViolation as 'pass' | 'warn' | 'block';
+  }
+
+  // Branch-specific decision
+  if (typeof onViolation === 'object' && !Array.isArray(onViolation)) {
+    // Determine if this is a protected branch
+    const isProtectedBranch = context.baseBranch === 'main' ||
+                              context.baseBranch === 'master' ||
+                              context.baseBranch.startsWith('release/') ||
+                              context.baseBranch.startsWith('hotfix/');
+
+    if (isProtectedBranch && onViolation.protectedBranches) {
+      return onViolation.protectedBranches as 'pass' | 'warn' | 'block';
+    } else if (!isProtectedBranch && onViolation.featureBranches) {
+      return onViolation.featureBranches as 'pass' | 'warn' | 'block';
+    }
+
+    // Fallback to protectedBranches if featureBranches not specified
+    return (onViolation.protectedBranches || 'warn') as 'pass' | 'warn' | 'block';
+  }
+
+  return 'warn';
 }
 
 /**
