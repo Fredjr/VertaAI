@@ -28,6 +28,8 @@ export interface Finding {
   conditionResult?: ConditionEvaluationResult;
   decisionOnFail: 'pass' | 'warn' | 'block';
   decisionOnUnknown?: 'pass' | 'warn' | 'block';
+  // FIX A: Two-orthogonal-outcome model
+  evaluationStatus: 'evaluated' | 'not_evaluable';
 }
 
 /**
@@ -52,6 +54,13 @@ export interface PackEvaluationResult {
 
   // CRITICAL FIX (Gap #1): Engine fingerprint for reproducibility
   engineFingerprint: EngineFingerprint;
+
+  // FIX A: Coverage reporting (two-orthogonal-outcome model)
+  coverage: {
+    evaluable: number;
+    total: number;
+    notEvaluable: number;
+  };
 }
 
 export class PackEvaluator {
@@ -153,6 +162,7 @@ export class PackEvaluator {
           comparatorResult: { status: 'unknown', findingCode: 'APPROVAL_GATE' as FindingCode, evidence: [], meta: { approvalRule: true } },
           decisionOnFail: (ruleAny.decision?.onViolation) || 'warn',
           decisionOnUnknown: (ruleAny.decision?.onMissingExternalEvidence) || 'warn',
+          evaluationStatus: 'not_evaluable',
         });
         continue;
       }
@@ -197,6 +207,10 @@ export class PackEvaluator {
               autoConditionResult = evaluateCondition(autoCondition as Condition, conditionContext);
             }
 
+            // FIX A: Determine evaluation status from comparator result
+            const evaluationStatus: 'evaluated' | 'not_evaluable' =
+              result.status === 'unknown' ? 'not_evaluable' : 'evaluated';
+
             findings.push({
               ruleId: rule.id,
               ruleName: rule.name,
@@ -206,6 +220,7 @@ export class PackEvaluator {
               conditionResult: autoConditionResult,
               decisionOnFail: obligation.decisionOnFail,
               decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
+              evaluationStatus,
             });
           }
           // CONDITION-BASED OBLIGATION
@@ -235,6 +250,10 @@ export class PackEvaluator {
               }
             }
 
+            // FIX A: Conditions with errors are not_evaluable, otherwise evaluated
+            const evaluationStatus: 'evaluated' | 'not_evaluable' =
+              hasError ? 'not_evaluable' : 'evaluated';
+
             findings.push({
               ruleId: rule.id,
               ruleName: rule.name,
@@ -251,6 +270,7 @@ export class PackEvaluator {
               } as any,
               decisionOnFail: obligation.decisionOnFail,
               decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
+              evaluationStatus,
             });
           }
         } catch (error: any) {
@@ -271,6 +291,7 @@ export class PackEvaluator {
               },
               decisionOnFail: obligation.decisionOnFail,
               decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
+              evaluationStatus: 'not_evaluable',
             });
           } else {
             findings.push({
@@ -284,6 +305,7 @@ export class PackEvaluator {
               },
               decisionOnFail: obligation.decisionOnFail,
               decisionOnUnknown: obligation.decisionOnUnknown || 'warn',
+              evaluationStatus: 'not_evaluable',
             });
           }
         }
@@ -306,6 +328,9 @@ export class PackEvaluator {
     // PHASE 2.1: Include fact catalog version in fingerprint
     const engineFingerprint = buildEngineFingerprint(usedComparators, context.factCatalogVersion);
 
+    // FIX A: Compute coverage (two-orthogonal-outcome model)
+    const coverage = computeCoverage(findings);
+
     return {
       decision,
       findings,
@@ -315,6 +340,7 @@ export class PackEvaluator {
       evaluationTimeMs,
       budgetExhausted,
       engineFingerprint,
+      coverage,
     };
   }
 }
@@ -563,6 +589,18 @@ function computeDecision(findings: Finding[]): 'pass' | 'warn' | 'block' {
   }
 
   return hasWarn ? 'warn' : 'pass';
+}
+
+/**
+ * FIX A: Compute coverage from findings (two-orthogonal-outcome model)
+ * Separates evaluation status from policy decision
+ */
+function computeCoverage(findings: Finding[]): { evaluable: number; total: number; notEvaluable: number } {
+  const total = findings.length;
+  const notEvaluable = findings.filter(f => f.evaluationStatus === 'not_evaluable').length;
+  const evaluable = total - notEvaluable;
+
+  return { evaluable, total, notEvaluable };
 }
 
 /**

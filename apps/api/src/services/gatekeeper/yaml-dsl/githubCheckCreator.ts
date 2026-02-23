@@ -300,6 +300,29 @@ function formatFinding(finding: any): string {
     `**Code:** \`${reasonCode}\``,
   ];
 
+  // FIX D: Add remediation guidance for NOT_EVALUABLE findings
+  if (reasonCode === 'NOT_EVALUABLE') {
+    lines.push(`**Coverage:** ⚠️ Coverage gap - unable to evaluate this check`);
+
+    // Extract field name from message if it's a PR template field check
+    const fieldMatch = message.match(/field[:\s]+['"]?([^'"]+)['"]?/i);
+    if (fieldMatch) {
+      const fieldName = fieldMatch[1];
+      lines.push(`**Missing Config:** \`workspace.defaults.prTemplate.requiredFields['${fieldName}']\``);
+      lines.push(`**Action Required:** Configure PR template field mapping in workspace settings`);
+      lines.push(`**How to Fix:** Add the following to your workspace defaults:`);
+      lines.push(`\`\`\`yaml`);
+      lines.push(`prTemplate:`);
+      lines.push(`  requiredFields:`);
+      lines.push(`    "${fieldName}":`);
+      lines.push(`      matchAny:`);
+      lines.push(`        - "## ${fieldName}\\\\s*\\\\n[\\\\s\\\\S]+"`);
+      lines.push(`\`\`\``);
+    } else {
+      lines.push(`**Action Required:** Review and configure missing workspace defaults or external dependencies`);
+    }
+  }
+
   if (evidence && evidence.length > 0) {
     lines.push(`**Evidence:**`);
     for (const ev of evidence.slice(0, 3)) {
@@ -382,16 +405,63 @@ function buildMultiPackCheckTitle(decision: 'pass' | 'warn' | 'block', packResul
 }
 
 function buildMultiPackCheckSummary(decision: 'pass' | 'warn' | 'block', packResults: PackResult[]): string {
-  const totalFindings = packResults.reduce((sum, pr) => sum + pr.result.findings.length, 0);
+  // FIX B: Count blocks, warnings, and passes separately (not just total findings)
+  const allFindings = packResults.flatMap(pr => pr.result.findings);
+
+  const blockCount = allFindings.filter(f => {
+    if (f.decisionOnFail !== 'block') return false;
+    if (f.comparatorResult) return f.comparatorResult.status === 'fail';
+    if (f.conditionResult) return !f.conditionResult.satisfied;
+    return false;
+  }).length;
+
+  const warnCount = allFindings.filter(f => {
+    if (f.decisionOnFail !== 'warn') return false;
+    if (f.comparatorResult) return f.comparatorResult.status === 'fail';
+    if (f.conditionResult) return !f.conditionResult.satisfied;
+    return false;
+  }).length;
+
+  const passCount = allFindings.filter(f => {
+    if (f.comparatorResult) {
+      return f.comparatorResult.status === 'pass' ||
+             (f.comparatorResult.status === 'fail' && f.decisionOnFail === 'pass');
+    }
+    if (f.conditionResult) {
+      return f.conditionResult.satisfied || f.decisionOnFail === 'pass';
+    }
+    return false;
+  }).length;
+
+  // FIX A: Coverage reporting
+  const totalCoverage = packResults.reduce((sum, pr) => ({
+    evaluable: sum.evaluable + pr.result.coverage.evaluable,
+    total: sum.total + pr.result.coverage.total,
+    notEvaluable: sum.notEvaluable + pr.result.coverage.notEvaluable,
+  }), { evaluable: 0, total: 0, notEvaluable: 0 });
+
   const totalRules = packResults.reduce((sum, pr) => sum + pr.result.triggeredRules.length, 0);
   const totalTime = packResults.reduce((sum, pr) => sum + pr.result.evaluationTimeMs, 0);
+
+  // FIX C: Distinguish observe-only vs enforcing mode clearly
   const allObserveMode = packResults.every(pr => pr.pack.metadata.packMode === 'observe');
+  const hasEnforcingPacks = packResults.some(pr => pr.pack.metadata.packMode === 'enforce');
 
   const lines = [
-    allObserveMode ? `**Enforcement Mode:** OBSERVE-ONLY (not enforcing)` : `**Enforcement Mode:** ENFORCING`,
-    `**Global Decision:** ${decision.toUpperCase()}${allObserveMode && decision !== 'pass' ? ' (would have applied if enforcing)' : ''}`,
-    `**Packs Evaluated:** ${packResults.length}`,
-    `**Total Findings:** ${totalFindings}`,
+    allObserveMode
+      ? `**Enforcement Mode:** OBSERVE-ONLY (monitoring only, not blocking PRs)`
+      : hasEnforcingPacks
+        ? `**Enforcement Mode:** ENFORCING (${packResults.filter(pr => pr.pack.metadata.packMode === 'enforce').length} enforcing pack(s))`
+        : `**Enforcement Mode:** ENFORCING`,
+    allObserveMode && decision !== 'pass'
+      ? `**Global Decision:** ${decision.toUpperCase()} (would have applied if enforcing)`
+      : `**Global Decision:** ${decision.toUpperCase()}`,
+    '',
+    // FIX B: Show Blocks/Warnings/Pass counts clearly
+    `**Blocks:** ${blockCount} | **Warnings:** ${warnCount} | **Pass:** ${passCount}`,
+    // FIX A: Show coverage
+    `**Coverage:** ${totalCoverage.evaluable}/${totalCoverage.total} evaluable${totalCoverage.notEvaluable > 0 ? ` (${totalCoverage.notEvaluable} not evaluable)` : ''}`,
+    `**Packs:** ${packResults.length} (${packResults.filter(pr => pr.result.decision === 'block').length} block, ${packResults.filter(pr => pr.result.decision === 'warn').length} warn, ${packResults.filter(pr => pr.result.decision === 'pass').length} pass)`,
     `**Total Rules Triggered:** ${totalRules}`,
     `**Total Evaluation Time:** ${totalTime}ms`,
     '',
@@ -399,10 +469,17 @@ function buildMultiPackCheckSummary(decision: 'pass' | 'warn' | 'block', packRes
   ];
 
   for (const packResult of packResults) {
+    const isObserve = packResult.pack.metadata.packMode === 'observe';
     const emoji = packResult.result.decision === 'pass' ? '✅' :
                   packResult.result.decision === 'warn' ? '⚠️' : '❌';
-    lines.push(`- ${emoji} **${packResult.pack.metadata.name}** v${packResult.pack.metadata.version} (${packResult.packSource}): ${packResult.result.decision.toUpperCase()}`);
-    lines.push(`  - Findings: ${packResult.result.findings.length}, Rules: ${packResult.result.triggeredRules.length}, Time: ${packResult.result.evaluationTimeMs}ms`);
+
+    // FIX C: Show "Would BLOCK/WARN" for observe-mode packs
+    const decisionLabel = isObserve && packResult.result.decision !== 'pass'
+      ? `Would ${packResult.result.decision.toUpperCase()} (observe-only)`
+      : packResult.result.decision.toUpperCase();
+
+    lines.push(`- ${emoji} **${packResult.pack.metadata.name}** v${packResult.pack.metadata.version} (${packResult.packSource}): ${decisionLabel}`);
+    lines.push(`  - Checks: ${packResult.result.findings.length}, Coverage: ${packResult.result.coverage.evaluable}/${packResult.result.coverage.total}, Time: ${packResult.result.evaluationTimeMs}ms`);
   }
 
   return lines.join('\n');

@@ -65,8 +65,8 @@ rules:
       - comparator: MIN_APPROVALS
         params:
           minCount: 1
-        severity: medium
-        decisionOnFail: warn  # TRUE severity - would warn if enforced
+        severity: high
+        decisionOnFail: block  # FIX A: TRUE severity - would block if enforced (observe mode prevents actual blocking)
         decisionOnUnknown: warn
         message: "PR has fewer than required approvals"
     skipIf:

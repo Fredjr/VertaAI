@@ -230,32 +230,50 @@ function computeGlobalDecision(packResults: PackResult[]): 'pass' | 'warn' | 'bl
 
 /**
  * MOST_RESTRICTIVE: Any BLOCK → BLOCK, else any WARN → WARN, else PASS
+ * FIX C: Exclude observe-mode packs from global decision aggregation
  */
 function computeMostRestrictive(packResults: PackResult[]): 'pass' | 'warn' | 'block' {
-  // Check for any BLOCK decisions
-  for (const packResult of packResults) {
+  // Filter out observe-mode packs - they don't contribute to global decision
+  const enforcingPacks = packResults.filter(pr => pr.pack.metadata.packMode !== 'observe');
+
+  // If no enforcing packs, return PASS (all packs are observe-only)
+  if (enforcingPacks.length === 0) {
+    return 'pass';
+  }
+
+  // Check for any BLOCK decisions from enforcing packs
+  for (const packResult of enforcingPacks) {
     if (packResult.result.decision === 'block') {
       return 'block';
     }
   }
 
-  // Check for any WARN decisions
-  for (const packResult of packResults) {
+  // Check for any WARN decisions from enforcing packs
+  for (const packResult of enforcingPacks) {
     if (packResult.result.decision === 'warn') {
       return 'warn';
     }
   }
 
-  // All packs passed
+  // All enforcing packs passed
   return 'pass';
 }
 
 /**
  * HIGHEST_PRIORITY: Use decision from highest priority pack only
+ * FIX C: Exclude observe-mode packs from global decision aggregation
  */
 function computeHighestPriority(packResults: PackResult[]): 'pass' | 'warn' | 'block' {
+  // Filter out observe-mode packs
+  const enforcingPacks = packResults.filter(pr => pr.pack.metadata.packMode !== 'observe');
+
+  // If no enforcing packs, return PASS
+  if (enforcingPacks.length === 0) {
+    return 'pass';
+  }
+
   // Sort by priority (highest first)
-  const sorted = [...packResults].sort((a, b) => {
+  const sorted = [...enforcingPacks].sort((a, b) => {
     const priorityA = a.pack.metadata.scopePriority || 50;
     const priorityB = b.pack.metadata.scopePriority || 50;
     return priorityB - priorityA;
@@ -267,14 +285,23 @@ function computeHighestPriority(packResults: PackResult[]): 'pass' | 'warn' | 'b
 
 /**
  * EXPLICIT: Require all packs to agree, throw error on conflict
+ * FIX C: Exclude observe-mode packs from global decision aggregation
  */
 function computeExplicit(packResults: PackResult[]): 'pass' | 'warn' | 'block' {
-  // Check for conflicts (different decisions from different packs)
-  const decisions = new Set(packResults.map(pr => pr.result.decision));
+  // Filter out observe-mode packs
+  const enforcingPacks = packResults.filter(pr => pr.pack.metadata.packMode !== 'observe');
+
+  // If no enforcing packs, return PASS
+  if (enforcingPacks.length === 0) {
+    return 'pass';
+  }
+
+  // Check for conflicts (different decisions from different enforcing packs)
+  const decisions = new Set(enforcingPacks.map(pr => pr.result.decision));
 
   if (decisions.size > 1) {
     // Conflict detected - log error and use MOST_RESTRICTIVE as fallback
-    const packNames = packResults.map(pr => pr.pack.metadata.name).join(', ');
+    const packNames = enforcingPacks.map(pr => pr.pack.metadata.name).join(', ');
     const decisionList = Array.from(decisions).join(', ');
 
     console.error(
@@ -288,7 +315,7 @@ function computeExplicit(packResults: PackResult[]): 'pass' | 'warn' | 'block' {
     return computeMostRestrictive(packResults);
   }
 
-  // All packs agree - return the decision
-  return packResults[0].result.decision;
+  // All enforcing packs agree - return the decision
+  return enforcingPacks[0].result.decision;
 }
 
