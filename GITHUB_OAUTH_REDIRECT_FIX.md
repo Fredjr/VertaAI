@@ -127,21 +127,82 @@ useEffect(() => {
 7. Polling detects GitHub connection, UI updates to show "✅ GitHub Connected"
 8. User can now select repositories and continue with the wizard
 
+### Fix 4: Persist Form Data in localStorage (Frontend)
+
+**File**: `apps/web/src/app/policy-packs/new/page.tsx`
+
+**Problem**: When the page reloaded after GitHub redirect, all form data was lost because it was stored in React state.
+
+**Changes**:
+1. **Load from localStorage on mount**:
+   ```typescript
+   const getInitialFormData = (): PolicyPackFormData => {
+     if (typeof window !== 'undefined') {
+       const saved = localStorage.getItem(`policy-pack-draft-${workspaceId}`);
+       if (saved) {
+         return JSON.parse(saved);
+       }
+     }
+     return { /* default values */ };
+   };
+   ```
+
+2. **Save to localStorage on every change**:
+   ```typescript
+   useEffect(() => {
+     if (typeof window !== 'undefined') {
+       localStorage.setItem(`policy-pack-draft-${workspaceId}`, JSON.stringify(formData));
+     }
+   }, [formData, workspaceId]);
+   ```
+
+3. **Clear draft on successful save**:
+   ```typescript
+   localStorage.removeItem(`policy-pack-draft-${workspaceId}`);
+   ```
+
+**Result**: Form data persists across page reloads, including after GitHub OAuth redirects.
+
+### Fix 5: Use Correct GitHub Status Endpoint (Frontend)
+
+**File**: `apps/web/src/app/policy-packs/new/sections/ScopeForm.tsx`
+
+**Problem**: The UI was calling `/api/workspaces/:id/github/status` which tests the actual GitHub API connection, but this was failing or slow.
+
+**Change**: Switch to `/auth/github/status/:id` which simply checks the Integration table in the database:
+```typescript
+const response = await fetch(`${apiUrl}/auth/github/status/${workspaceId}`);
+```
+
+**Result**: Faster and more reliable GitHub connection status checks.
+
 ## Testing
 
 Once Vercel deployment completes, test the flow:
 
 1. Go to: `https://verta-ai-pearl.vercel.app/policy-packs/new?workspace=demo-workspace`
-2. Fill out Step 1 and click "Next"
+2. Fill out Step 1 (name, description, etc.) and click "Next"
 3. On Step 2, click "Connect GitHub"
-4. Verify you stay on Step 2 (URL should be `?workspace=demo-workspace&step=2`)
-5. Verify the warning banner disappears and shows "✅ GitHub Connected"
-6. Verify repositories appear in the dropdown
+4. **Verify**: You stay on Step 2 (URL should be `?workspace=demo-workspace&step=2`)
+5. **Verify**: All form data from Step 1 is still there (check by going back to Step 1)
+6. **Verify**: The warning banner disappears and shows "✅ GitHub Connected - X repositories available"
+7. **Verify**: Repositories appear in the dropdown (not free text)
+8. **Verify**: Branches appear when you select a repository
+
+## Summary of All Fixes
+
+| Fix | File | Problem | Solution |
+|-----|------|---------|----------|
+| 1 | `github-oauth.ts` | Already-installed app redirects to settings | Check Integration table, skip GitHub if connected |
+| 2 | `page.tsx` | Wizard step resets to 1 on reload | Store step in URL query parameter |
+| 3 | `ScopeForm.tsx` | GitHub status not detected | Poll status endpoint every 3s |
+| 4 | `page.tsx` | Form data lost on reload | Persist to localStorage |
+| 5 | `ScopeForm.tsx` | Wrong status endpoint used | Use `/auth/github/status/:id` |
 
 ## Related Files
 
 - `apps/api/src/routes/github-oauth.ts` - OAuth flow with existing connection check
-- `apps/web/src/app/policy-packs/new/page.tsx` - Wizard with URL-persisted step
-- `apps/web/src/app/policy-packs/new/sections/ScopeForm.tsx` - Scope form with polling
+- `apps/web/src/app/policy-packs/new/page.tsx` - Wizard with URL-persisted step and localStorage
+- `apps/web/src/app/policy-packs/new/sections/ScopeForm.tsx` - Scope form with polling and correct endpoint
 - `GITHUB_OAUTH_SECURITY.md` - Security documentation for OAuth flow
 
