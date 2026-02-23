@@ -165,15 +165,22 @@ function generateVersionHash(config: any): string {
 /**
  * GET /api/workspaces/:workspaceId/policy-packs
  * List all policy packs for a workspace
+ * By default, excludes ARCHIVED packs unless explicitly requested
  */
 router.get('/workspaces/:workspaceId/policy-packs', async (req: Request, res: Response) => {
   try {
     const { workspaceId } = req.params;
-    const { status, trackAEnabled, trackBEnabled } = req.query;
+    const { status, trackAEnabled, trackBEnabled, includeArchived } = req.query;
 
     const where: any = { workspaceId };
 
-    if (status) where.status = status;
+    if (status) {
+      where.status = status;
+    } else if (includeArchived !== 'true') {
+      // By default, exclude ARCHIVED packs
+      where.status = { not: 'ARCHIVED' };
+    }
+
     if (trackAEnabled !== undefined) where.trackAEnabled = trackAEnabled === 'true';
     if (trackBEnabled !== undefined) where.trackBEnabled = trackBEnabled === 'true';
 
