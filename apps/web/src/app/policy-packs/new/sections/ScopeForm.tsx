@@ -183,17 +183,25 @@ export default function ScopeForm({ formData, setFormData }: ScopeFormProps) {
         {/* GitHub Connection Status */}
         {!githubConnected && (
           <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-            <div className="flex items-start gap-2">
-              <AlertCircle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mt-0.5" />
-              <div>
-                <h4 className="text-sm font-medium text-yellow-900 dark:text-yellow-200">
-                  GitHub Not Connected
-                </h4>
-                <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                  Connect your GitHub account to automatically fetch repositories and branches.
-                  You can still manually enter repository and branch patterns.
-                </p>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mt-0.5" />
+                <div>
+                  <h4 className="text-sm font-medium text-yellow-900 dark:text-yellow-200">
+                    GitHub Not Connected
+                  </h4>
+                  <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+                    Connect your GitHub account to automatically fetch repositories and branches.
+                    You can still manually enter repository and branch patterns.
+                  </p>
+                </div>
               </div>
+              <a
+                href={`${apiUrl}/auth/github/install?workspaceId=${workspaceId}`}
+                className="flex-shrink-0 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-medium rounded-md transition-colors"
+              >
+                Connect GitHub
+              </a>
             </div>
           </div>
         )}
