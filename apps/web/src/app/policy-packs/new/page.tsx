@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import Navigation from '@/components/Navigation';
 import { ArrowLeft, ArrowRight, Save, X } from 'lucide-react';
 import Link from 'next/link';
+import yaml from 'js-yaml';
 
 // Import form sections
 import OverviewForm from './sections/OverviewForm';
@@ -114,10 +115,93 @@ function NewPolicyPackContent() {
     }
   };
 
+  /**
+   * FIX A: Merge UI form fields into YAML before saving
+   * This ensures all UI fields (name, owner, packMode, scopePriority, etc.)
+   * are properly written to the YAML, regardless of authoring path:
+   * - Option 1: Template selected → merge UI fields into template YAML
+   * - Option 2: Surfaces wizard → merge UI fields into generated YAML
+   * - Option 3: Builder → merge UI fields into edited YAML
+   * - Option 4: Manual YAML → merge UI fields into manual YAML
+   */
+  const mergeFormDataIntoYAML = (yamlString: string, formData: PolicyPackFormData): string => {
+    try {
+      // Parse existing YAML or create empty pack structure
+      const pack = yamlString.trim()
+        ? yaml.load(yamlString) as any
+        : {
+            apiVersion: 'verta.ai/v1',
+            kind: 'PolicyPack',
+            metadata: {},
+            scope: {},
+            rules: [],
+          };
+
+      // Ensure structure exists
+      if (!pack.metadata) pack.metadata = {};
+      if (!pack.scope) pack.scope = {};
+
+      // Merge metadata from UI form
+      pack.metadata = {
+        ...pack.metadata,
+        id: pack.metadata.id || formData.name.toLowerCase().replace(/\s+/g, '-'),
+        name: formData.name,
+        version: pack.metadata.version || '1.0.0',
+        description: formData.description || undefined,
+        owner: formData.owner || undefined,
+        packType: formData.packType || undefined,
+        packMode: formData.packMode || 'observe',
+        strictness: formData.strictness || 'balanced',
+        scopePriority: formData.scopePriority ?? 50,
+        scopeMergeStrategy: formData.scopeMergeStrategy || 'MOST_RESTRICTIVE',
+      };
+
+      // Merge scope from UI form
+      pack.scope = {
+        ...pack.scope,
+        type: formData.scopeType || 'workspace',
+        ref: formData.scopeRef || undefined,
+      };
+
+      // Merge scope filters (repos, branches)
+      if (formData.reposInclude && formData.reposInclude.length > 0) {
+        if (!pack.scope.repos) pack.scope.repos = {};
+        pack.scope.repos.include = formData.reposInclude;
+      }
+      if (formData.reposExclude && formData.reposExclude.length > 0) {
+        if (!pack.scope.repos) pack.scope.repos = {};
+        pack.scope.repos.exclude = formData.reposExclude;
+      }
+      if (formData.branchesInclude && formData.branchesInclude.length > 0) {
+        if (!pack.scope.branches) pack.scope.branches = {};
+        pack.scope.branches.include = formData.branchesInclude;
+      }
+      if (formData.branchesExclude && formData.branchesExclude.length > 0) {
+        if (!pack.scope.branches) pack.scope.branches = {};
+        pack.scope.branches.exclude = formData.branchesExclude;
+      }
+
+      // Merge evaluation config if defaultDecisionOnUnknown is set
+      if (formData.defaultDecisionOnUnknown) {
+        if (!pack.evaluation) pack.evaluation = {};
+        pack.evaluation.defaultDecisionOnUnknown = formData.defaultDecisionOnUnknown;
+      }
+
+      return yaml.dump(pack, { indent: 2, lineWidth: 120, noRefs: true });
+    } catch (error) {
+      console.error('[mergeFormDataIntoYAML] Failed to merge form data into YAML:', error);
+      // Return original YAML if merge fails
+      return yamlString;
+    }
+  };
+
   const handleSave = async () => {
     try {
       setSaving(true);
       setError(null);
+
+      // FIX A: Merge UI fields into YAML before saving
+      const finalYaml = mergeFormDataIntoYAML(formData.trackAConfigYamlDraft || '', formData);
 
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
       const response = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/policy-packs`, {
@@ -125,7 +209,10 @@ function NewPolicyPackContent() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          trackAConfigYamlDraft: finalYaml, // Use merged YAML
+        }),
       });
 
       if (!response.ok) {

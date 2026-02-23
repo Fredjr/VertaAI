@@ -366,5 +366,95 @@ router.post('/fix-deploy-gate-operators', async (req: Request, res: Response) =>
   }
 });
 
+/**
+ * POST /api/admin/create-baseline-pack
+ * Create and publish the baseline-contract-integrity pack for e2e testing
+ */
+router.post('/create-baseline-pack', async (req: Request, res: Response) => {
+  try {
+    console.log('[Admin] Creating baseline-contract-integrity pack...');
+
+    // Load template from disk
+    const template = getTemplateById('baseline-contract-integrity');
+    if (!template) {
+      return res.status(404).json({ error: 'Baseline template not found' });
+    }
+
+    const packYAML = template.parsed;
+    const packHash = computePackHashFull(template.yaml);
+
+    console.log(`[Admin] Template loaded: ${packYAML.metadata.name} v${packYAML.metadata.version}`);
+
+    // Delete existing baseline pack if any
+    const existing = await prisma.workspacePolicyPack.findFirst({
+      where: {
+        workspaceId: WORKSPACE_ID,
+        packMetadataId: 'baseline-contract-integrity',
+      }
+    });
+
+    if (existing) {
+      console.log(`[Admin] Deleting existing baseline pack: ${existing.id}`);
+      await prisma.workspacePolicyPack.delete({
+        where: {
+          workspaceId_id: {
+            workspaceId: existing.workspaceId,
+            id: existing.id,
+          }
+        }
+      });
+    }
+
+    // Create new pack
+    const pack = await prisma.workspacePolicyPack.create({
+      data: {
+        workspaceId: WORKSPACE_ID,
+        name: packYAML.metadata.name,
+        description: packYAML.metadata.description || 'Workspace-wide cross-cutting integrity baseline',
+        scopeType: packYAML.scope.type,
+        scopeRef: packYAML.scope.ref || WORKSPACE_ID,
+        trackAEnabled: true,
+        trackAConfigYamlDraft: template.yaml,
+        trackAConfigYamlPublished: template.yaml,
+        trackAPackHashPublished: packHash,
+        versionHash: packHash,
+        packStatus: 'published',
+        publishedAt: new Date(),
+        publishedBy: 'admin-api',
+        packMetadataId: packYAML.metadata.id,
+        packMetadataVersion: packYAML.metadata.version,
+        packMetadataName: packYAML.metadata.name,
+        status: 'ACTIVE',
+        createdAt: new Date(),
+        createdBy: 'admin-api',
+        updatedAt: new Date(),
+        updatedBy: 'admin-api',
+      }
+    });
+
+    console.log(`[Admin] Created baseline pack: ${pack.id}`);
+    console.log(`[Admin] Pack hash: ${packHash}`);
+    console.log(`[Admin] Scope: ${pack.scopeType} / ${pack.scopeRef}`);
+
+    res.json({
+      success: true,
+      pack: {
+        id: pack.id,
+        name: pack.name,
+        packMetadataId: pack.packMetadataId,
+        packMetadataVersion: pack.packMetadataVersion,
+        packHash,
+        scopeType: pack.scopeType,
+        scopeRef: pack.scopeRef,
+        publishedAt: pack.publishedAt,
+      }
+    });
+
+  } catch (error: any) {
+    console.error('[Admin] Failed to create baseline pack:', error);
+    res.status(500).json({ error: 'Failed to create baseline pack', details: error.message });
+  }
+});
+
 export default router;
 

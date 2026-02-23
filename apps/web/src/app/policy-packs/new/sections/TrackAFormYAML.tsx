@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { FileText, CheckCircle, XCircle, AlertCircle, Sparkles, Code, Eye, Wand2, ShieldOff } from 'lucide-react';
-import TemplateGallery from '@/components/policyPacks/TemplateGallery';
+import { FileText, CheckCircle, XCircle, AlertCircle, Code, Eye, Wand2, ShieldOff } from 'lucide-react';
+// FIX B: Removed TemplateGallery import - template selection is in Step 3
 import RuleBuilder from '@/components/policyPacks/RuleBuilder';
 import PackPreview from '@/components/policyPacks/PackPreview';
 import ChangeSurfaceWizard from '@/components/policyPacks/ChangeSurfaceWizard';
@@ -17,12 +17,7 @@ interface TrackAFormYAMLProps {
   setFormData: (data: any) => void;
 }
 
-interface Template {
-  id: string;
-  name: string;
-  description: string;
-  yaml: string;
-}
+// FIX B: Removed Template interface - templates are selected in Step 3
 
 interface ValidationResult {
   valid: boolean;
@@ -32,37 +27,25 @@ interface ValidationResult {
 
 export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAMLProps) {
   const [yamlContent, setYamlContent] = useState<string>(formData.trackAConfigYamlDraft || '');
-  const [templates, setTemplates] = useState<Template[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('');
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
-  const [activeTab, setActiveTab] = useState<'surfaces' | 'templates' | 'builder' | 'yaml' | 'preview' | 'waivers'>('surfaces');
+  // FIX B: Remove 'templates' from tab options (template selection is in Step 3)
+  const [activeTab, setActiveTab] = useState<'surfaces' | 'builder' | 'yaml' | 'preview' | 'waivers'>('yaml');
   const [waiversEnabled, setWaiversEnabled] = useState<boolean>(formData.waiversEnabled ?? false);
   const [waiverMaxDays, setWaiverMaxDays] = useState<number>(formData.waiverMaxDays ?? 30);
   const [waiverApprovers, setWaiverApprovers] = useState<string>(formData.waiverApprovers ?? '');
   const [waiverRequiredFields, setWaiverRequiredFields] = useState<string[]>(
     formData.waiverRequiredFields ?? ['reason', 'scope', 'expiry']
   );
+  // FIX B: Track if template was loaded from Step 3
+  const [templateLoadedFromStep3, setTemplateLoadedFromStep3] = useState<boolean>(
+    !!(formData.trackAConfigYamlDraft && formData.trackAConfigYamlDraft.length > 100)
+  );
 
   // Backend API base (no Next.js proxy; must use absolute URL)
   const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
-  // Fetch templates on mount
-  useEffect(() => {
-    const fetchTemplates = async () => {
-      try {
-        const workspaceId = formData.workspaceId || 'demo-workspace';
-        const response = await fetch(`${apiBase}/api/workspaces/${workspaceId}/policy-packs/templates`);
-        if (response.ok) {
-          const data = await response.json();
-          setTemplates(data.templates || []);
-        }
-      } catch (error) {
-        console.error('Failed to fetch templates:', error);
-      }
-    };
-    fetchTemplates();
-  }, [formData.workspaceId]);
+  // FIX B: Removed template fetching - templates are selected in Step 3
 
   // Validate YAML on change (debounced)
   useEffect(() => {
@@ -114,14 +97,20 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
     });
   };
 
-  const handleTemplateSelect = (templateYaml: string) => {
-    setYamlContent(templateYaml);
-    setFormData({ ...formData, trackAConfigYamlDraft: templateYaml });
-    setActiveTab('yaml');
-  };
+  // FIX B: Removed handleTemplateSelect - templates are selected in Step 3
 
-  // Merge wizard-generated rules into existing YAML (append new, don't overwrite existing)
+  // FIX C: Merge wizard-generated rules into existing YAML with confirmation if template loaded
   const handleSurfaceRules = (newRules: any[]) => {
+    // FIX C: Warn user if they're about to overwrite a template
+    if (templateLoadedFromStep3 && yamlContent && yamlContent.length > 100) {
+      const confirmed = window.confirm(
+        '⚠️ Warning: This will replace your current YAML configuration with generated rules from the Surfaces wizard.\n\n' +
+        'Your template rules will be overwritten. Continue?'
+      );
+      if (!confirmed) return;
+      setTemplateLoadedFromStep3(false); // User confirmed, clear template flag
+    }
+
     const existingRules = parseRulesFromYAML(yamlContent);
     const existingIds = new Set(existingRules.map((r: any) => r.id));
     const merged = [...existingRules, ...newRules.filter(r => !existingIds.has(r.id))];
@@ -213,6 +202,22 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
 
       {formData.trackAEnabled && (
         <>
+          {/* FIX B: Banner when template is loaded from Step 3 */}
+          {templateLoadedFromStep3 && yamlContent && yamlContent.length > 100 && (
+            <div className="mb-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="h-5 w-5 text-green-600" />
+                <span className="font-medium text-green-900 dark:text-green-200">
+                  ✅ Template loaded from Step 3
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-green-700 dark:text-green-300">
+                You can edit the YAML below or proceed to the next step.
+                <strong> Warning:</strong> Using the Surfaces wizard will replace the template rules.
+              </p>
+            </div>
+          )}
+
           {/* Tab Switcher */}
           <div className="border-b border-gray-200 dark:border-gray-700">
             <nav className="flex gap-4 overflow-x-auto">
@@ -231,20 +236,7 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
                   Surfaces
                 </div>
               </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('templates')}
-                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                  activeTab === 'templates'
-                    ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4" />
-                  Templates
-                </div>
-              </button>
+              {/* FIX B: Removed Templates tab - template selection is in Step 3 */}
               <button
                 type="button"
                 onClick={() => setActiveTab('builder')}
@@ -311,14 +303,7 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
               <ChangeSurfaceWizard onGenerateRules={handleSurfaceRules} />
             )}
 
-            {/* Templates Tab */}
-            {activeTab === 'templates' && (
-              <TemplateGallery
-                workspaceId={formData.workspaceId || 'demo-workspace'}
-                onSelectTemplate={handleTemplateSelect}
-                currentYaml={yamlContent}
-              />
-            )}
+            {/* FIX B: Removed Templates Tab - template selection is in Step 3 */}
 
             {/* Builder Tab */}
             {activeTab === 'builder' && (
