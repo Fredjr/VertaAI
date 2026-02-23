@@ -256,15 +256,37 @@ export default function ScopeForm({ formData, setFormData }: ScopeFormProps) {
               <label htmlFor="scopeRef" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
                 {formData.scopeType === 'service' ? 'Service Name' : 'Repository Name'} *
               </label>
-              <input
-                type="text"
-                id="scopeRef"
-                value={formData.scopeRef || ''}
-                onChange={(e) => setFormData({ ...formData, scopeRef: e.target.value })}
-                className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
-                placeholder={formData.scopeType === 'service' ? 'e.g., payment-service' : 'e.g., owner/repo-name'}
-                required
-              />
+
+              {/* Show dropdown if GitHub connected and repos available */}
+              {githubConnected && repos.length > 0 ? (
+                <select
+                  id="scopeRef"
+                  value={formData.scopeRef || ''}
+                  onChange={(e) => setFormData({ ...formData, scopeRef: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                  required
+                  disabled={loadingRepos}
+                >
+                  <option value="">
+                    {loadingRepos ? 'Loading repositories...' : `Select a ${formData.scopeType === 'service' ? 'service' : 'repository'}`}
+                  </option>
+                  {repos.map((repo) => (
+                    <option key={repo.id} value={repo.fullName}>
+                      {repo.fullName} {repo.private ? '(private)' : '(public)'}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  id="scopeRef"
+                  value={formData.scopeRef || ''}
+                  onChange={(e) => setFormData({ ...formData, scopeRef: e.target.value })}
+                  className="mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                  placeholder={formData.scopeType === 'service' ? 'e.g., payment-service' : 'e.g., owner/repo-name'}
+                  required
+                />
+              )}
             </div>
           )}
 
@@ -391,6 +413,33 @@ export default function ScopeForm({ formData, setFormData }: ScopeFormProps) {
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
                 Exclude Repositories
               </label>
+
+              {/* Repository Dropdown (if GitHub connected) */}
+              {githubConnected && repos.length > 0 && (
+                <div className="mb-2">
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleAddRepoExclude(e.target.value);
+                      }
+                    }}
+                    className="block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                    disabled={loadingRepos}
+                  >
+                    <option value="">
+                      {loadingRepos ? 'Loading repositories...' : 'Select a repository to exclude'}
+                    </option>
+                    {repos.map((repo) => (
+                      <option key={repo.id} value={repo.fullName}>
+                        {repo.fullName} {repo.private ? '(private)' : '(public)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Manual Input */}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -515,6 +564,33 @@ export default function ScopeForm({ formData, setFormData }: ScopeFormProps) {
               <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
                 Exclude Branches
               </label>
+
+              {/* Branch Dropdown (if repo selected and GitHub connected) */}
+              {githubConnected && selectedRepo && branches.length > 0 && (
+                <div className="mb-2">
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleAddBranchExclude(e.target.value);
+                      }
+                    }}
+                    className="block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-gray-700 dark:text-white sm:text-sm"
+                    disabled={loadingBranches}
+                  >
+                    <option value="">
+                      {loadingBranches ? 'Loading branches...' : 'Select a branch to exclude'}
+                    </option>
+                    {branches.map((branch) => (
+                      <option key={branch.name} value={branch.name}>
+                        {branch.name} {branch.protected ? '(protected)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Manual Input */}
               <div className="flex gap-2">
                 <input
                   type="text"
