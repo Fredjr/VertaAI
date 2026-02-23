@@ -1,8 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "cd ../.. && npm install --legacy-peer-deps",
-  "buildCommand": "cd ../.. && npx turbo build --filter=@vertaai/web",
-  "outputDirectory": ".next"
+  "installCommand": "cd ../.. && corepack enable && corepack prepare pnpm@8.15.0 --activate && pnpm install --no-frozen-lockfile",
+  "buildCommand": "cd ../.. && pnpm turbo build --filter=@vertaai/web",
+  "env": {
+    "ENABLE_EXPERIMENTAL_COREPACK": "1",
+    "NPM_CONFIG_REGISTRY": "https://registry.npmjs.org/",
+    "PNPM_VERSION": "8.15.0"
+  }
 }
 
