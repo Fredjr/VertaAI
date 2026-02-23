@@ -23,7 +23,7 @@ router.get('/workspaces/:workspaceId/github/repos', async (req: Request, res: Re
     const octokit = await getGitHubClient(workspaceId);
 
     if (!octokit) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'GitHub integration not configured for this workspace',
         repos: []
       });
@@ -48,7 +48,41 @@ router.get('/workspaces/:workspaceId/github/repos', async (req: Request, res: Re
     return res.json({ repos });
   } catch (err: any) {
     console.error(`[GitHub] Error fetching repos for workspace ${workspaceId}:`, err);
-    return res.status(500).json({ 
+
+    // If authentication error, clear cache and retry once
+    if (err.message && err.message.includes('installation access token')) {
+      console.log(`[GitHub] Clearing cache and retrying for workspace ${workspaceId}`);
+      const { clearGitHubClientCache } = await import('../services/github-client.js');
+      clearGitHubClientCache(workspaceId);
+
+      try {
+        const octokit = await getGitHubClient(workspaceId);
+        if (octokit) {
+          const { data } = await octokit.rest.apps.listReposAccessibleToInstallation({
+            per_page: 100,
+          });
+          const repos = data.repositories.map((repo: any) => ({
+            id: repo.id,
+            name: repo.name,
+            fullName: repo.full_name,
+            owner: repo.owner.login,
+            private: repo.private,
+            defaultBranch: repo.default_branch,
+            description: repo.description,
+            url: repo.html_url,
+          }));
+          return res.json({ repos });
+        }
+      } catch (retryErr: any) {
+        console.error(`[GitHub] Retry failed for workspace ${workspaceId}:`, retryErr);
+        return res.status(500).json({
+          error: retryErr.message,
+          repos: []
+        });
+      }
+    }
+
+    return res.status(500).json({
       error: err.message,
       repos: []
     });

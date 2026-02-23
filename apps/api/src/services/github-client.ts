@@ -129,41 +129,51 @@ async function createAppJWT(payload: object, privateKey: string): Promise<string
  */
 export async function getGitHubClient(workspaceId: string, installationIdOverride?: number): Promise<Octokit | null> {
   const cacheKey = `${workspaceId}:${installationIdOverride || 'default'}`;
-  
+
   // Check cache first
   if (clientCache.has(cacheKey)) {
     return clientCache.get(cacheKey)!;
   }
 
   const config = await getGitHubIntegration(workspaceId);
-  
+
+  // Determine installation ID to use
+  const installationId = installationIdOverride || config?.installationId;
+
   // Strategy 1: Use workspace-specific GitHub App credentials
-  if (config?.appId && config?.privateKey) {
-    const installationId = installationIdOverride || config.installationId;
-    if (installationId) {
-      try {
-        const octokit = await createInstallationOctokit(
-          config.appId,
-          config.privateKey.replace(/\\n/g, '\n'),
-          installationId
-        );
-        clientCache.set(cacheKey, octokit);
-        return octokit;
-      } catch (error) {
-        console.error(`[GitHubClient] Failed to create app client for workspace ${workspaceId}:`, error);
-      }
+  if (config?.appId && config?.privateKey && installationId) {
+    try {
+      const octokit = await createInstallationOctokit(
+        config.appId,
+        config.privateKey.replace(/\\n/g, '\n'),
+        installationId
+      );
+      clientCache.set(cacheKey, octokit);
+      return octokit;
+    } catch (error) {
+      console.error(`[GitHubClient] Failed to create app client for workspace ${workspaceId}:`, error);
     }
   }
-  
+
   // Strategy 2: Use workspace-specific Personal Access Token
   if (config?.accessToken) {
     const octokit = new Octokit({ auth: config.accessToken });
     clientCache.set(cacheKey, octokit);
     return octokit;
   }
-  
-  // Strategy 3: Fall back to environment variables (legacy)
-  return getEnvOctokit(installationIdOverride);
+
+  // Strategy 3: Fall back to environment variables with installation ID from config
+  // This is the most common case - app credentials in env, installation ID in DB
+  if (installationId) {
+    const envOctokit = await getEnvOctokit(installationId);
+    if (envOctokit) {
+      clientCache.set(cacheKey, envOctokit);
+      return envOctokit;
+    }
+  }
+
+  // Strategy 4: Try env without installation ID (will use PAT if available)
+  return getEnvOctokit();
 }
 
 /**
