@@ -56,10 +56,12 @@ export async function selectApplicablePacks(
   const fullRepo = `${owner}/${repo}`;
 
   // 1. Find all published packs for this workspace
+  // CRITICAL FIX: Exclude ARCHIVED packs (only load ACTIVE packs)
   const allPacks = await prisma.workspacePolicyPack.findMany({
     where: {
       workspaceId,
       packStatus: 'published',
+      status: { not: 'ARCHIVED' }, // Exclude archived packs
       trackAEnabled: true,
       trackAConfigYamlPublished: { not: null },
     },
