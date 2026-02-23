@@ -53,6 +53,10 @@ export default function ScopeForm({ formData, setFormData }: ScopeFormProps) {
       }
     };
     checkGitHubStatus();
+
+    // Poll for GitHub connection status every 3 seconds
+    const interval = setInterval(checkGitHubStatus, 3000);
+    return () => clearInterval(interval);
   }, [workspaceId, apiUrl]);
 
   // Fetch repositories when GitHub is connected

@@ -52,6 +52,22 @@ router.get('/install', async (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Workspace not found' });
   }
 
+  // Check if GitHub is already connected
+  const existingIntegration = await prisma.integration.findUnique({
+    where: {
+      workspaceId_type: {
+        workspaceId: String(workspaceId),
+        type: 'github',
+      },
+    },
+  });
+
+  // If already connected and returnUrl provided, redirect back immediately
+  if (existingIntegration && existingIntegration.status === 'connected' && returnUrl) {
+    console.log(`[GitHubOAuth] GitHub already connected for workspace ${workspaceId}, redirecting to returnUrl`);
+    return res.redirect(String(returnUrl));
+  }
+
   // Generate state for CSRF protection and workspace association
   const state = `${workspaceId}:${generateState()}`;
 
