@@ -64,34 +64,56 @@ function NewPolicyPackContent() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [formData, setFormData] = useState<PolicyPackFormData>({
-    name: '',
-    description: '',
-    owner: '',
-    packType: 'SERVICE_OVERLAY',
-    packMode: 'observe',
-    strictness: 'balanced',
-    status: 'DRAFT',
-    defaultDecisionOnUnknown: 'warn',
-    scopeType: 'workspace',
-    scopeRef: '',
-    repoAllowlist: [],
-    reposInclude: [],
-    reposExclude: [],
-    branchesInclude: [],
-    branchesExclude: [],
-    pathGlobs: [],
-    scopePriority: 50,
-    scopeMergeStrategy: 'MOST_RESTRICTIVE',
-    trackAEnabled: false,
-    trackAConfig: {},
-    trackAConfigYamlDraft: '',
-    workspaceId: workspaceId,
-    trackBEnabled: false,
-    trackBConfig: {},
-    approvalTiers: {},
-    routing: {},
-  });
+  // Load form data from localStorage on mount
+  const getInitialFormData = (): PolicyPackFormData => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`policy-pack-draft-${workspaceId}`);
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch (e) {
+          console.error('Failed to parse saved form data:', e);
+        }
+      }
+    }
+    return {
+      name: '',
+      description: '',
+      owner: '',
+      packType: 'SERVICE_OVERLAY',
+      packMode: 'observe',
+      strictness: 'balanced',
+      status: 'DRAFT',
+      defaultDecisionOnUnknown: 'warn',
+      scopeType: 'workspace',
+      scopeRef: '',
+      repoAllowlist: [],
+      reposInclude: [],
+      reposExclude: [],
+      branchesInclude: [],
+      branchesExclude: [],
+      pathGlobs: [],
+      scopePriority: 50,
+      scopeMergeStrategy: 'MOST_RESTRICTIVE',
+      trackAEnabled: false,
+      trackAConfig: {},
+      trackAConfigYamlDraft: '',
+      workspaceId: workspaceId,
+      trackBEnabled: false,
+      trackBConfig: {},
+      approvalTiers: {},
+      routing: {},
+    };
+  };
+
+  const [formData, setFormData] = useState<PolicyPackFormData>(getInitialFormData());
+
+  // Save form data to localStorage whenever it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`policy-pack-draft-${workspaceId}`, JSON.stringify(formData));
+    }
+  }, [formData, workspaceId]);
 
   const steps = [
     { id: 1, name: 'Overview & Identity', component: OverviewForm },
@@ -237,6 +259,12 @@ function NewPolicyPackContent() {
       }
 
       const data = await response.json();
+
+      // Clear the draft from localStorage on successful save
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(`policy-pack-draft-${workspaceId}`);
+      }
+
       // API returns { policyPack: { id, ... } }
       router.push(`/policy-packs/${data.policyPack.id}?workspace=${workspaceId}`);
     } catch (err) {
