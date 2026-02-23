@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, Suspense } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Navigation from '@/components/Navigation';
 import { ArrowLeft, ArrowRight, Save, X } from 'lucide-react';
@@ -58,7 +58,9 @@ function NewPolicyPackContent() {
   const router = useRouter();
   const workspaceId = searchParams.get('workspace') || 'demo-workspace';
 
-  const [currentStep, setCurrentStep] = useState(1);
+  // Get step from URL, default to 1
+  const stepFromUrl = parseInt(searchParams.get('step') || '1', 10);
+  const [currentStep, setCurrentStep] = useState(stepFromUrl);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -100,18 +102,32 @@ function NewPolicyPackContent() {
     { id: 6, name: 'Approval & Routing', component: ApprovalTiersForm },
   ];
 
+  // Sync currentStep with URL when URL changes (e.g., after GitHub redirect)
+  useEffect(() => {
+    const urlStep = parseInt(searchParams.get('step') || '1', 10);
+    if (urlStep !== currentStep) {
+      setCurrentStep(urlStep);
+    }
+  }, [searchParams]);
+
   const currentStepData = steps.find(s => s.id === currentStep);
   const CurrentStepComponent = currentStepData?.component;
 
   const handleNext = () => {
     if (currentStep < steps.length) {
-      setCurrentStep(currentStep + 1);
+      const nextStep = currentStep + 1;
+      setCurrentStep(nextStep);
+      // Update URL with new step
+      router.push(`/policy-packs/new?workspace=${workspaceId}&step=${nextStep}`);
     }
   };
 
   const handlePrevious = () => {
     if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
+      const prevStep = currentStep - 1;
+      setCurrentStep(prevStep);
+      // Update URL with new step
+      router.push(`/policy-packs/new?workspace=${workspaceId}&step=${prevStep}`);
     }
   };
 
