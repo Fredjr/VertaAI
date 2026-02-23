@@ -43,13 +43,17 @@ export default function ScopeForm({ formData, setFormData }: ScopeFormProps) {
   useEffect(() => {
     const checkGitHubStatus = async () => {
       try {
-        const response = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/github/status`);
+        // Use the auth endpoint which checks the Integration table directly
+        const response = await fetch(`${apiUrl}/auth/github/status/${workspaceId}`);
         if (response.ok) {
           const data = await response.json();
           setGithubConnected(data.connected);
+          console.log('[ScopeForm] GitHub status:', data);
+        } else {
+          console.error('[ScopeForm] GitHub status check failed:', response.status);
         }
       } catch (error) {
-        console.error('Failed to check GitHub status:', error);
+        console.error('[ScopeForm] Failed to check GitHub status:', error);
       }
     };
     checkGitHubStatus();
