@@ -179,18 +179,47 @@ function detectPriorityConflicts(packs: PackYAML[]): PackConflict[] {
 
 /**
  * Compute the decision for a rule (simplified)
- * Returns the most restrictive decision from all obligations
+ * Returns the most restrictive decision from all obligations or decision block
  */
 function computeRuleDecision(rule: PackRule): string {
   let decision = 'pass';
 
-  for (const obligation of rule.obligations) {
-    const decisionOnFail = obligation.decisionOnFail || 'warn';
+  // Handle rules with obligations (old pattern)
+  if (rule.obligations && Array.isArray(rule.obligations)) {
+    for (const obligation of rule.obligations) {
+      const decisionOnFail = obligation.decisionOnFail || 'warn';
 
-    if (decisionOnFail === 'block') {
-      decision = 'block';
-    } else if (decisionOnFail === 'warn' && decision !== 'block') {
-      decision = 'warn';
+      if (decisionOnFail === 'block') {
+        decision = 'block';
+      } else if (decisionOnFail === 'warn' && decision !== 'block') {
+        decision = 'warn';
+      }
+    }
+  }
+
+  // Handle rules with decision block (new pattern)
+  if (rule.decision) {
+    const decisionBlock = rule.decision as any;
+
+    // Check onViolation decision
+    if (decisionBlock.onViolation) {
+      const onViolation = decisionBlock.onViolation;
+
+      // Handle branch-specific decisions
+      if (typeof onViolation === 'object' && !Array.isArray(onViolation)) {
+        if (onViolation.protectedBranches === 'block' || onViolation.featureBranches === 'block') {
+          decision = 'block';
+        } else if ((onViolation.protectedBranches === 'warn' || onViolation.featureBranches === 'warn') && decision !== 'block') {
+          decision = 'warn';
+        }
+      } else if (typeof onViolation === 'string') {
+        // Simple string decision
+        if (onViolation === 'block') {
+          decision = 'block';
+        } else if (onViolation === 'warn' && decision !== 'block') {
+          decision = 'warn';
+        }
+      }
     }
   }
 
