@@ -127,7 +127,7 @@ const TrackBConfigSchema = z.object({
 const CreatePolicyPackSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
-  status: z.enum(['active', 'draft', 'archived']).optional(),
+  status: z.enum(['DRAFT', 'IN_REVIEW', 'ACTIVE', 'DEPRECATED', 'ARCHIVED']).optional(),
   scopeType: z.enum(['workspace', 'service', 'repo']),
   scopeRef: z.string().optional(),
   repoAllowlist: z.array(z.string()).optional(),
@@ -450,7 +450,7 @@ router.delete('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, 
       const policyPack = await prisma.workspacePolicyPack.update({
         where: { workspaceId_id: { workspaceId, id } },
         data: {
-          status: 'archived',
+          status: 'ARCHIVED',
           updatedBy: req.headers['x-user-id'] as string,
         },
       });
