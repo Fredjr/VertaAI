@@ -52,12 +52,14 @@ export async function runYAMLGatekeeper(
   const startTime = Date.now();
 
   // Step 1: PHASE 2 FIX - Select ALL applicable packs (filtered by prEvents)
+  // CRITICAL FIX: Use baseBranch (target branch) for pack selection, not headBranch (source branch)
+  // Policy packs should match against the branch being merged INTO (e.g., main), not the feature branch
   const selectedPacks = await selectApplicablePacks(
     prisma,
     input.workspaceId,
     input.owner,
     input.repo,
-    input.headBranch,
+    input.baseBranch, // Use base branch (target) instead of head branch (source)
     prAction
   );
 
