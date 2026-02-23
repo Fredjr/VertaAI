@@ -31,12 +31,13 @@ const API_URL = process.env.API_URL || 'http://localhost:3001';
  *
  * Query params:
  * - workspaceId: (required) The workspace to associate this installation with
+ * - returnUrl: (optional) URL to redirect to after successful installation
  */
 router.get('/install', async (req: Request, res: Response) => {
-  const { workspaceId } = req.query;
+  const { workspaceId, returnUrl } = req.query;
 
   if (!workspaceId) {
-    return res.status(400).json({ 
+    return res.status(400).json({
       error: 'workspaceId query parameter required',
       example: '/auth/github/install?workspaceId=YOUR_WORKSPACE_ID'
     });
@@ -53,14 +54,23 @@ router.get('/install', async (req: Request, res: Response) => {
 
   // Generate state for CSRF protection and workspace association
   const state = `${workspaceId}:${generateState()}`;
-  
-  // Store state in cookie for verification
+
+  // Store state and returnUrl in cookies for verification
   res.cookie('github_oauth_state', state, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     maxAge: 600000, // 10 minutes
     sameSite: 'lax',
   });
+
+  if (returnUrl) {
+    res.cookie('github_oauth_return_url', String(returnUrl), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 600000, // 10 minutes
+      sameSite: 'lax',
+    });
+  }
 
   // Build GitHub App installation URL
   // Users can install on all repos or select specific ones
@@ -163,7 +173,20 @@ router.get('/callback', async (req: Request, res: Response) => {
 
     console.log(`[GitHubOAuth] Successfully installed GitHub App for workspace ${workspaceId} (installation: ${installation_id}, repos: ${repos.length})`);
 
-    // Redirect to success page with webhook URL info
+    // Get return URL from cookie (if set during /install)
+    const returnUrl = req.cookies?.github_oauth_return_url;
+
+    // Clear the cookies
+    res.clearCookie('github_oauth_state');
+    res.clearCookie('github_oauth_return_url');
+
+    // Redirect to return URL if provided, otherwise to onboarding
+    if (returnUrl) {
+      console.log(`[GitHubOAuth] Redirecting to return URL: ${returnUrl}`);
+      return res.redirect(returnUrl);
+    }
+
+    // Default: redirect to onboarding page
     const webhookUrl = `${API_URL}/webhooks/github/${workspaceId}`;
     return res.redirect(`${APP_URL}/onboarding?workspace=${workspaceId}&github=connected&webhookUrl=${encodeURIComponent(webhookUrl)}`);
 

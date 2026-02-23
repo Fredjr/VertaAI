@@ -197,7 +197,7 @@ export default function ScopeForm({ formData, setFormData }: ScopeFormProps) {
                 </div>
               </div>
               <a
-                href={`${apiUrl}/auth/github/install?workspaceId=${workspaceId}`}
+                href={`${apiUrl}/auth/github/install?workspaceId=${workspaceId}&returnUrl=${encodeURIComponent(window.location.href)}`}
                 className="flex-shrink-0 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-medium rounded-md transition-colors"
               >
                 Connect GitHub
