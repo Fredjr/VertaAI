@@ -20,7 +20,7 @@ import { factCatalog } from './facts/catalog.js';
 import { evaluateCondition, evaluateConditions } from './conditions/evaluator.js';
 import type { Condition, ConditionEvaluationResult } from './conditions/types.js';
 // GAP-1 FIX: ChangeSurface → path-glob expansion
-import { resolveChangeSurfaceGlobs } from './changeSurfaceCatalog.js';
+import { resolveChangeSurfaceGlobs, CHANGE_SURFACE_GLOBS } from './changeSurfaceCatalog.js';
 // PHASE 3: Import Policy Evaluation Graph types
 import type {
   PackEvaluationGraph,
@@ -30,6 +30,7 @@ import type {
   EvidenceItem,
   EvaluatedInvariant
 } from './types.js';
+import { ChangeSurfaceId } from './types.js';
 
 export interface Finding {
   ruleId: string;
@@ -924,6 +925,7 @@ function buildPolicyEvaluationGraph(
 
 /**
  * Extract detected surfaces from rule trigger conditions
+ * ENHANCED: Now uses changeSurfaceCatalog for accurate file matching
  */
 function extractDetectedSurfaces(rule: any, context: PRContext): DetectedSurface[] {
   const surfaces: DetectedSurface[] = [];
@@ -933,21 +935,46 @@ function extractDetectedSurfaces(rule: any, context: PRContext): DetectedSurface
     const surfaceIds = rule.when.changeSurfaces.anyOf || rule.when.changeSurfaces.allOf || [];
 
     for (const surfaceId of surfaceIds) {
-      // Get files that match this surface
+      // Get path globs for this surface from catalog
+      const globs = CHANGE_SURFACE_GLOBS[surfaceId as ChangeSurfaceId] || [];
+
+      // Find files that match this surface's globs
       const matchingFiles = context.files
         .filter(f => {
-          // This is a simplified version - in reality, we'd use changeSurfaceCatalog
-          // to resolve surface IDs to path globs
-          return true; // For now, include all files
+          return globs.some(glob => minimatch(f.filename, glob, { dot: true }));
         })
         .map(f => f.filename);
 
+      // Compute confidence based on match quality
+      const confidence = matchingFiles.length > 0 ? 1.0 : 0.5; // Lower confidence if no files matched
+
+      // Generate human-readable description
+      const description = generateSurfaceDescription(surfaceId, matchingFiles.length);
+
       surfaces.push({
         surfaceId,
-        description: `Change surface: ${surfaceId}`,
+        description,
         files: matchingFiles.slice(0, 5), // Limit to 5 files for brevity
-        confidence: 1.0,
+        confidence,
         detectionMethod: 'path-glob',
+        metadata: {
+          totalMatchingFiles: matchingFiles.length,
+          globs: globs.slice(0, 3), // Include sample globs for transparency
+        },
+      });
+    }
+  }
+
+  // Check for heuristic predicates (if available in context)
+  if (context.detectedHeuristics && Array.isArray(context.detectedHeuristics)) {
+    for (const heuristic of context.detectedHeuristics) {
+      surfaces.push({
+        surfaceId: heuristic.id || 'unknown_heuristic',
+        description: heuristic.description || `Heuristic detected: ${heuristic.id}`,
+        files: heuristic.files || [],
+        confidence: heuristic.confidence || 0.8,
+        detectionMethod: 'heuristic',
+        metadata: heuristic.metadata || {},
       });
     }
   }
@@ -964,6 +991,44 @@ function extractDetectedSurfaces(rule: any, context: PRContext): DetectedSurface
   }
 
   return surfaces;
+}
+
+/**
+ * Generate human-readable description for a change surface
+ */
+function generateSurfaceDescription(surfaceId: string, fileCount: number): string {
+  const surfaceNames: Record<string, string> = {
+    'openapi_changed': 'OpenAPI specification',
+    'graphql_schema_changed': 'GraphQL schema',
+    'proto_changed': 'Protocol Buffer definitions',
+    'api_handler_changed': 'API handler code',
+    'routing_changed': 'API routing configuration',
+    'authz_policy_changed': 'Authorization policy',
+    'db_schema_changed': 'Database schema',
+    'migration_added_or_missing': 'Database migration',
+    'orm_model_changed': 'ORM model definitions',
+    'terraform_changed': 'Terraform infrastructure',
+    'k8s_manifest_changed': 'Kubernetes manifests',
+    'slo_threshold_changed': 'SLO thresholds',
+    'dashboard_changed': 'Monitoring dashboards',
+    'alert_rule_changed': 'Alert rules',
+    'runbook_changed': 'Runbooks',
+    'oncall_rotation_changed': 'On-call rotation',
+    'codeowners_changed': 'CODEOWNERS file',
+    'ownership_docs_changed': 'Ownership documentation',
+    'service_catalog_changed': 'Service catalog',
+    'docs_changed': 'Documentation',
+  };
+
+  const name = surfaceNames[surfaceId] || surfaceId.replace(/_/g, ' ');
+
+  if (fileCount === 0) {
+    return `${name} (no matching files found)`;
+  } else if (fileCount === 1) {
+    return `${name} changed (1 file)`;
+  } else {
+    return `${name} changed (${fileCount} files)`;
+  }
 }
 
 /**
@@ -1091,11 +1156,110 @@ function convertToEvidenceItem(ev: any): EvidenceItem {
 
 /**
  * Extract evaluated invariants from findings
+ * ENHANCED: Detects invariant-like checks and structures them properly
  */
 function extractEvaluatedInvariants(findings: Finding[]): EvaluatedInvariant[] {
-  // For now, return empty array - invariants are not yet fully implemented
-  // This will be populated when invariant comparators are added
-  return [];
+  const invariants: EvaluatedInvariant[] = [];
+
+  for (const finding of findings) {
+    // Check if this finding represents an invariant check
+    const comparatorId = finding.comparatorResult?.comparatorId;
+
+    // Detect invariant-like comparators
+    if (comparatorId && isInvariantComparator(comparatorId)) {
+      const invariant = buildInvariantFromFinding(finding);
+      if (invariant) {
+        invariants.push(invariant);
+      }
+    }
+  }
+
+  return invariants;
+}
+
+/**
+ * Check if a comparator represents an invariant check
+ */
+function isInvariantComparator(comparatorId: string): boolean {
+  // Invariant comparators typically check cross-artifact consistency
+  const invariantPatterns = [
+    'PARITY',           // e.g., API_SPEC_IMPL_PARITY
+    'CONSISTENCY',      // e.g., SCHEMA_CONSISTENCY
+    'ALIGNMENT',        // e.g., DOCS_CODE_ALIGNMENT
+    'SYNC',             // e.g., CODEOWNERS_CATALOG_SYNC
+    'MATCH',            // e.g., SPEC_GATEWAY_MATCH
+  ];
+
+  return invariantPatterns.some(pattern => comparatorId.includes(pattern));
+}
+
+/**
+ * Build an EvaluatedInvariant from a finding
+ */
+function buildInvariantFromFinding(finding: Finding): EvaluatedInvariant | null {
+  const comparatorResult = finding.comparatorResult;
+  if (!comparatorResult) return null;
+
+  // Extract source and target artifacts from evidence
+  const sources: Array<{ type: string; paths: string[]; found: boolean }> = [];
+  const targets: Array<{ type: string; paths: string[]; found: boolean }> = [];
+
+  // Parse evidence to identify sources and targets
+  const sourceFiles: string[] = [];
+  const targetFiles: string[] = [];
+
+  for (const ev of comparatorResult.evidence || []) {
+    if (ev.type === 'file') {
+      // Heuristic: files with 'spec', 'schema', 'api' are often sources
+      if (ev.value.includes('spec') || ev.value.includes('schema') || ev.value.includes('api')) {
+        sourceFiles.push(ev.value);
+      } else {
+        targetFiles.push(ev.value);
+      }
+    }
+  }
+
+  if (sourceFiles.length > 0) {
+    sources.push({
+      type: 'specification',
+      paths: sourceFiles,
+      found: true,
+    });
+  }
+
+  if (targetFiles.length > 0) {
+    targets.push({
+      type: 'implementation',
+      paths: targetFiles,
+      found: true,
+    });
+  }
+
+  // Extract mismatches from message if available
+  const mismatches: Array<{ source: string; target: string; issue: string }> = [];
+  if (comparatorResult.status === 'fail' && comparatorResult.message) {
+    // Try to parse mismatches from message
+    // This is a simple heuristic - can be improved with structured error data
+    mismatches.push({
+      source: sourceFiles[0] || 'unknown',
+      target: targetFiles[0] || 'unknown',
+      issue: comparatorResult.message,
+    });
+  }
+
+  return {
+    invariantId: comparatorResult.comparatorId || 'UNKNOWN_INVARIANT',
+    description: finding.ruleName,
+    sources,
+    targets,
+    result: {
+      status: comparatorResult.status,
+      reasonCode: comparatorResult.reasonCode,
+      message: comparatorResult.message,
+      mismatches: mismatches.length > 0 ? mismatches : undefined,
+    },
+    decisionOnFail: finding.decisionOnFail,
+  };
 }
 
 /**
