@@ -1047,3 +1047,203 @@ export interface PackEvaluationGraph {
     };
   };
 }
+
+// ============================================================================
+// NORMALIZATION LAYER: Canonical Evaluation Model
+// ============================================================================
+
+/**
+ * Obligation Kind - Typed obligations for consistent rendering
+ * Each kind has specific rendering logic and "how to fix" guidance
+ */
+export enum ObligationKind {
+  ARTIFACT_PRESENT = 'artifact_present',
+  ARTIFACT_UPDATED = 'artifact_updated',
+  APPROVAL_REQUIRED = 'approval_required',
+  CHECKRUN_PASSED = 'checkrun_passed',
+  PARITY_INVARIANT = 'parity_invariant',
+  SECRET_SCAN = 'secret_scan',
+  CONDITION_CHECK = 'condition_check',
+  CUSTOM = 'custom',
+}
+
+/**
+ * Normalized Obligation - Canonical representation of a contract requirement
+ * Links surface → obligation explicitly (THE KEY DIFFERENTIATOR)
+ */
+export interface NormalizedObligation {
+  /** Unique ID for this obligation instance */
+  id: string;
+
+  /** Type of obligation */
+  kind: ObligationKind;
+
+  /** Human-readable description */
+  description: string;
+
+  /** Which surface(s) triggered this obligation - EXPLICIT CAUSAL LINK */
+  triggeredBy: string[]; // ChangeSurfaceId[]
+
+  /** Rule that generated this obligation */
+  sourceRule: {
+    ruleId: string;
+    ruleName: string;
+  };
+
+  /** Evaluation result */
+  result: {
+    status: 'pass' | 'fail' | 'unknown';
+    reasonCode: string;
+    message: string;
+  };
+
+  /** Evidence supporting this result */
+  evidence: EvidenceItem[];
+
+  /** Decision impact */
+  decisionOnFail: 'pass' | 'warn' | 'block';
+  decisionOnUnknown?: 'pass' | 'warn' | 'block';
+
+  /** Evaluation status */
+  evaluationStatus: 'evaluated' | 'not_evaluable';
+
+  /** If not_evaluable, why and how to fix */
+  notEvaluableReason?: {
+    category: 'policy_misconfig' | 'missing_external_evidence' | 'integration_error';
+    message: string;
+    remediation: string;
+    degradeTo?: 'pass' | 'warn' | 'block';
+  };
+}
+
+/**
+ * Normalized Finding - Canonical representation of a policy violation or success
+ * Includes risk, why it matters, how to fix, and who can approve
+ */
+export interface NormalizedFinding {
+  /** Unique ID */
+  id: string;
+
+  /** Severity/Risk level */
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+
+  /** What is wrong (plain English) */
+  what: string;
+
+  /** Why it matters (risk explanation) */
+  why: string;
+
+  /** Evidence (files, diff lines, links) */
+  evidence: EvidenceItem[];
+
+  /** How to fix (exact steps) */
+  howToFix: string[];
+
+  /** Who can approve/override (owner) */
+  owner?: {
+    team?: string;
+    individuals?: string[];
+    codeownersPath?: string;
+  };
+
+  /** Related obligation */
+  obligationId: string;
+
+  /** Decision impact */
+  decision: 'pass' | 'warn' | 'block';
+}
+
+/**
+ * Not-Evaluable Item - Separate tracking for policy quality issues
+ * Treats NOT_EVALUABLE as a policy-quality problem, not a developer problem
+ */
+export interface NotEvaluableItem {
+  /** What couldn't be evaluated */
+  description: string;
+
+  /** Category of issue */
+  category: 'policy_misconfig' | 'missing_external_evidence' | 'integration_error';
+
+  /** Detailed explanation */
+  message: string;
+
+  /** Impact on confidence */
+  confidenceImpact: 'high' | 'medium' | 'low';
+
+  /** How to remediate */
+  remediation: {
+    steps: string[];
+    configPath?: string;
+    documentationUrl?: string;
+  };
+
+  /** Decision degradation */
+  degradeTo: 'pass' | 'warn' | 'block';
+
+  /** Related rule */
+  sourceRule: {
+    ruleId: string;
+    ruleName: string;
+  };
+}
+
+/**
+ * Normalized Evaluation Result - Canonical model for all evaluations
+ * This is the single source of truth for rendering output
+ *
+ * Structure follows the "Ultimate Track A Output" format:
+ * - DetectedSurfaces[] (what changed)
+ * - Obligations[] (what contracts that implies)
+ * - Findings[] (what we found)
+ * - NotEvaluable[] (what we couldn't verify)
+ * - Decision (final outcome)
+ * - NextActions[] (what to do next)
+ */
+export interface NormalizedEvaluationResult {
+  /** Detected change surfaces */
+  surfaces: DetectedSurface[];
+
+  /** Expected obligations (generated from surfaces + rules) */
+  obligations: NormalizedObligation[];
+
+  /** Findings (violations or successes) */
+  findings: NormalizedFinding[];
+
+  /** Not-evaluable items (policy quality issues) */
+  notEvaluable: NotEvaluableItem[];
+
+  /** Final decision */
+  decision: {
+    outcome: 'pass' | 'warn' | 'block';
+    reason: string; // 1-2 sentence summary
+    contributingFactors: Array<{
+      type: 'blocking_issue' | 'warning' | 'not_evaluable';
+      count: number;
+      description: string;
+    }>;
+  };
+
+  /** Confidence score */
+  confidence: {
+    score: number; // 0-100
+    level: 'high' | 'medium' | 'low';
+    degradationReasons: string[];
+  };
+
+  /** Next best actions (prioritized) */
+  nextActions: Array<{
+    priority: number;
+    action: string;
+    category: 'fix_blocking' | 'fix_warning' | 'configure_policy' | 'request_approval';
+    relatedFindingIds?: string[];
+  }>;
+
+  /** Metadata */
+  metadata: {
+    packId: string;
+    packName: string;
+    packVersion: string;
+    evaluationTimeMs: number;
+    timestamp: string;
+  };
+}

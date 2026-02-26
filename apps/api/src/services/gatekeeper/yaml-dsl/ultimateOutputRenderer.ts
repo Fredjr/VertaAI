@@ -1,0 +1,416 @@
+/**
+ * Ultimate Track A Output Renderer
+ * 
+ * Renders the canonical NormalizedEvaluationResult into the "Ultimate Track A" format:
+ * 
+ * A) Executive Summary - Global decision + why + merge recommendation + confidence
+ * B) Change Surface Summary - THE DIFFERENTIATOR (detected surfaces with evidence)
+ * C) Required Contracts & Obligations - For each surface, what's required and status
+ * D) Findings - Ranked by risk with "why it matters" + "how to fix"
+ * E) Not-Evaluable Section - Separate, with impact on confidence
+ * F) Next Best Actions - Agentic, prioritized steps
+ */
+
+import type { NormalizedEvaluationResult, NormalizedFinding, NotEvaluableItem } from './types.js';
+
+/**
+ * Render normalized evaluation result as GitHub Check summary (markdown)
+ */
+export function renderUltimateOutput(normalized: NormalizedEvaluationResult): string {
+  const sections: string[] = [];
+
+  // A) Executive Summary
+  sections.push(renderExecutiveSummary(normalized));
+
+  // B) Change Surface Summary (THE DIFFERENTIATOR)
+  sections.push(renderChangeSurfaceSummary(normalized));
+
+  // C) Required Contracts & Obligations
+  sections.push(renderRequiredContracts(normalized));
+
+  // F) Next Best Actions (moved up for visibility)
+  sections.push(renderNextActions(normalized));
+
+  // D) Findings (ranked by risk)
+  if (normalized.findings.length > 0) {
+    sections.push(renderFindings(normalized));
+  }
+
+  // E) Not-Evaluable Section (separate)
+  if (normalized.notEvaluable.length > 0) {
+    sections.push(renderNotEvaluable(normalized));
+  }
+
+  // Metadata (collapsed)
+  sections.push(renderMetadata(normalized));
+
+  return sections.join('\n\n---\n\n');
+}
+
+/**
+ * A) Executive Summary
+ */
+function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string {
+  const { decision, confidence } = normalized;
+  const lines: string[] = [];
+
+  lines.push('# 📋 Executive Summary');
+  lines.push('');
+
+  // Global decision
+  const decisionEmoji = decision.outcome === 'pass' ? '✅' : decision.outcome === 'warn' ? '⚠️' : '🚫';
+  lines.push(`**Decision:** ${decisionEmoji} **${decision.outcome.toUpperCase()}**`);
+  lines.push('');
+
+  // "Why" in 1-2 sentences
+  lines.push(`**Why:** ${decision.reason}`);
+  lines.push('');
+
+  // Merge recommendation
+  const mergeRec = decision.outcome === 'block'
+    ? '🚫 **Do not merge** - Blocking issues must be resolved first'
+    : decision.outcome === 'warn'
+      ? '⚠️ **Merge with caution** - Review warnings before proceeding'
+      : '✅ **Can merge** - All policy checks passed';
+  lines.push(mergeRec);
+  lines.push('');
+
+  // Confidence score (and why it's reduced)
+  const confidenceIcon = confidence.level === 'high' ? '🟢' : confidence.level === 'medium' ? '🟡' : '🔴';
+  lines.push(`**Confidence:** ${confidenceIcon} **${confidence.level.toUpperCase()} (${confidence.score}%)**`);
+  
+  if (confidence.degradationReasons.length > 0) {
+    lines.push('');
+    lines.push('*Confidence reduced by:*');
+    confidence.degradationReasons.forEach(reason => {
+      lines.push(`- ${reason}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * B) Change Surface Summary (THE DIFFERENTIATOR!)
+ */
+function renderChangeSurfaceSummary(normalized: NormalizedEvaluationResult): string {
+  const lines: string[] = [];
+
+  lines.push('# 🎯 Change Surface Summary');
+  lines.push('');
+  lines.push('*This section shows what changed in your PR and why it triggered policy evaluation.*');
+  lines.push('');
+
+  if (normalized.surfaces.length === 0) {
+    lines.push('No specific change surfaces detected. Evaluation triggered by default rules.');
+    return lines.join('\n');
+  }
+
+  for (const surface of normalized.surfaces) {
+    const confidenceIcon = surface.confidence >= 0.9 ? '🟢' : surface.confidence >= 0.7 ? '🟡' : '🔴';
+    
+    lines.push(`### ${surface.description}`);
+    lines.push('');
+    lines.push(`**Confidence:** ${confidenceIcon} ${Math.round(surface.confidence * 100)}%`);
+    lines.push(`**Detection Method:** ${surface.detectionMethod}`);
+    
+    if (surface.files.length > 0) {
+      lines.push('');
+      lines.push('**Files:**');
+      surface.files.slice(0, 5).forEach(file => {
+        lines.push(`- \`${file}\``);
+      });
+      if (surface.files.length > 5) {
+        lines.push(`- *...and ${surface.files.length - 5} more*`);
+      }
+    }
+
+    if (surface.metadata?.matchedGlobs && surface.metadata.matchedGlobs.length > 0) {
+      lines.push('');
+      lines.push('**Matched patterns:**');
+      surface.metadata.matchedGlobs.slice(0, 3).forEach(glob => {
+        lines.push(`- \`${glob}\``);
+      });
+    }
+
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * C) Required Contracts & Obligations
+ */
+function renderRequiredContracts(normalized: NormalizedEvaluationResult): string {
+  const lines: string[] = [];
+
+  lines.push('# 📜 Required Contracts & Obligations');
+  lines.push('');
+  lines.push('*For each change surface, these are the contract requirements and their current status.*');
+  lines.push('');
+
+  // Group obligations by surface
+  const obligationsBySurface = new Map<string, typeof normalized.obligations>();
+  
+  for (const obligation of normalized.obligations) {
+    for (const surfaceId of obligation.triggeredBy) {
+      if (!obligationsBySurface.has(surfaceId)) {
+        obligationsBySurface.set(surfaceId, []);
+      }
+      obligationsBySurface.get(surfaceId)!.push(obligation);
+    }
+  }
+
+  // Render by surface
+  for (const surface of normalized.surfaces) {
+    const obligations = obligationsBySurface.get(surface.surfaceId) || [];
+    if (obligations.length === 0) continue;
+
+    lines.push(`### ${surface.description}`);
+    lines.push('');
+
+    for (const obligation of obligations) {
+      const statusIcon = obligation.result.status === 'pass' ? '✅' : 
+                        obligation.result.status === 'fail' ? '❌' : '❓';
+      
+      lines.push(`${statusIcon} **${obligation.description}**`);
+      lines.push(`   - Status: ${obligation.result.status.toUpperCase()}`);
+      lines.push(`   - Impact if failed: ${obligation.decisionOnFail.toUpperCase()}`);
+      
+      if (obligation.result.status !== 'pass') {
+        lines.push(`   - Reason: ${obligation.result.message}`);
+      }
+      
+      lines.push('');
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * F) Next Best Actions
+ */
+function renderNextActions(normalized: NormalizedEvaluationResult): string {
+  const lines: string[] = [];
+
+  lines.push('# 🎯 Next Best Actions');
+  lines.push('');
+
+  if (normalized.nextActions.length === 0) {
+    lines.push('No actions required - all checks passed!');
+    return lines.join('\n');
+  }
+
+  lines.push('*Prioritized steps to resolve policy violations:*');
+  lines.push('');
+
+  for (const action of normalized.nextActions) {
+    const categoryIcon = action.category === 'fix_blocking' ? '🚨' :
+                        action.category === 'fix_warning' ? '⚠️' :
+                        action.category === 'configure_policy' ? '⚙️' : '👥';
+
+    lines.push(`${action.priority}. ${categoryIcon} ${action.action}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * D) Findings (ranked by risk)
+ */
+function renderFindings(normalized: NormalizedEvaluationResult): string {
+  const lines: string[] = [];
+
+  lines.push('# 🔍 Findings (Ranked by Risk)');
+  lines.push('');
+
+  // Group by severity
+  const critical = normalized.findings.filter(f => f.severity === 'critical');
+  const high = normalized.findings.filter(f => f.severity === 'high');
+  const medium = normalized.findings.filter(f => f.severity === 'medium');
+  const low = normalized.findings.filter(f => f.severity === 'low');
+
+  if (critical.length > 0) {
+    lines.push('## 🚨 Critical Issues');
+    lines.push('');
+    critical.forEach(finding => lines.push(renderFinding(finding)));
+  }
+
+  if (high.length > 0) {
+    lines.push('## ❌ High Priority');
+    lines.push('');
+    high.forEach(finding => lines.push(renderFinding(finding)));
+  }
+
+  if (medium.length > 0) {
+    lines.push('## ⚠️ Warnings');
+    lines.push('');
+    medium.forEach(finding => lines.push(renderFinding(finding)));
+  }
+
+  if (low.length > 0) {
+    lines.push('<details>');
+    lines.push('<summary>ℹ️ Low Priority Issues</summary>');
+    lines.push('');
+    low.forEach(finding => lines.push(renderFinding(finding)));
+    lines.push('</details>');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Render a single finding with all details
+ */
+function renderFinding(finding: NormalizedFinding): string {
+  const lines: string[] = [];
+
+  lines.push(`### ${finding.what}`);
+  lines.push('');
+
+  // Why it matters
+  lines.push(`**Why it matters:** ${finding.why}`);
+  lines.push('');
+
+  // Evidence
+  if (finding.evidence.length > 0) {
+    lines.push('**Evidence:**');
+    finding.evidence.slice(0, 3).forEach(ev => {
+      if (ev.type === 'file') {
+        lines.push(`- 📄 \`${ev.value}\``);
+      } else if (ev.type === 'approval') {
+        lines.push(`- ✅ ${ev.value}`);
+      } else if (ev.type === 'checkrun') {
+        lines.push(`- 🔍 ${ev.value}`);
+      } else {
+        lines.push(`- ${ev.value}`);
+      }
+    });
+    if (finding.evidence.length > 3) {
+      lines.push(`- *...and ${finding.evidence.length - 3} more*`);
+    }
+    lines.push('');
+  }
+
+  // How to fix
+  lines.push('**How to fix:**');
+  finding.howToFix.forEach((step, idx) => {
+    lines.push(`${idx + 1}. ${step}`);
+  });
+  lines.push('');
+
+  // Owner (if available)
+  if (finding.owner) {
+    if (finding.owner.team) {
+      lines.push(`**Owner:** @${finding.owner.team}`);
+    } else if (finding.owner.codeownersPath) {
+      lines.push(`**Owner:** See \`${finding.owner.codeownersPath}\``);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * E) Not-Evaluable Section
+ */
+function renderNotEvaluable(normalized: NormalizedEvaluationResult): string {
+  const lines: string[] = [];
+
+  lines.push('# ❓ Not-Evaluable Checks');
+  lines.push('');
+  lines.push('*These checks could not be evaluated due to configuration or integration issues.*');
+  lines.push('');
+
+  // Group by category
+  const policyMisconfig = normalized.notEvaluable.filter(item => item.category === 'policy_misconfig');
+  const missingEvidence = normalized.notEvaluable.filter(item => item.category === 'missing_external_evidence');
+  const integrationErrors = normalized.notEvaluable.filter(item => item.category === 'integration_error');
+
+  if (policyMisconfig.length > 0) {
+    lines.push('## ⚙️ Policy Configuration Issues');
+    lines.push('');
+    lines.push('*These require workspace or policy configuration updates:*');
+    lines.push('');
+    policyMisconfig.forEach(item => lines.push(renderNotEvaluableItem(item)));
+  }
+
+  if (missingEvidence.length > 0) {
+    lines.push('## 🔗 Missing External Evidence');
+    lines.push('');
+    lines.push('*These require external integrations or dependencies:*');
+    lines.push('');
+    missingEvidence.forEach(item => lines.push(renderNotEvaluableItem(item)));
+  }
+
+  if (integrationErrors.length > 0) {
+    lines.push('## 🔌 Integration Errors');
+    lines.push('');
+    lines.push('*These are temporary issues that may resolve on retry:*');
+    lines.push('');
+    integrationErrors.forEach(item => lines.push(renderNotEvaluableItem(item)));
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Render a single not-evaluable item
+ */
+function renderNotEvaluableItem(item: NotEvaluableItem): string {
+  const lines: string[] = [];
+
+  const impactIcon = item.confidenceImpact === 'high' ? '🔴' :
+                     item.confidenceImpact === 'medium' ? '🟡' : '🟢';
+
+  lines.push(`### ${item.description}`);
+  lines.push('');
+  lines.push(`**Issue:** ${item.message}`);
+  lines.push(`**Impact:** ${impactIcon} ${item.confidenceImpact.toUpperCase()} confidence impact`);
+  lines.push(`**Decision degraded to:** ${item.degradeTo.toUpperCase()}`);
+  lines.push('');
+
+  lines.push('**How to fix:**');
+  item.remediation.steps.forEach((step, idx) => {
+    lines.push(`${idx + 1}. ${step}`);
+  });
+
+  if (item.remediation.configPath) {
+    lines.push('');
+    lines.push(`**Config path:** \`${item.remediation.configPath}\``);
+  }
+
+  if (item.remediation.documentationUrl) {
+    lines.push('');
+    lines.push(`**Documentation:** ${item.remediation.documentationUrl}`);
+  }
+
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Render metadata (collapsed)
+ */
+function renderMetadata(normalized: NormalizedEvaluationResult): string {
+  const lines: string[] = [];
+
+  lines.push('<details>');
+  lines.push('<summary>📊 Evaluation Metadata</summary>');
+  lines.push('');
+  lines.push(`- **Pack:** ${normalized.metadata.packName} v${normalized.metadata.packVersion}`);
+  lines.push(`- **Pack ID:** \`${normalized.metadata.packId}\``);
+  lines.push(`- **Evaluation Time:** ${normalized.metadata.evaluationTimeMs}ms`);
+  lines.push(`- **Timestamp:** ${normalized.metadata.timestamp}`);
+  lines.push(`- **Surfaces Detected:** ${normalized.surfaces.length}`);
+  lines.push(`- **Obligations Checked:** ${normalized.obligations.length}`);
+  lines.push(`- **Findings:** ${normalized.findings.length}`);
+  lines.push(`- **Not Evaluable:** ${normalized.notEvaluable.length}`);
+  lines.push('</details>');
+
+  return lines.join('\n');
+}

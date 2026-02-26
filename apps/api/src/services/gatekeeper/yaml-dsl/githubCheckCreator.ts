@@ -9,6 +9,8 @@ import type { PackEvaluationResult } from './packEvaluator.js';
 import type { PackYAML } from './packValidator.js';
 import type { PackResult } from './yamlGatekeeperIntegration.js';
 import { getInstallationOctokit } from '../../../lib/github.js';
+import { normalizeEvaluationResults } from './evaluationNormalizer.js';
+import { renderUltimateOutput } from './ultimateOutputRenderer.js';
 
 export interface CheckCreationInput {
   owner: string;
@@ -50,10 +52,14 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
     // In observe mode, always return success (don't block PR) but show true decision in output
     const conclusion = allObserveMode ? 'success' as const : conclusionMapping[decision];
 
+    // ULTIMATE TRACK A OUTPUT: Normalize and render
+    const normalized = normalizeEvaluationResults(input.packResults!, decision);
+    const ultimateOutput = renderUltimateOutput(normalized);
+
     // Build check output for multi-pack
     const title = buildMultiPackCheckTitle(decision, input.packResults!);
-    const summary = buildMultiPackCheckSummary(decision, input.packResults!);
-    const text = buildMultiPackCheckText(input.packResults!);
+    const summary = buildUltimateCheckSummary(normalized, allObserveMode);
+    const text = ultimateOutput; // Use the new Ultimate Track A output
 
     await octokit.rest.checks.create({
       owner: input.owner,
@@ -600,6 +606,44 @@ function extractActionItems(findings: any[]): string[] {
   }
 
   return actions.slice(0, 5); // Limit to top 5 actions
+}
+
+/**
+ * Build Ultimate Track A check summary from normalized results
+ */
+function buildUltimateCheckSummary(
+  normalized: import('./types.js').NormalizedEvaluationResult,
+  isObserveMode: boolean
+): string {
+  const { decision, confidence, findings, notEvaluable } = normalized;
+
+  const decisionEmoji = decision.outcome === 'pass' ? '✅' : decision.outcome === 'warn' ? '⚠️' : '🚫';
+  const confidenceIcon = confidence.level === 'high' ? '🟢' : confidence.level === 'medium' ? '🟡' : '🔴';
+
+  const blockingCount = findings.filter(f => f.decision === 'block').length;
+  const warningCount = findings.filter(f => f.decision === 'warn').length;
+
+  let summary = `${decisionEmoji} **${decision.outcome.toUpperCase()}**`;
+
+  if (isObserveMode) {
+    summary = `👁️ Would ${decision.outcome.toUpperCase()} (observe-only)`;
+  }
+
+  summary += ` | ${confidenceIcon} Confidence: ${confidence.level.toUpperCase()} (${confidence.score}%)`;
+
+  if (blockingCount > 0) {
+    summary += ` | 🚨 ${blockingCount} blocking issue(s)`;
+  }
+  if (warningCount > 0) {
+    summary += ` | ⚠️ ${warningCount} warning(s)`;
+  }
+  if (notEvaluable.length > 0) {
+    summary += ` | ❓ ${notEvaluable.length} not evaluable`;
+  }
+
+  summary += `\n\n${decision.reason}`;
+
+  return summary;
 }
 
 function buildMultiPackCheckText(packResults: PackResult[]): string {
