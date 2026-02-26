@@ -1,6 +1,9 @@
 /**
  * YAML DSL Type Definitions
  * Migration Plan v5.0 - Single Source of Truth
+ *
+ * PHASE 3: Policy Evaluation Graph Architecture
+ * Models the flow: Inputs → Surfaces → Obligations → Evidence → Invariants → Decision
  */
 
 import type { Condition } from './conditions/types.js';
@@ -798,4 +801,249 @@ export enum FindingCode {
   PASS = 'PASS',
   WARN = 'WARN',
   BLOCK = 'BLOCK',
+}
+
+// ============================================================================
+// PHASE 3: Policy Evaluation Graph Architecture
+// ============================================================================
+
+/**
+ * Surface: A detected change surface that triggered policy evaluation
+ * Examples: "API changed", "DB schema changed", "Alert routing changed"
+ */
+export interface DetectedSurface {
+  /** Surface ID from ChangeSurfaceId enum */
+  surfaceId: string;
+
+  /** Human-readable description */
+  description: string;
+
+  /** Files that contributed to this surface detection */
+  files: string[];
+
+  /** Confidence level of detection (0-1) */
+  confidence: number;
+
+  /** Detection method: 'path-glob' | 'heuristic' | 'explicit' */
+  detectionMethod: 'path-glob' | 'heuristic' | 'explicit';
+
+  /** Additional metadata (e.g., specific endpoints changed, tables touched) */
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Obligation: A contract requirement that must be satisfied
+ * Examples: "OpenAPI spec must be updated", "Migration must be present"
+ */
+export interface EvaluatedObligation {
+  /** Obligation index in the rule */
+  obligationIndex: number;
+
+  /** Type of obligation: 'artifact' | 'approval' | 'invariant' | 'condition' */
+  type: 'artifact' | 'approval' | 'invariant' | 'condition';
+
+  /** Human-readable description */
+  description: string;
+
+  /** Comparator or condition used to evaluate this obligation */
+  evaluator: {
+    type: 'comparator' | 'condition';
+    id: string;
+    params?: Record<string, any>;
+  };
+
+  /** Evaluation result */
+  result: {
+    status: 'pass' | 'fail' | 'unknown';
+    reasonCode: string;
+    message: string;
+  };
+
+  /** Evidence collected during evaluation */
+  evidence: EvidenceItem[];
+
+  /** Decision impact if this obligation fails */
+  decisionOnFail: 'pass' | 'warn' | 'block';
+  decisionOnUnknown?: 'pass' | 'warn' | 'block';
+}
+
+/**
+ * Evidence: Concrete artifacts or signals collected during evaluation
+ * Examples: "Found OpenAPI spec at /api/openapi.yaml", "Approval from @alice"
+ */
+export interface EvidenceItem {
+  /** Evidence type */
+  type: 'file' | 'approval' | 'checkrun' | 'secret_detected' | 'metadata' | 'external';
+
+  /** Primary value (e.g., file path, approver username, check name) */
+  value: string;
+
+  /** Additional context */
+  context?: {
+    path?: string;
+    user?: string;
+    conclusion?: string;
+    hash?: string;
+    location?: string;
+    [key: string]: any;
+  };
+
+  /** Confidence level (0-1) */
+  confidence?: number;
+
+  /** Source of evidence: 'local' | 'github_api' | 'external_system' */
+  source: 'local' | 'github_api' | 'external_system';
+}
+
+/**
+ * Invariant: A cross-artifact consistency check
+ * Examples: "OpenAPI spec ↔ Implementation parity", "CODEOWNERS ↔ Service catalog parity"
+ */
+export interface EvaluatedInvariant {
+  /** Invariant ID from InvariantTypeId enum */
+  invariantId: string;
+
+  /** Human-readable description */
+  description: string;
+
+  /** Source artifacts (what we're checking FROM) */
+  sources: {
+    type: string;
+    paths: string[];
+    found: boolean;
+  }[];
+
+  /** Target artifacts (what we're checking AGAINST) */
+  targets: {
+    type: string;
+    paths: string[];
+    found: boolean;
+  }[];
+
+  /** Evaluation result */
+  result: {
+    status: 'pass' | 'fail' | 'unknown';
+    reasonCode: string;
+    message: string;
+    /** Specific mismatches or inconsistencies found */
+    mismatches?: Array<{
+      source: string;
+      target: string;
+      issue: string;
+    }>;
+  };
+
+  /** Decision impact if this invariant fails */
+  decisionOnFail: 'pass' | 'warn' | 'block';
+}
+
+/**
+ * Policy Evaluation Graph: Complete evaluation flow for a single rule
+ * Flow: Inputs → Surfaces → Obligations → Evidence → Invariants → Decision
+ */
+export interface PolicyEvaluationGraph {
+  /** Rule that was evaluated */
+  ruleId: string;
+  ruleName: string;
+  ruleDescription?: string;
+
+  /** Step 1: Inputs (PR context) */
+  inputs: {
+    prNumber: number;
+    author: string;
+    baseBranch: string;
+    headBranch: string;
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+  };
+
+  /** Step 2: Detected Surfaces (why this rule triggered) */
+  surfaces: DetectedSurface[];
+
+  /** Step 3: Obligations (what the contract requires) */
+  obligations: EvaluatedObligation[];
+
+  /** Step 4: Evidence (what we found) */
+  evidence: EvidenceItem[];
+
+  /** Step 5: Invariants (cross-artifact checks) */
+  invariants: EvaluatedInvariant[];
+
+  /** Step 6: Decision (final outcome) */
+  decision: {
+    outcome: 'pass' | 'warn' | 'block';
+    reason: string;
+    /** Which obligation(s) caused this decision */
+    causedBy: Array<{
+      obligationIndex: number;
+      reasonCode: string;
+    }>;
+  };
+
+  /** Evaluation metadata */
+  metadata: {
+    evaluationTimeMs: number;
+    evaluationStatus: 'evaluated' | 'not_evaluable';
+    confidence: number; // 0-1, based on coverage
+  };
+}
+
+/**
+ * Pack Evaluation Graph: Complete evaluation for all rules in a pack
+ */
+export interface PackEvaluationGraph {
+  /** Pack metadata */
+  packId: string;
+  packName: string;
+  packVersion: string;
+  packHash: string;
+
+  /** Global inputs (PR context) */
+  inputs: {
+    prNumber: number;
+    author: string;
+    baseBranch: string;
+    headBranch: string;
+    filesChanged: number;
+    additions: number;
+    deletions: number;
+    labels: string[];
+  };
+
+  /** All detected surfaces across all rules */
+  allSurfaces: DetectedSurface[];
+
+  /** Evaluation graph for each triggered rule */
+  ruleGraphs: PolicyEvaluationGraph[];
+
+  /** Global decision */
+  globalDecision: {
+    outcome: 'pass' | 'warn' | 'block';
+    reason: string;
+    /** Which rules contributed to this decision */
+    contributingRules: Array<{
+      ruleId: string;
+      decision: 'pass' | 'warn' | 'block';
+    }>;
+  };
+
+  /** Coverage and confidence */
+  coverage: {
+    totalRules: number;
+    triggeredRules: number;
+    evaluableRules: number;
+    notEvaluableRules: number;
+    overallConfidence: number; // 0-1
+  };
+
+  /** Evaluation metadata */
+  metadata: {
+    evaluationTimeMs: number;
+    engineFingerprint: {
+      evaluatorVersion: string;
+      comparatorVersions: Record<string, string>;
+      timestamp: string;
+    };
+  };
 }

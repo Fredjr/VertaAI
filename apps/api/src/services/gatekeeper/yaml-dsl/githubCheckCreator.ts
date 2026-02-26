@@ -489,6 +489,13 @@ function buildMultiPackCheckSummary(decision: 'pass' | 'warn' | 'block', packRes
     });
   }
 
+  // PHASE 3: Add evaluation narrative if graphs are available
+  const narrative = buildEvaluationNarrative(packResults);
+  if (narrative) {
+    lines.push('');
+    lines.push(narrative);
+  }
+
   lines.push('');
   lines.push('## Pack Results');
 
@@ -758,5 +765,78 @@ function extractTriggerEvidence(packResults: PackResult[]): string[] {
   }
 
   return evidence.slice(0, 5); // Limit to top 5 pieces of evidence
+}
+
+/**
+ * PHASE 3: Build evaluation narrative from Policy Evaluation Graph
+ * This creates the "Layer 2" output - the story of the evaluation
+ */
+function buildEvaluationNarrative(packResults: PackResult[]): string {
+  const lines: string[] = [];
+
+  // Check if any pack has an evaluation graph
+  const packsWithGraphs = packResults.filter(pr => pr.result.evaluationGraph);
+
+  if (packsWithGraphs.length === 0) {
+    return ''; // No graphs available yet
+  }
+
+  lines.push('## 📊 Evaluation Flow');
+  lines.push('');
+  lines.push('This section shows how the policy evaluation was performed:');
+  lines.push('');
+
+  for (const packResult of packsWithGraphs) {
+    const graph = packResult.result.evaluationGraph!;
+
+    lines.push(`### ${packResult.pack.metadata.name}`);
+    lines.push('');
+
+    // Step 1: Detected Surfaces
+    if (graph.allSurfaces.length > 0) {
+      lines.push('**🎯 Detected Change Surfaces:**');
+      for (const surface of graph.allSurfaces.slice(0, 3)) { // Limit to top 3
+        lines.push(`- ${surface.description} (${surface.files.length} file(s), confidence: ${Math.round(surface.confidence * 100)}%)`);
+        if (surface.files.length > 0) {
+          lines.push(`  - Files: ${surface.files.slice(0, 3).join(', ')}${surface.files.length > 3 ? '...' : ''}`);
+        }
+      }
+      lines.push('');
+    }
+
+    // Step 2: Triggered Rules
+    if (graph.ruleGraphs.length > 0) {
+      lines.push(`**📋 Triggered Rules:** ${graph.ruleGraphs.length}`);
+      for (const ruleGraph of graph.ruleGraphs.slice(0, 5)) { // Limit to top 5
+        const emoji = ruleGraph.decision.outcome === 'pass' ? '✅' :
+                      ruleGraph.decision.outcome === 'warn' ? '⚠️' : '❌';
+        lines.push(`${emoji} **${ruleGraph.ruleName}** → ${ruleGraph.decision.outcome.toUpperCase()}`);
+
+        // Show obligations
+        if (ruleGraph.obligations.length > 0) {
+          lines.push(`  - Obligations checked: ${ruleGraph.obligations.length}`);
+          const failedObligations = ruleGraph.obligations.filter(o => o.result.status === 'fail');
+          if (failedObligations.length > 0) {
+            lines.push(`  - Failed: ${failedObligations.map(o => o.description).join(', ')}`);
+          }
+        }
+
+        // Show confidence
+        lines.push(`  - Confidence: ${Math.round(ruleGraph.metadata.confidence * 100)}%`);
+      }
+      lines.push('');
+    }
+
+    // Step 3: Overall Coverage
+    lines.push(`**📈 Coverage:**`);
+    lines.push(`- Total rules in pack: ${graph.coverage.totalRules}`);
+    lines.push(`- Triggered: ${graph.coverage.triggeredRules}`);
+    lines.push(`- Evaluable: ${graph.coverage.evaluableRules}`);
+    lines.push(`- Not evaluable: ${graph.coverage.notEvaluableRules}`);
+    lines.push(`- Overall confidence: ${Math.round(graph.coverage.overallConfidence * 100)}%`);
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 

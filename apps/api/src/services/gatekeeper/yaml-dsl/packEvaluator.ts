@@ -3,6 +3,9 @@
  * Migration Plan v5.0 - Sprint 2
  *
  * Evaluates pack rules against PR context
+ *
+ * PHASE 3: Policy Evaluation Graph Architecture
+ * Builds evaluation graph: Inputs → Surfaces → Obligations → Evidence → Invariants → Decision
  */
 
 import { minimatch } from 'minimatch';
@@ -18,6 +21,15 @@ import { evaluateCondition, evaluateConditions } from './conditions/evaluator.js
 import type { Condition, ConditionEvaluationResult } from './conditions/types.js';
 // GAP-1 FIX: ChangeSurface → path-glob expansion
 import { resolveChangeSurfaceGlobs } from './changeSurfaceCatalog.js';
+// PHASE 3: Import Policy Evaluation Graph types
+import type {
+  PackEvaluationGraph,
+  PolicyEvaluationGraph,
+  DetectedSurface,
+  EvaluatedObligation,
+  EvidenceItem,
+  EvaluatedInvariant
+} from './types.js';
 
 export interface Finding {
   ruleId: string;
@@ -61,6 +73,9 @@ export interface PackEvaluationResult {
     total: number;
     notEvaluable: number;
   };
+
+  // PHASE 3: Policy Evaluation Graph (optional, built incrementally)
+  evaluationGraph?: PackEvaluationGraph;
 }
 
 export class PackEvaluator {
@@ -343,6 +358,19 @@ export class PackEvaluator {
     // FIX A: Compute coverage (two-orthogonal-outcome model)
     const coverage = computeCoverage(findings);
 
+    // PHASE 3: Build Policy Evaluation Graph
+    const evaluationGraph = buildPackEvaluationGraph(
+      pack,
+      packHash,
+      findings,
+      triggeredRules,
+      context,
+      decision,
+      evaluationTimeMs,
+      engineFingerprint,
+      coverage
+    );
+
     return {
       decision,
       findings,
@@ -353,6 +381,7 @@ export class PackEvaluator {
       budgetExhausted,
       engineFingerprint,
       coverage,
+      evaluationGraph,
     };
   }
 }
@@ -823,6 +852,395 @@ function filterExcludedFiles(context: PRContext, excludePaths: string[]): PRCont
     files: context.files.filter(file =>
       !excludePaths.some(glob => minimatch(file.filename, glob, { dot: true }))
     ),
+  };
+}
+
+// ============================================================================
+// PHASE 3: Policy Evaluation Graph Builder Functions
+// ============================================================================
+
+/**
+ * Build Policy Evaluation Graph from findings for a single rule
+ * This provides a structured view of the evaluation flow for better output
+ */
+function buildPolicyEvaluationGraph(
+  rule: any,
+  findings: Finding[],
+  context: PRContext,
+  evaluationTimeMs: number
+): PolicyEvaluationGraph {
+  // Filter findings for this rule
+  const ruleFindings = findings.filter(f => f.ruleId === rule.id);
+
+  // Step 1: Inputs (PR context)
+  const inputs = {
+    prNumber: context.prNumber,
+    author: context.author,
+    baseBranch: context.baseBranch,
+    headBranch: context.headBranch,
+    filesChanged: context.files.length,
+    additions: context.additions,
+    deletions: context.deletions,
+  };
+
+  // Step 2: Detected Surfaces (why this rule triggered)
+  const surfaces = extractDetectedSurfaces(rule, context);
+
+  // Step 3: Obligations (what the contract requires)
+  const obligations = extractEvaluatedObligations(ruleFindings);
+
+  // Step 4: Evidence (what we found)
+  const evidence = extractEvidence(ruleFindings);
+
+  // Step 5: Invariants (cross-artifact checks)
+  const invariants = extractEvaluatedInvariants(ruleFindings);
+
+  // Step 6: Decision (final outcome)
+  const decision = computeRuleDecision(ruleFindings);
+
+  // Compute confidence based on evaluation status
+  const evaluableCount = ruleFindings.filter(f => f.evaluationStatus === 'evaluated').length;
+  const confidence = ruleFindings.length > 0 ? evaluableCount / ruleFindings.length : 1.0;
+
+  return {
+    ruleId: rule.id,
+    ruleName: rule.name,
+    ruleDescription: rule.description,
+    inputs,
+    surfaces,
+    obligations,
+    evidence,
+    invariants,
+    decision,
+    metadata: {
+      evaluationTimeMs,
+      evaluationStatus: ruleFindings.some(f => f.evaluationStatus === 'not_evaluable')
+        ? 'not_evaluable'
+        : 'evaluated',
+      confidence,
+    },
+  };
+}
+
+/**
+ * Extract detected surfaces from rule trigger conditions
+ */
+function extractDetectedSurfaces(rule: any, context: PRContext): DetectedSurface[] {
+  const surfaces: DetectedSurface[] = [];
+
+  // Check if rule has changeSurfaces trigger
+  if (rule.when?.changeSurfaces) {
+    const surfaceIds = rule.when.changeSurfaces.anyOf || rule.when.changeSurfaces.allOf || [];
+
+    for (const surfaceId of surfaceIds) {
+      // Get files that match this surface
+      const matchingFiles = context.files
+        .filter(f => {
+          // This is a simplified version - in reality, we'd use changeSurfaceCatalog
+          // to resolve surface IDs to path globs
+          return true; // For now, include all files
+        })
+        .map(f => f.filename);
+
+      surfaces.push({
+        surfaceId,
+        description: `Change surface: ${surfaceId}`,
+        files: matchingFiles.slice(0, 5), // Limit to 5 files for brevity
+        confidence: 1.0,
+        detectionMethod: 'path-glob',
+      });
+    }
+  }
+
+  // If rule has trigger.always, add a generic surface
+  if (rule.trigger?.always) {
+    surfaces.push({
+      surfaceId: 'always',
+      description: 'Rule triggers on every PR to protected branches',
+      files: [],
+      confidence: 1.0,
+      detectionMethod: 'explicit',
+    });
+  }
+
+  return surfaces;
+}
+
+/**
+ * Extract evaluated obligations from findings
+ */
+function extractEvaluatedObligations(findings: Finding[]): EvaluatedObligation[] {
+  return findings.map(finding => {
+    const { comparatorResult, conditionResult, obligationIndex, decisionOnFail, decisionOnUnknown } = finding;
+
+    // Determine obligation type and evaluator
+    let type: 'artifact' | 'approval' | 'invariant' | 'condition' = 'condition';
+    let evaluator: { type: 'comparator' | 'condition'; id: string; params?: Record<string, any> };
+    let result: { status: 'pass' | 'fail' | 'unknown'; reasonCode: string; message: string };
+    let evidence: EvidenceItem[] = [];
+
+    if (comparatorResult) {
+      type = comparatorResult.comparatorId?.includes('ARTIFACT') ? 'artifact' :
+             comparatorResult.comparatorId?.includes('APPROVAL') ? 'approval' :
+             comparatorResult.comparatorId?.includes('INVARIANT') ? 'invariant' : 'condition';
+
+      evaluator = {
+        type: 'comparator',
+        id: comparatorResult.comparatorId || 'UNKNOWN',
+      };
+
+      result = {
+        status: comparatorResult.status,
+        reasonCode: comparatorResult.reasonCode,
+        message: comparatorResult.message,
+      };
+
+      // Convert comparator evidence to EvidenceItem format
+      evidence = (comparatorResult.evidence || []).map(ev => convertToEvidenceItem(ev));
+    } else if (conditionResult) {
+      type = 'condition';
+
+      evaluator = {
+        type: 'condition',
+        id: 'CONDITION_CHECK',
+      };
+
+      result = {
+        status: conditionResult.error ? 'unknown' : conditionResult.satisfied ? 'pass' : 'fail',
+        reasonCode: conditionResult.error ? 'CONDITION_ERROR' :
+                    conditionResult.satisfied ? 'PASS' : 'CONDITION_NOT_SATISFIED',
+        message: conditionResult.error ||
+                 (conditionResult.satisfied ? 'Condition satisfied' : 'Condition not satisfied'),
+      };
+    } else {
+      // Fallback for unknown finding type
+      evaluator = { type: 'condition', id: 'UNKNOWN' };
+      result = { status: 'unknown', reasonCode: 'UNKNOWN', message: 'Unknown finding type' };
+    }
+
+    return {
+      obligationIndex,
+      type,
+      description: finding.ruleName,
+      evaluator,
+      result,
+      evidence,
+      decisionOnFail,
+      decisionOnUnknown,
+    };
+  });
+}
+
+/**
+ * Extract all evidence from findings
+ */
+function extractEvidence(findings: Finding[]): EvidenceItem[] {
+  const allEvidence: EvidenceItem[] = [];
+
+  for (const finding of findings) {
+    if (finding.comparatorResult?.evidence) {
+      for (const ev of finding.comparatorResult.evidence) {
+        allEvidence.push(convertToEvidenceItem(ev));
+      }
+    }
+  }
+
+  return allEvidence;
+}
+
+/**
+ * Convert comparator evidence to EvidenceItem format
+ */
+function convertToEvidenceItem(ev: any): EvidenceItem {
+  if (ev.type === 'file') {
+    return {
+      type: 'file',
+      value: ev.value || ev.path || '',
+      context: { path: ev.path || ev.value },
+      source: 'local',
+    };
+  } else if (ev.type === 'approval') {
+    return {
+      type: 'approval',
+      value: ev.user || '',
+      context: { user: ev.user },
+      source: 'github_api',
+    };
+  } else if (ev.type === 'checkrun') {
+    return {
+      type: 'checkrun',
+      value: ev.name || '',
+      context: { conclusion: ev.conclusion },
+      source: 'github_api',
+    };
+  } else if (ev.type === 'secret_detected') {
+    return {
+      type: 'secret_detected',
+      value: ev.location || '',
+      context: { location: ev.location, hash: ev.hash },
+      source: 'local',
+    };
+  } else {
+    return {
+      type: 'metadata',
+      value: JSON.stringify(ev),
+      source: 'local',
+    };
+  }
+}
+
+/**
+ * Extract evaluated invariants from findings
+ */
+function extractEvaluatedInvariants(findings: Finding[]): EvaluatedInvariant[] {
+  // For now, return empty array - invariants are not yet fully implemented
+  // This will be populated when invariant comparators are added
+  return [];
+}
+
+/**
+ * Compute decision for a single rule from its findings
+ */
+function computeRuleDecision(findings: Finding[]): {
+  outcome: 'pass' | 'warn' | 'block';
+  reason: string;
+  causedBy: Array<{ obligationIndex: number; reasonCode: string }>;
+} {
+  const decision = computeDecision(findings);
+
+  // Find which obligations caused this decision
+  const causedBy = findings
+    .filter(f => {
+      if (f.comparatorResult) {
+        if (f.comparatorResult.status === 'fail' && f.decisionOnFail === decision) return true;
+        if (f.comparatorResult.status === 'unknown' && f.decisionOnUnknown === decision) return true;
+      }
+      if (f.conditionResult) {
+        if (!f.conditionResult.satisfied && f.decisionOnFail === decision) return true;
+        if (f.conditionResult.error && f.decisionOnUnknown === decision) return true;
+      }
+      return false;
+    })
+    .map(f => ({
+      obligationIndex: f.obligationIndex,
+      reasonCode: f.comparatorResult?.reasonCode || f.conditionResult?.error || 'UNKNOWN',
+    }));
+
+  // Generate reason message
+  let reason = '';
+  if (decision === 'block') {
+    reason = `${causedBy.length} blocking issue(s) found`;
+  } else if (decision === 'warn') {
+    reason = `${causedBy.length} warning(s) found`;
+  } else {
+    reason = 'All checks passed';
+  }
+
+  return {
+    outcome: decision,
+    reason,
+    causedBy,
+  };
+}
+
+/**
+ * Build Pack-level Evaluation Graph
+ * Aggregates all rule graphs into a single pack-level view
+ */
+function buildPackEvaluationGraph(
+  pack: PackYAML,
+  packHash: string,
+  findings: Finding[],
+  triggeredRules: string[],
+  context: PRContext,
+  decision: 'pass' | 'warn' | 'block',
+  evaluationTimeMs: number,
+  engineFingerprint: EngineFingerprint,
+  coverage: { evaluable: number; total: number; notEvaluable: number }
+): PackEvaluationGraph {
+  // Global inputs
+  const inputs = {
+    prNumber: context.prNumber,
+    author: context.author,
+    baseBranch: context.baseBranch,
+    headBranch: context.headBranch,
+    filesChanged: context.files.length,
+    additions: context.additions,
+    deletions: context.deletions,
+    labels: context.labels || [],
+  };
+
+  // Build rule graphs for each triggered rule
+  const ruleGraphs: PolicyEvaluationGraph[] = [];
+  const allSurfaces: DetectedSurface[] = [];
+
+  for (const ruleId of triggeredRules) {
+    const rule = pack.rules.find(r => r.id === ruleId);
+    if (!rule) continue;
+
+    const ruleGraph = buildPolicyEvaluationGraph(
+      rule,
+      findings,
+      context,
+      evaluationTimeMs
+    );
+
+    ruleGraphs.push(ruleGraph);
+
+    // Collect all surfaces
+    for (const surface of ruleGraph.surfaces) {
+      // Deduplicate surfaces by surfaceId
+      if (!allSurfaces.find(s => s.surfaceId === surface.surfaceId)) {
+        allSurfaces.push(surface);
+      }
+    }
+  }
+
+  // Global decision
+  const contributingRules = ruleGraphs.map(rg => ({
+    ruleId: rg.ruleId,
+    decision: rg.decision.outcome,
+  }));
+
+  const globalDecision = {
+    outcome: decision,
+    reason: decision === 'block'
+      ? `${contributingRules.filter(r => r.decision === 'block').length} rule(s) blocked`
+      : decision === 'warn'
+      ? `${contributingRules.filter(r => r.decision === 'warn').length} rule(s) warned`
+      : 'All rules passed',
+    contributingRules,
+  };
+
+  // Compute overall confidence
+  const overallConfidence = coverage.total > 0
+    ? coverage.evaluable / coverage.total
+    : 1.0;
+
+  return {
+    packId: pack.metadata.id || 'unknown',
+    packName: pack.metadata.name,
+    packVersion: pack.metadata.version,
+    packHash,
+    inputs,
+    allSurfaces,
+    ruleGraphs,
+    globalDecision,
+    coverage: {
+      totalRules: pack.rules.length,
+      triggeredRules: triggeredRules.length,
+      evaluableRules: coverage.evaluable,
+      notEvaluableRules: coverage.notEvaluable,
+      overallConfidence,
+    },
+    metadata: {
+      evaluationTimeMs,
+      engineFingerprint: {
+        evaluatorVersion: engineFingerprint.evaluatorVersion,
+        comparatorVersions: engineFingerprint.comparatorVersions,
+        timestamp: engineFingerprint.timestamp,
+      },
+    },
   };
 }
 

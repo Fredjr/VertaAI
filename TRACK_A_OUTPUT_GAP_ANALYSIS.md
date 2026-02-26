@@ -1319,33 +1319,72 @@ generateActionList(findings).forEach(action => console.log(`  ${action}`));
 | Coverage/Confidence | ✅ Implemented | High/Medium/Low with % | ✅ COMPLETE |
 | Trigger Evidence | ✅ Implemented | Why evaluation triggered | ✅ COMPLETE |
 | Action List | ✅ Implemented | Top 5 actionable items | ✅ COMPLETE |
-| Surface Detection | ❌ Not implemented | "Detected: API change" | 🚧 TODO |
-| Obligation Mapping | ❌ Not implemented | "Contract requires..." | 🚧 TODO |
-| Evidence Collection | ❌ Not implemented | "Found: OpenAPI spec" | 🚧 TODO |
+| **Graph Types** | ✅ Implemented | PolicyEvaluationGraph, PackEvaluationGraph | ✅ COMPLETE |
+| **Graph Builder** | ✅ Implemented | Build graph during evaluation | ✅ COMPLETE |
+| **Narrative Output** | ✅ Implemented | Layer 2 narrative from graph | ✅ COMPLETE |
+| Surface Detection | 🟡 Partial | "Detected: API change" | 🚧 IN PROGRESS |
+| Obligation Mapping | 🟡 Partial | "Contract requires..." | 🚧 IN PROGRESS |
+| Evidence Collection | 🟡 Partial | "Found: OpenAPI spec" | 🚧 IN PROGRESS |
 | Invariant Checks | ❌ Not implemented | "Verified: Spec ↔ Code" | 🚧 TODO |
 | Risk Explanation | ❌ Not implemented | "Why this matters..." | 🚧 TODO |
-| Structured Payload | ❌ Not implemented | Machine-readable JSON | 🚧 TODO |
+| Structured Payload | 🟡 Partial | Machine-readable JSON | 🚧 IN PROGRESS |
+
+### 🎯 Phase 3 Progress Update (2026-02-26)
+
+**✅ COMPLETED: Step 1 - Graph Structures**
+- Added `PolicyEvaluationGraph` and `PackEvaluationGraph` types to `types.ts`
+- Added supporting types: `DetectedSurface`, `EvaluatedObligation`, `EvidenceItem`, `EvaluatedInvariant`
+- Updated `PackEvaluationResult` to include optional `evaluationGraph` field
+
+**✅ COMPLETED: Step 2 - Graph Builder Functions**
+- Implemented `buildPolicyEvaluationGraph()` - builds graph for a single rule
+- Implemented `buildPackEvaluationGraph()` - aggregates all rule graphs
+- Added helper functions:
+  - `extractDetectedSurfaces()` - extracts change surfaces from rule triggers
+  - `extractEvaluatedObligations()` - converts findings to obligation format
+  - `extractEvidence()` - collects all evidence items
+  - `convertToEvidenceItem()` - normalizes evidence format
+  - `computeRuleDecision()` - computes decision with causality tracking
+
+**✅ COMPLETED: Step 3 - Integration with Evaluator**
+- Wired graph building into `PackEvaluator.evaluate()` method
+- Graph is now built automatically during evaluation
+- Graph is attached to `PackEvaluationResult.evaluationGraph`
+
+**✅ COMPLETED: Step 4 - Narrative Output**
+- Implemented `buildEvaluationNarrative()` in `githubCheckCreator.ts`
+- Integrated narrative into `buildMultiPackCheckSummary()`
+- Narrative shows:
+  - Detected change surfaces with confidence scores
+  - Triggered rules with obligation status
+  - Overall coverage and confidence metrics
 
 ### 🎯 Next Immediate Actions
 
-1. **Test Quick Wins on PR #27** (In Progress)
-   - Wait for Railway deployment (~2-3 minutes)
-   - Verify new output format on PR #27
-   - Validate all 4 quick wins are working
+1. **Test Phase 3 Implementation on PR #27** (Next)
+   - Deploy changes to Railway
+   - Verify evaluation graph is built correctly
+   - Check that narrative appears in GitHub check output
+   - Validate graph structure in JSON payload
 
-2. **Begin Policy Evaluation Graph Implementation** (Next)
-   - Start with Step 1: Add graph types to `types.ts`
-   - Implement surface detection logic
-   - Wire into existing evaluation flow
+2. **Enhance Surface Detection** (Step 2 Refinement)
+   - Improve `extractDetectedSurfaces()` to use `changeSurfaceCatalog`
+   - Add heuristic predicate detection
+   - Include file-level evidence in surface detection
 
-3. **Iterate Based on Feedback**
-   - Gather user feedback on Quick Wins
-   - Refine action extraction logic
-   - Improve trigger evidence clarity
+3. **Add Invariant Support** (Step 2 Extension)
+   - Implement `extractEvaluatedInvariants()` logic
+   - Add invariant-specific comparators
+   - Show invariant checks in narrative
+
+4. **Iterate Based on Feedback**
+   - Gather user feedback on narrative quality
+   - Refine graph structure based on UI needs
+   - Improve evidence collection and presentation
 
 ---
 
-**Last Updated**: 2026-02-26 19:15 UTC
-**Next Review**: After PR #27 testing completes
+**Last Updated**: 2026-02-26 20:45 UTC
+**Next Review**: After Phase 3 testing on PR #27
 
 
