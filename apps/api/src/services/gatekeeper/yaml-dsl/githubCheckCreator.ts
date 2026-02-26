@@ -447,7 +447,20 @@ function buildMultiPackCheckSummary(decision: 'pass' | 'warn' | 'block', packRes
   const allObserveMode = packResults.every(pr => pr.pack.metadata.packMode === 'observe');
   const hasEnforcingPacks = packResults.some(pr => pr.pack.metadata.packMode === 'enforce');
 
+  // QUICK WIN #2: Compute confidence score
+  const confidenceScore = computeConfidenceScore(totalCoverage);
+
+  // QUICK WIN #4: Extract actionable items
+  const actionItems = extractActionItems(allFindings);
+
   const lines = [
+    // QUICK WIN #1: Merge Impact Line
+    decision === 'block'
+      ? `🚫 **Merge allowed?** NO (blocking issues must be resolved)`
+      : decision === 'warn'
+        ? `⚠️ **Merge allowed?** YES (with warnings - review recommended)`
+        : `✅ **Merge allowed?** YES (all checks passed)`,
+    '',
     allObserveMode
       ? `**Enforcement Mode:** OBSERVE-ONLY (monitoring only, not blocking PRs)`
       : hasEnforcingPacks
@@ -459,14 +472,25 @@ function buildMultiPackCheckSummary(decision: 'pass' | 'warn' | 'block', packRes
     '',
     // FIX B: Show Blocks/Warnings/Pass counts clearly
     `**Blocks:** ${blockCount} | **Warnings:** ${warnCount} | **Pass:** ${passCount}`,
-    // FIX A: Show coverage
+    // QUICK WIN #2: Coverage/Confidence
     `**Coverage:** ${totalCoverage.evaluable}/${totalCoverage.total} evaluable${totalCoverage.notEvaluable > 0 ? ` (${totalCoverage.notEvaluable} not evaluable)` : ''}`,
+    `**Confidence:** ${confidenceScore.label} (${confidenceScore.percentage}% of checks evaluated successfully)`,
     `**Packs:** ${packResults.length} (${packResults.filter(pr => pr.result.decision === 'block').length} block, ${packResults.filter(pr => pr.result.decision === 'warn').length} warn, ${packResults.filter(pr => pr.result.decision === 'pass').length} pass)`,
     `**Total Rules Triggered:** ${totalRules}`,
     `**Total Evaluation Time:** ${totalTime}ms`,
-    '',
-    '## Pack Results',
   ];
+
+  // QUICK WIN #4: Action List
+  if (actionItems.length > 0) {
+    lines.push('');
+    lines.push('## 🎯 Actions Required');
+    actionItems.forEach((action, idx) => {
+      lines.push(`${idx + 1}. ${action}`);
+    });
+  }
+
+  lines.push('');
+  lines.push('## Pack Results');
 
   for (const packResult of packResults) {
     const isObserve = packResult.pack.metadata.packMode === 'observe';
@@ -485,8 +509,107 @@ function buildMultiPackCheckSummary(decision: 'pass' | 'warn' | 'block', packRes
   return lines.join('\n');
 }
 
+/**
+ * QUICK WIN #2: Compute confidence score based on coverage
+ */
+function computeConfidenceScore(coverage: { evaluable: number; total: number; notEvaluable: number }): {
+  label: 'High' | 'Medium' | 'Low';
+  percentage: number;
+} {
+  if (coverage.total === 0) {
+    return { label: 'High', percentage: 100 };
+  }
+
+  const percentage = Math.round((coverage.evaluable / coverage.total) * 100);
+
+  if (percentage >= 90) {
+    return { label: 'High', percentage };
+  } else if (percentage >= 70) {
+    return { label: 'Medium', percentage };
+  } else {
+    return { label: 'Low', percentage };
+  }
+}
+
+/**
+ * QUICK WIN #4: Extract actionable items from findings
+ */
+function extractActionItems(findings: any[]): string[] {
+  const actions: string[] = [];
+  const seenActions = new Set<string>();
+
+  for (const finding of findings) {
+    // Skip passing findings
+    if (finding.comparatorResult?.status === 'pass') continue;
+    if (finding.conditionResult?.satisfied) continue;
+
+    const reasonCode = finding.comparatorResult?.reasonCode || 'UNKNOWN';
+
+    // Generate action based on reason code
+    let action: string | null = null;
+
+    switch (reasonCode) {
+      case 'ARTIFACT_MISSING':
+        const artifactMatch = finding.comparatorResult?.message?.match(/Expected one of: (.+)/);
+        if (artifactMatch) {
+          action = `Add required artifact: ${artifactMatch[1].split(',')[0].trim()}`;
+        } else {
+          action = `Add required artifact as specified in the rule`;
+        }
+        break;
+
+      case 'NOT_EVALUABLE':
+        const fieldMatch = finding.comparatorResult?.message?.match(/field[:\s]+['"]?([^'"]+)['"]?/i);
+        if (fieldMatch) {
+          action = `Configure PR template field mapping for '${fieldMatch[1]}' in workspace settings`;
+        } else {
+          action = `Review and configure missing workspace defaults or external dependencies`;
+        }
+        break;
+
+      case 'APPROVAL_MISSING':
+        action = `Add required approval from authorized reviewer`;
+        break;
+
+      case 'CHECKRUN_FAILED':
+        action = `Ensure required CI checks pass before merging`;
+        break;
+
+      case 'CONDITION_NOT_SATISFIED':
+        action = `Review condition: ${finding.ruleName}`;
+        break;
+
+      default:
+        // Generic action for other failures
+        if (finding.decisionOnFail === 'block' || finding.decisionOnFail === 'warn') {
+          action = `Resolve: ${finding.ruleName}`;
+        }
+    }
+
+    if (action && !seenActions.has(action)) {
+      actions.push(action);
+      seenActions.add(action);
+    }
+  }
+
+  return actions.slice(0, 5); // Limit to top 5 actions
+}
+
 function buildMultiPackCheckText(packResults: PackResult[]): string {
   const sections: string[] = [];
+
+  // QUICK WIN #3: Add trigger evidence at the top
+  const triggerEvidence = extractTriggerEvidence(packResults);
+  if (triggerEvidence.length > 0) {
+    sections.push('## 🔍 Why This Evaluation Triggered');
+    sections.push('');
+    triggerEvidence.forEach(evidence => {
+      sections.push(`- ${evidence}`);
+    });
+    sections.push('');
+    sections.push('---');
+    sections.push('');
+  }
 
   // Group findings by pack
   for (const packResult of packResults) {
@@ -575,5 +698,65 @@ function buildMultiPackCheckText(packResults: PackResult[]): string {
   }
 
   return sections.join('\n');
+}
+
+/**
+ * QUICK WIN #3: Extract trigger evidence from pack results
+ */
+function extractTriggerEvidence(packResults: PackResult[]): string[] {
+  const evidence: string[] = [];
+  const seenEvidence = new Set<string>();
+
+  for (const packResult of packResults) {
+    const { pack, result } = packResult;
+
+    // Check if pack has trigger conditions
+    for (const rule of pack.rules) {
+      // Check if rule was triggered
+      if (!result.triggeredRules.includes(rule.id)) continue;
+
+      // Extract trigger evidence from rule
+      if (rule.trigger?.always) {
+        const ev = `Rule "${rule.name}" triggers on every PR to protected branches`;
+        if (!seenEvidence.has(ev)) {
+          evidence.push(ev);
+          seenEvidence.add(ev);
+        }
+      }
+
+      if (rule.when?.changeSurfaces) {
+        const surfaces = rule.when.changeSurfaces.anyOf || rule.when.changeSurfaces.allOf || [];
+        const ev = `Rule "${rule.name}" triggered by change surfaces: ${surfaces.join(', ')}`;
+        if (!seenEvidence.has(ev)) {
+          evidence.push(ev);
+          seenEvidence.add(ev);
+        }
+      }
+
+      if (rule.when?.predicates) {
+        const predicates = rule.when.predicates.anyOf || rule.when.predicates.allOf || [];
+        const ev = `Rule "${rule.name}" triggered by predicates: ${predicates.join(', ')}`;
+        if (!seenEvidence.has(ev)) {
+          evidence.push(ev);
+          seenEvidence.add(ev);
+        }
+      }
+
+      if (rule.when?.conditions) {
+        const ev = `Rule "${rule.name}" triggered by custom conditions`;
+        if (!seenEvidence.has(ev)) {
+          evidence.push(ev);
+          seenEvidence.add(ev);
+        }
+      }
+    }
+  }
+
+  // Add generic evidence if no specific triggers found
+  if (evidence.length === 0) {
+    evidence.push(`${packResults.length} policy pack(s) evaluated for this PR`);
+  }
+
+  return evidence.slice(0, 5); // Limit to top 5 pieces of evidence
 }
 
