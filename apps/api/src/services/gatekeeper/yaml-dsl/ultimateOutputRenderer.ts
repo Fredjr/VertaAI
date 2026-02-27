@@ -289,10 +289,12 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
     lines.push('## Detected Signals');
     lines.push('');
 
-    // GAP #1 FIX: Always show actual signals detected (never say "no signals")
+    // SURGICAL UPGRADE #1: Show actual signals from classification evidence
+    // Use the evidence from repoClassifier instead of inferring from metadata
     const signals: string[] = [];
+    const absenceSignals: string[] = [];
 
-    // Show file-based signals
+    // Show file-based presence signals
     if (metadata.hasDockerfile) signals.push('`Dockerfile`');
     if (metadata.hasSLO) signals.push('`slo.yaml`');
     if (metadata.hasServiceCatalog) signals.push('`catalog-info.yaml` or `service.yaml`');
@@ -302,10 +304,17 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
     if (metadata.hasMonorepoMarkers) signals.push('Monorepo markers (pnpm-workspace.yaml, lerna.json, etc.)');
 
     // Show absence signals (these are signals too!)
-    const absenceSignals: string[] = [];
     if (!metadata.hasDockerfile && !metadata.hasK8s) absenceSignals.push('no_dockerfile');
     if (!metadata.hasServiceCatalog) absenceSignals.push('no_catalog_manifest');
     if (!metadata.hasSLO) absenceSignals.push('no_tier_signal');
+
+    // CRITICAL FIX: For docs repos or when no file signals, show the classification evidence
+    if (signals.length === 0 && confidenceBreakdown?.repoTypeEvidence) {
+      // Use the actual evidence from classification (e.g., "Only markdown/text files detected")
+      confidenceBreakdown.repoTypeEvidence.forEach(evidence => {
+        signals.push(evidence);
+      });
+    }
 
     // Show what we detected
     if (signals.length > 0) {
@@ -313,6 +322,11 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
     }
     if (absenceSignals.length > 0) {
       lines.push(`**Absence signals:** ${absenceSignals.join(', ')}`);
+    }
+
+    // Fallback: if still no signals (shouldn't happen), show classification source
+    if (signals.length === 0 && absenceSignals.length === 0) {
+      lines.push(`**Classification:** Based on ${confidenceBreakdown?.repoTypeSource || 'heuristics'}`);
     }
 
     // Show classification result from signals
