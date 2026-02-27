@@ -309,7 +309,7 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
     if (!metadata.hasSLO) absenceSignals.push('no_tier_signal');
 
     // CRITICAL FIX: For docs repos or when no file signals, show the classification evidence
-    if (signals.length === 0 && confidenceBreakdown?.repoTypeEvidence) {
+    if (signals.length === 0 && confidenceBreakdown?.repoTypeEvidence && Array.isArray(confidenceBreakdown.repoTypeEvidence)) {
       // Use the actual evidence from classification (e.g., "Only markdown/text files detected")
       confidenceBreakdown.repoTypeEvidence.forEach(evidence => {
         signals.push(evidence);
@@ -444,7 +444,9 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
         if (confidenceBreakdown.tierSource === 'inferred') {
           lines.push(`- Service tier (${serviceTier}) is **inferred**, not explicit`);
           lines.push(`  - To increase confidence: Add \`tier: 1\` annotation to service catalog`);
-          lines.push(`  - Current heuristic: ${confidenceBreakdown.tierEvidence.join(', ')}`);
+          if (confidenceBreakdown.tierEvidence && Array.isArray(confidenceBreakdown.tierEvidence) && confidenceBreakdown.tierEvidence.length > 0) {
+            lines.push(`  - Current heuristic: ${confidenceBreakdown.tierEvidence.join(', ')}`);
+          }
         }
 
         lines.push('');
