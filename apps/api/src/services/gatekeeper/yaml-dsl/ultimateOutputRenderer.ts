@@ -548,8 +548,8 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
     }
   }
 
-  // FIX #1: Split confidence into Decision Confidence vs Classification Confidence
-  // This prevents "LOW confidence" from making users think the decision is uncertain
+  // FIX 2: Remove "Overall Confidence" - keep only Decision + Classification
+  // "Overall Confidence LOW" reintroduces doubt even when decision is deterministic
   const { enforced } = splitObligationsByApplicability(normalized.obligations);
   const baselineFailures = enforced.filter(o =>
     o.result.status === 'fail' &&
@@ -576,12 +576,25 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
                     confidence.applicabilityConfidence.level === 'medium' ? '🟡' : '🔴';
     lines.push(`**Classification Confidence:** ${appIcon} **${confidence.applicabilityConfidence.level.toUpperCase()} (${confidence.applicabilityConfidence.score}%)**`);
     lines.push(`- ${confidence.applicabilityConfidence.reason}`);
+
+    // FIX 6: Show minimal classification evidence (makes decision feel grounded)
+    if (repoClassification?.confidenceBreakdown) {
+      const breakdown = repoClassification.confidenceBreakdown;
+      lines.push('');
+      lines.push('**Classification Evidence:**');
+      if (breakdown.repoTypeEvidence && breakdown.repoTypeEvidence.length > 0) {
+        lines.push(`- Detected: ${breakdown.repoTypeEvidence.slice(0, 3).join(', ')}`);
+      }
+      if (breakdown.repoTypeSource === 'inferred') {
+        lines.push(`- No explicit markers found (Dockerfile, catalog-info.yaml, slo.yaml)`);
+      }
+    }
     lines.push('');
   }
 
-  // Evidence confidence (collapsed for brevity)
+  // FIX 2: Remove "Overall Confidence" entirely - demote to technical details
   lines.push('<details>');
-  lines.push('<summary><b>📊 Detailed Confidence Breakdown</b> (click to expand)</summary>');
+  lines.push('<summary><b>📊 Technical Confidence Details</b> (click to expand)</summary>');
   lines.push('');
 
   const evIcon = confidence.evidenceConfidence.level === 'high' ? '🟢' :
@@ -591,12 +604,13 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
   lines.push('');
 
   const confidenceIcon = confidence.level === 'high' ? '🟢' : confidence.level === 'medium' ? '🟡' : '🔴';
-  lines.push(`**Overall Confidence:** ${confidenceIcon} ${confidence.level.toUpperCase()} (${confidence.score}%)`);
-  lines.push(`- Aggregate of applicability + evidence confidence`);
+  lines.push(`**Aggregate Confidence:** ${confidenceIcon} ${confidence.level.toUpperCase()} (${confidence.score}%)`);
+  lines.push(`- Mathematical aggregate of applicability + evidence confidence`);
+  lines.push(`- Note: Decision confidence (above) is what matters for governance; this is a technical metric`);
 
   if (confidence.degradationReasons.length > 0) {
     lines.push('');
-    lines.push('**Why confidence is not HIGH:**');
+    lines.push('**Why aggregate is not HIGH:**');
     confidence.degradationReasons.forEach(reason => {
       lines.push(`- ${reason}`);
     });
@@ -606,12 +620,15 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
   lines.push('</details>');
   lines.push('');
 
-  // Decision thresholds (prevents "opaque scoring" regression)
+  // FIX 4: Collapse decision thresholds (boilerplate for simple cases)
+  lines.push('<details>');
+  lines.push('<summary><b>⚖️ Decision Thresholds</b> (click to expand)</summary>');
   lines.push('');
-  lines.push('**Decision Thresholds:**');
-  lines.push('- BLOCK: Any obligation with `decisionOnFail: block` fails');
-  lines.push('- WARN: Any obligation with `decisionOnFail: warn` fails (and no blocks)');
-  lines.push('- PASS: All obligations pass or have `decisionOnFail: pass`');
+  lines.push('- **BLOCK:** Any obligation with `decisionOnFail: block` fails');
+  lines.push('- **WARN:** Any obligation with `decisionOnFail: warn` fails (and no blocks)');
+  lines.push('- **PASS:** All obligations pass or have `decisionOnFail: pass`');
+  lines.push('');
+  lines.push('</details>');
 
   return lines.join('\n');
 }
@@ -813,20 +830,36 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
 }
 
 /**
- * C) Change Surface Summary (shows what changed in THIS PR)
+ * C) Checks Evaluated (FIX 3: renamed from "Change Surface" for repo invariants)
  */
 function renderChangeSurfaceSummary(normalized: NormalizedEvaluationResult): string {
   const lines: string[] = [];
 
+  // FIX 3: Distinguish repo invariants from diff-derived checks
+  const hasRepoInvariants = normalized.obligations.some(o =>
+    !o.sourceRule.ruleId.includes('tier') &&
+    !o.sourceRule.ruleId.includes('service-specific') &&
+    (o.sourceRule.ruleId.includes('codeowners') ||
+     o.sourceRule.ruleId.includes('checkrun') ||
+     o.sourceRule.ruleId.includes('baseline'))
+  );
+
+  if (normalized.surfaces.length === 0 || hasRepoInvariants) {
+    lines.push('# 🔍 Checks Evaluated');
+    lines.push('');
+    lines.push('*This section shows which repository baseline controls were evaluated (not diff-derived).*');
+    lines.push('');
+    lines.push('**Evaluation Type:** Repository Invariant Checks');
+    lines.push('- These checks run on every PR to protected branches, regardless of what changed');
+    lines.push('- They verify required governance artifacts exist in the repository');
+    return lines.join('\n');
+  }
+
+  // Diff-derived checks (original behavior)
   lines.push('# 📝 Change Surface Summary');
   lines.push('');
   lines.push('*This section shows what changed in your PR and which specific files triggered obligations.*');
   lines.push('');
-
-  if (normalized.surfaces.length === 0) {
-    lines.push('No specific change surfaces detected. Evaluation triggered by default rules.');
-    return lines.join('\n');
-  }
 
   for (const surface of normalized.surfaces) {
     const confidenceIcon = surface.confidence >= 0.9 ? '🟢' : surface.confidence >= 0.7 ? '🟡' : '🔴';
@@ -895,9 +928,22 @@ function renderChangeSurfaceSummary(normalized: NormalizedEvaluationResult): str
 function renderRequiredContracts(normalized: NormalizedEvaluationResult): string {
   const lines: string[] = [];
 
+  // FIX 3: Update wording for repo invariants
+  const hasRepoInvariants = normalized.obligations.some(o =>
+    !o.sourceRule.ruleId.includes('tier') &&
+    !o.sourceRule.ruleId.includes('service-specific') &&
+    (o.sourceRule.ruleId.includes('codeowners') ||
+     o.sourceRule.ruleId.includes('checkrun') ||
+     o.sourceRule.ruleId.includes('baseline'))
+  );
+
   lines.push('# 📜 Required Contracts & Obligations');
   lines.push('');
-  lines.push('*For each change surface, these are the contract requirements and their current status.*');
+  if (hasRepoInvariants) {
+    lines.push('*These are the baseline governance contracts required for all repositories.*');
+  } else {
+    lines.push('*For each change surface, these are the contract requirements and their current status.*');
+  }
   lines.push('');
 
   // CRITICAL FIX: Only show enforced obligations (not suppressed ones)
