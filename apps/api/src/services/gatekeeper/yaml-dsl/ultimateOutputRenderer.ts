@@ -453,8 +453,8 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
   lines.push(`**Decision:** ${decisionEmoji} **${decision.outcome.toUpperCase()}**`);
   lines.push('');
 
-  // FIX C: Add Governance Impact statement (makes it feel like governance, not lint)
-  const { enforced: enforcedObligations } = splitObligationsByApplicability(normalized.obligations);
+  // FIX 3A: Explicit Governance Impact statement (one-liner at the top)
+  const { enforced: enforcedObligations, suppressed: suppressedObligations } = splitObligationsByApplicability(normalized.obligations);
   const failedEnforcedObligations = enforcedObligations.filter(o => o.result.status === 'fail');
   if (failedEnforcedObligations.length > 0 && repoClassification) {
     const governanceImpact = buildGovernanceImpact(failedEnforcedObligations, repoClassification.repoType);
@@ -462,6 +462,17 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
       lines.push(`**Governance Impact:** ${governanceImpact}`);
       lines.push('');
     }
+  }
+
+  // FIX 3B: Explicit "Scope of Decision" statement
+  const baselineFailures = enforcedObligations.filter(o =>
+    o.result.status === 'fail' &&
+    !o.sourceRule.ruleId.includes('tier') &&
+    !o.sourceRule.ruleId.includes('service-specific')
+  );
+  if (baselineFailures.length > 0 && suppressedObligations.length > 0) {
+    lines.push(`**Scope:** Decision based on baseline repo invariants only; ${suppressedObligations.length} service overlay(s) suppressed due to classification uncertainty.`);
+    lines.push('');
   }
 
   // "Why" in 1-2 sentences (now contextualized)
@@ -482,13 +493,15 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
   lines.push(mergeRec);
   lines.push('');
 
-  // CRITICAL FIX: Minimum to PASS (decision-grade clarity with actionable templates)
+  // FIX 1B: Conditional "Minimum to PASS" (clarify it's based on current classification)
   const failedFindings = normalized.findings.filter(f =>
     f.result.status === 'fail' && f.decision !== 'pass'
   );
 
   if (failedFindings.length > 0) {
-    lines.push(`**Minimum to PASS:** ${failedFindings.length} action(s) required`);
+    // Make it explicit this is conditional on current classification
+    const repoTypeLabel = repoClassification?.repoType.toUpperCase() || 'CURRENT CLASSIFICATION';
+    lines.push(`**Minimum to PASS (as ${repoTypeLabel}):** ${failedFindings.length} action(s) required`);
     lines.push('');
 
     // CRITICAL FIX: Include exact file path templates for each action
@@ -518,6 +531,21 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
       lines.push(`- *...and ${failedFindings.length - 3} more*`);
     }
     lines.push('');
+
+    // FIX 1B: Show additional requirements if classification changes
+    if (suppressedObligations.length > 0) {
+      const suppressedFailures = suppressedObligations.filter(o => o.result.status === 'fail');
+      if (suppressedFailures.length > 0) {
+        lines.push(`**If this repo is actually a SERVICE:** +${suppressedFailures.length} additional action(s) required`);
+        suppressedFailures.slice(0, 2).forEach(o => {
+          lines.push(`- ${o.description}`);
+        });
+        if (suppressedFailures.length > 2) {
+          lines.push(`- *...and ${suppressedFailures.length - 2} more*`);
+        }
+        lines.push('');
+      }
+    }
   }
 
   // FIX #1: Split confidence into Decision Confidence vs Classification Confidence
@@ -1000,11 +1028,22 @@ function renderFinding(finding: NormalizedFinding, normalized: NormalizedEvaluat
   const relatedObligation = normalized.obligations.find(o => o.id === finding.obligationId);
   const repoType = normalized.metadata?.repoClassification?.repoType || 'unknown';
 
-  // PRIORITY 3: Fixed risk score color coding (0-30 green, 31-60 yellow, 61-100 red)
+  // FIX 3D: Risk score with confidence and one-line summary
   if (finding.riskScore) {
     const riskColor = finding.riskScore.score >= 61 ? '🔴' :
                       finding.riskScore.score >= 31 ? '🟡' : '🟢';
-    lines.push(`**Risk Score:** ${riskColor} ${finding.riskScore.score}/100`);
+    const riskLevel = finding.riskScore.score >= 61 ? 'HIGH' :
+                      finding.riskScore.score >= 31 ? 'MODERATE' : 'LOW';
+
+    lines.push(`**Risk:** ${riskColor} ${riskLevel} (${finding.riskScore.score}/100)`);
+
+    // FIX 3D: Add risk confidence and one-line summary
+    const isBaselineCheck = relatedObligation && !relatedObligation.sourceRule.ruleId.includes('tier') && !relatedObligation.sourceRule.ruleId.includes('service-specific');
+    if (isBaselineCheck) {
+      lines.push(`- Risk confidence: High (deterministic baseline check + calibrated to ${repoType} repo)`);
+    } else {
+      lines.push(`- Risk confidence: Medium (depends on repo classification accuracy)`);
+    }
 
     if (finding.riskScore.drivers) {
       lines.push(`- Blast Radius: ${finding.riskScore.factors.blastRadius}/30 (${finding.riskScore.drivers.blastRadiusReason})`);
@@ -1438,8 +1477,17 @@ function renderMetadata(normalized: NormalizedEvaluationResult): string {
   lines.push(`- **Framework ID:** \`${normalized.metadata.packId}\``);
   lines.push(`- **Evaluation Time:** ${normalized.metadata.evaluationTimeMs}ms`);
   lines.push(`- **Timestamp:** ${normalized.metadata.timestamp}`);
-  lines.push(`- **Surfaces Detected:** ${normalized.surfaces.length}`);
-  lines.push(`- **Obligations Checked:** ${enforced.length} enforced (${suppressed.length} suppressed, ${informational.length} informational)`);
+
+  // FIX 1C: Make surfaces concrete (show names, not just count)
+  if (normalized.surfaces.length > 0) {
+    const surfaceNames = normalized.surfaces.map(s => s.surfaceType).join(', ');
+    lines.push(`- **Surfaces Detected:** ${surfaceNames}`);
+  } else {
+    lines.push(`- **Surfaces Detected:** repo-baseline (not diff-derived)`);
+  }
+
+  // FIX 1A: Consistent obligation counting
+  lines.push(`- **Obligations Considered:** ${enforced.length + suppressed.length} total (${enforced.length} enforced, ${suppressed.length} suppressed, ${informational.length} informational)`);
   lines.push(`- **Findings:** ${normalized.findings.length}`);
   lines.push(`- **Not Evaluable:** ${normalized.notEvaluable.length}`);
   lines.push('</details>');

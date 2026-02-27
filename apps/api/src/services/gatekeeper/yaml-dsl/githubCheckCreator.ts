@@ -393,23 +393,28 @@ function buildMultiPackCheckTitleFromNormalized(
   }
 
   if (decision === 'warn') {
-    // ELITE: Use precise governance terminology (applicable vs evaluated vs suppressed)
-    const enforcedWarnings = normalized.findings.filter(f => f.decision === 'warn').length;
+    // FIX 1A: Consistent obligation counting model
+    // Count ALL obligations considered (enforced pass + enforced fail + suppressed)
+    const enforcedObligations = normalized.obligations.filter(o =>
+      o.applicability?.applies !== false
+    );
+    const enforcedPass = enforcedObligations.filter(o => o.result.status === 'pass').length;
+    const enforcedWarn = normalized.findings.filter(f => f.decision === 'warn').length;
     const suppressedCount = normalized.obligations.filter(o =>
       o.applicability && !o.applicability.applies && o.result.status === 'fail'
     ).length;
-    const totalEvaluated = enforcedWarnings + suppressedCount;
+    const totalConsidered = enforcedObligations.length + suppressedCount;
 
     // Show breakdown if there are suppressed obligations
     if (suppressedCount > 0) {
       return isObserveMode
-        ? `👁️ Would WARN (observe-only) - ${totalEvaluated} obligation(s) evaluated: ${enforcedWarnings} applicable, ${suppressedCount} suppressed`
-        : `⚠️ ${totalEvaluated} obligation(s) evaluated: ${enforcedWarnings} applicable WARN, ${suppressedCount} suppressed`;
+        ? `👁️ Would WARN (observe-only) - ${totalConsidered} obligation(s) considered: ${enforcedWarn} WARN, ${enforcedPass} PASS, ${suppressedCount} suppressed`
+        : `⚠️ ${totalConsidered} obligation(s) considered: ${enforcedWarn} WARN, ${enforcedPass} PASS, ${suppressedCount} suppressed`;
     }
 
     return isObserveMode
-      ? `👁️ Would WARN (observe-only) - ${enforcedWarnings} warning(s) detected across ${packCount} pack${packCount > 1 ? 's' : ''}`
-      : `⚠️ ${enforcedWarnings} warning(s) found across ${packCount} pack${packCount > 1 ? 's' : ''}`;
+      ? `👁️ Would WARN (observe-only) - ${enforcedWarn} warning(s) detected across ${packCount} pack${packCount > 1 ? 's' : ''}`
+      : `⚠️ ${enforcedWarn} warning(s) found across ${packCount} pack${packCount > 1 ? 's' : ''}`;
   }
 
   // ELITE: Use precise governance terminology for blocking issues
