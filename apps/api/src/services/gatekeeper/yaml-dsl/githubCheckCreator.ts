@@ -77,7 +77,7 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
 
     console.log(`[YAMLGatekeeperCheck] Created multi-pack check with conclusion: ${conclusion} (${input.packResults!.length} packs)`);
   } else {
-    // Single-pack mode (backward compatibility)
+    // Single-pack mode - UPDATED to use Ultimate Track A output
     const isObserveMode = input.pack.metadata.packMode === 'observe';
 
     const conclusionMapping = input.pack.routing?.github?.conclusionMapping || {
@@ -89,9 +89,18 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
     // In observe mode, always return success (don't block PR) but show true decision in output
     const conclusion = isObserveMode ? 'success' as const : conclusionMapping[input.packResult.decision];
 
-    const title = buildCheckTitle(input.packResult, input.pack);
-    const summary = buildCheckSummary(input.packResult, input.pack);
-    const text = buildCheckText(input.packResult, input.pack);
+    // ULTIMATE TRACK A OUTPUT: Convert single-pack to multi-pack format for normalization
+    const packResults: PackResult[] = [{
+      pack: input.pack,
+      result: input.packResult,
+    }];
+
+    const normalized = normalizeEvaluationResults(packResults, input.packResult.decision);
+    const ultimateOutput = renderUltimateOutput(normalized);
+
+    const title = buildMultiPackCheckTitle(input.packResult.decision, packResults);
+    const summary = buildUltimateCheckSummary(normalized, isObserveMode);
+    const text = ultimateOutput; // Use the new Ultimate Track A output
 
     await octokit.rest.checks.create({
       owner: input.owner,
@@ -107,7 +116,7 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
       },
     });
 
-    console.log(`[YAMLGatekeeperCheck] Created check with conclusion: ${conclusion}`);
+    console.log(`[YAMLGatekeeperCheck] Created single-pack check with Ultimate Track A output, conclusion: ${conclusion}`);
   }
 }
 
