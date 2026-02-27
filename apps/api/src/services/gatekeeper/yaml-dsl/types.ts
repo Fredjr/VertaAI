@@ -1151,6 +1151,19 @@ export interface NormalizedFinding {
 
   /** Decision impact */
   decision: 'pass' | 'warn' | 'block';
+
+  /** Risk score (for ranking) */
+  riskScore?: RiskScore;
+
+  /** Applicability (does this apply to this repo?) */
+  applicability?: ObligationApplicability;
+
+  /** Result from obligation evaluation */
+  result: {
+    status: 'pass' | 'fail' | 'unknown';
+    code: string;
+    message: string;
+  };
 }
 
 /**
@@ -1246,4 +1259,57 @@ export interface NormalizedEvaluationResult {
     evaluationTimeMs: number;
     timestamp: string;
   };
+
+  /** Repository classification (for contextualized guidance) */
+  repoClassification?: RepoClassification;
+}
+
+/**
+ * Repository Classification
+ * Deterministic classification of the repository based on file structure
+ */
+export interface RepoClassification {
+  repoType: 'service' | 'library' | 'infra' | 'monorepo' | 'docs' | 'unknown';
+  serviceTier: 'tier-1' | 'tier-2' | 'tier-3' | 'unknown';
+  hasDeployment: boolean;
+  hasDatabase: boolean;
+  primaryLanguages: string[];
+  confidence: number;
+  evidence: string[];
+  metadata: {
+    hasDockerfile?: boolean;
+    hasK8s?: boolean;
+    hasTerraform?: boolean;
+    hasServiceCatalog?: boolean;
+    hasSLO?: boolean;
+    hasRunbook?: boolean;
+    hasMonorepoMarkers?: boolean;
+  };
+}
+
+/**
+ * Obligation Applicability
+ * Determines if an obligation applies to this specific repository
+ */
+export interface ObligationApplicability {
+  obligationId: string;
+  applies: boolean;
+  reason: string;
+  confidence: number;
+  evidence: string[];
+}
+
+/**
+ * Risk Score
+ * Deterministic risk scoring for findings
+ */
+export interface RiskScore {
+  score: number; // 0-100
+  factors: {
+    blastRadius: number;      // 0-30 (how many systems affected)
+    criticality: number;      // 0-30 (service tier, compliance)
+    immediacy: number;        // 0-20 (blocks merge vs tech debt)
+    dependency: number;       // 0-20 (blocks other work)
+  };
+  reasoning: string;
 }

@@ -81,6 +81,7 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
       console.log(`[Gatekeeper] Using YAML pack (${yamlResult.packSource}): ${yamlResult.decision}`);
 
       // PHASE 3 FIX: Create GitHub Check with multi-pack support
+      // PHASE 4: Pass PR files for repo classification
       // Prefer packResults (multi-pack) over pack/fullResult (single-pack)
       if (yamlResult.packResults && yamlResult.packResults.length > 0) {
         await createYAMLGatekeeperCheck({
@@ -95,6 +96,8 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
           // Backward compatibility fields
           packResult: yamlResult.fullResult!,
           pack: yamlResult.pack!,
+          // PHASE 4: Pass PR files for repo classification
+          prFiles: input.files,
         });
       } else if (yamlResult.pack && yamlResult.fullResult) {
         // Fallback to single-pack mode (backward compatibility)
@@ -106,6 +109,8 @@ export async function runGatekeeper(input: GatekeeperInput): Promise<GatekeeperR
           prNumber: input.prNumber,
           packResult: yamlResult.fullResult,
           pack: yamlResult.pack,
+          // PHASE 4: Pass PR files for repo classification
+          prFiles: input.files,
         });
       } else {
         console.warn('[Gatekeeper] YAML result missing pack data, skipping GitHub Check creation');

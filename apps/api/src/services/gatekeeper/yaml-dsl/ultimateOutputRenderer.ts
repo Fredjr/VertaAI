@@ -57,27 +57,51 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
  * A) Executive Summary
  */
 function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string {
-  const { decision, confidence } = normalized;
+  const { decision, confidence, repoClassification } = normalized;
   const lines: string[] = [];
 
   lines.push('# 📋 Executive Summary');
   lines.push('');
+
+  // PHASE 4: Repository Context (NEW - adds context)
+  if (repoClassification) {
+    const tierEmoji = repoClassification.serviceTier === 'tier-1' ? '🔴' :
+                      repoClassification.serviceTier === 'tier-2' ? '🟡' :
+                      repoClassification.serviceTier === 'tier-3' ? '🟢' : '⚪';
+    const typeEmoji = repoClassification.repoType === 'service' ? '⚙️' :
+                      repoClassification.repoType === 'library' ? '📚' :
+                      repoClassification.repoType === 'infra' ? '🏗️' : '📦';
+
+    lines.push(`**Repository:** ${typeEmoji} ${repoClassification.repoType.toUpperCase()}`);
+    if (repoClassification.repoType === 'service') {
+      lines.push(`**Service Tier:** ${tierEmoji} ${repoClassification.serviceTier.toUpperCase()}`);
+    }
+    if (repoClassification.primaryLanguages.length > 0) {
+      lines.push(`**Languages:** ${repoClassification.primaryLanguages.join(', ')}`);
+    }
+    lines.push('');
+  }
 
   // Global decision
   const decisionEmoji = decision.outcome === 'pass' ? '✅' : decision.outcome === 'warn' ? '⚠️' : '🚫';
   lines.push(`**Decision:** ${decisionEmoji} **${decision.outcome.toUpperCase()}**`);
   lines.push('');
 
-  // "Why" in 1-2 sentences
+  // "Why" in 1-2 sentences (now contextualized)
   lines.push(`**Why:** ${decision.reason}`);
   lines.push('');
 
-  // Merge recommendation
-  const mergeRec = decision.outcome === 'block'
+  // Merge recommendation (contextualized by tier)
+  let mergeRec = decision.outcome === 'block'
     ? '🚫 **Do not merge** - Blocking issues must be resolved first'
     : decision.outcome === 'warn'
       ? '⚠️ **Merge with caution** - Review warnings before proceeding'
       : '✅ **Can merge** - All policy checks passed';
+
+  if (repoClassification?.serviceTier === 'tier-1' && decision.outcome !== 'pass') {
+    mergeRec += ' ⚠️ *Extra caution required for tier-1 services*';
+  }
+
   lines.push(mergeRec);
   lines.push('');
 
@@ -283,7 +307,25 @@ function renderFinding(finding: NormalizedFinding): string {
   lines.push(`### ${finding.what}`);
   lines.push('');
 
-  // Why it matters
+  // PHASE 4: Risk Score (NEW - shows deterministic risk calculation)
+  if (finding.riskScore) {
+    const riskColor = finding.riskScore.score >= 70 ? '🔴' :
+                      finding.riskScore.score >= 50 ? '🟡' : '🟢';
+    lines.push(`**Risk Score:** ${riskColor} ${finding.riskScore.score}/100`);
+    lines.push(`- Blast Radius: ${finding.riskScore.factors.blastRadius}/30`);
+    lines.push(`- Criticality: ${finding.riskScore.factors.criticality}/30`);
+    lines.push(`- Immediacy: ${finding.riskScore.factors.immediacy}/20`);
+    lines.push(`- Dependency: ${finding.riskScore.factors.dependency}/20`);
+    lines.push('');
+  }
+
+  // PHASE 4: Applicability (NEW - shows if this applies to this repo)
+  if (finding.applicability && !finding.applicability.applies) {
+    lines.push(`⚠️ **Note:** ${finding.applicability.reason}`);
+    lines.push('');
+  }
+
+  // Why it matters (now contextualized)
   lines.push(`**Why it matters:** ${finding.why}`);
   lines.push('');
 

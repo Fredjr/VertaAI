@@ -37,13 +37,28 @@ export const checkrunsPassedComparator: Comparator = {
       context.cache.checkRuns = checkRuns;
     }
 
+    // CRITICAL FIX (Gap #5): Exclude VertaAI checks from required checks to avoid recursion
+    // Filter out VertaAI's own checks to prevent self-referential failures
+    const externalCheckRuns = checkRuns.filter((check: any) =>
+      !check.name?.startsWith('VertaAI') &&
+      !check.app?.slug?.includes('vertaai')
+    );
+
     const failedChecks: string[] = [];
     const missingChecks: string[] = [];
     const passedChecks: string[] = [];
+    const skippedChecks: string[] = [];
 
     for (const requiredCheck of requiredChecks) {
-      const checkRun = checkRuns.find((cr: any) => cr.name === requiredCheck);
-      
+      // Skip if this is a VertaAI check (self-reference)
+      if (requiredCheck.includes('VertaAI') || requiredCheck.includes('vertaai')) {
+        console.warn(`[CheckRunsComparator] Skipping self-referential check: ${requiredCheck}`);
+        skippedChecks.push(requiredCheck);
+        continue;
+      }
+
+      const checkRun = externalCheckRuns.find((cr: any) => cr.name === requiredCheck);
+
       if (!checkRun) {
         missingChecks.push(requiredCheck);
       } else if (checkRun.conclusion === 'success') {

@@ -20,25 +20,37 @@ import type {
   NormalizedFinding,
   NotEvaluableItem,
   DetectedSurface,
+  RepoClassification,
+  RiskScore,
+  ObligationApplicability,
 } from './types.js';
 import { ObligationKind } from './types.js'; // Import as value (enum)
 import { v4 as uuidv4 } from 'uuid';
+import { classifyRepo } from './repoClassifier.js';
+import type { GitHubFile } from './comparators/types.js';
 
 /**
  * Normalize pack evaluation results into canonical model
  */
 export function normalizeEvaluationResults(
   packResults: PackResult[],
-  globalDecision: 'pass' | 'warn' | 'block'
+  globalDecision: 'pass' | 'warn' | 'block',
+  prFiles?: GitHubFile[],
+  repoName?: string
 ): NormalizedEvaluationResult {
+  // Step 0: Classify repository (deterministic, cacheable)
+  const repoClassification = prFiles && repoName
+    ? classifyRepo(prFiles, repoName)
+    : undefined;
+
   // Step 1: Extract all detected surfaces (deduplicated)
   const surfaces = extractAllSurfaces(packResults);
 
   // Step 2: Build normalized obligations with surface→obligation mapping
-  const obligations = buildNormalizedObligations(packResults, surfaces);
+  const obligations = buildNormalizedObligations(packResults, surfaces, repoClassification);
 
-  // Step 3: Convert findings to normalized format
-  const findings = buildNormalizedFindings(packResults, obligations);
+  // Step 3: Convert findings to normalized format with risk scoring
+  const findings = buildNormalizedFindings(packResults, obligations, repoClassification);
 
   // Step 4: Extract NOT_EVALUABLE items separately
   const notEvaluable = extractNotEvaluableItems(packResults);
@@ -64,6 +76,7 @@ export function normalizeEvaluationResults(
     confidence,
     nextActions,
     metadata,
+    repoClassification,
   };
 }
 
@@ -93,7 +106,8 @@ function extractAllSurfaces(packResults: PackResult[]): DetectedSurface[] {
  */
 function buildNormalizedObligations(
   packResults: PackResult[],
-  surfaces: DetectedSurface[]
+  surfaces: DetectedSurface[],
+  repoClassification?: RepoClassification
 ): NormalizedObligation[] {
   const obligations: NormalizedObligation[] = [];
 
@@ -119,14 +133,14 @@ function buildNormalizedObligations(
             ruleName: ruleGraph.ruleName,
           },
           result: obligation.result,
-          evidence: ruleGraph.evidence.filter(ev => 
+          evidence: ruleGraph.evidence.filter(ev =>
             // Filter evidence relevant to this obligation
             true // TODO: Add evidence filtering logic
           ),
           decisionOnFail: obligation.decisionOnFail || 'warn',
           decisionOnUnknown: obligation.decisionOnUnknown,
           evaluationStatus: obligation.result.status === 'unknown' ? 'not_evaluable' : 'evaluated',
-          notEvaluableReason: obligation.result.status === 'unknown' 
+          notEvaluableReason: obligation.result.status === 'unknown'
             ? buildNotEvaluableReason(obligation.result.reasonCode, obligation.result.message)
             : undefined,
         };
@@ -194,7 +208,8 @@ function buildNotEvaluableReason(reasonCode: string, message: string): {
  */
 function buildNormalizedFindings(
   packResults: PackResult[],
-  obligations: NormalizedObligation[]
+  obligations: NormalizedObligation[],
+  repoClassification?: RepoClassification
 ): NormalizedFinding[] {
   const findings: NormalizedFinding[] = [];
 
@@ -203,23 +218,180 @@ function buildNormalizedFindings(
     if (obligation.result.status === 'pass') continue;
     if (obligation.evaluationStatus === 'not_evaluable') continue; // Handled separately
 
+    // Compute applicability (does this obligation apply to this repo?)
+    const applicability = resolveObligationApplicability(obligation, repoClassification);
+
+    // Compute risk score (deterministic)
+    const riskScore = computeRiskScore(obligation, repoClassification);
+
     // Build finding from failed obligation
     const finding: NormalizedFinding = {
       id: uuidv4(),
       severity: mapDecisionToSeverity(obligation.decisionOnFail),
       what: obligation.description,
-      why: buildWhyItMatters(obligation),
+      why: buildWhyItMatters(obligation, repoClassification),
       evidence: obligation.evidence,
       howToFix: buildHowToFix(obligation),
       owner: extractOwner(obligation),
       obligationId: obligation.id,
       decision: obligation.decisionOnFail,
+      riskScore,
+      applicability,
+      result: obligation.result,
     };
 
     findings.push(finding);
   }
 
+  // Sort findings by risk score (highest first)
+  findings.sort((a, b) => (b.riskScore?.score || 0) - (a.riskScore?.score || 0));
+
   return findings;
+}
+
+/**
+ * Resolve obligation applicability based on repo classification
+ * PHASE 2: Core Differentiation - Deterministic applicability
+ */
+function resolveObligationApplicability(
+  obligation: NormalizedObligation,
+  repoClassification?: RepoClassification
+): ObligationApplicability {
+  const obligationId = obligation.id;
+
+  if (!repoClassification) {
+    return {
+      obligationId,
+      applies: true,
+      reason: 'No repo classification available',
+      confidence: 0.5,
+      evidence: [],
+    };
+  }
+
+  // Check if obligation is tier-specific
+  const ruleName = obligation.sourceRule.ruleName.toLowerCase();
+  const ruleId = obligation.sourceRule.ruleId.toLowerCase();
+
+  // Tier-1 specific rules
+  if (ruleName.includes('tier-1') || ruleName.includes('tier1') || ruleId.includes('tier-1')) {
+    if (repoClassification.serviceTier === 'tier-1') {
+      return {
+        obligationId,
+        applies: true,
+        reason: `This is a tier-1 service (${repoClassification.evidence.join(', ')})`,
+        confidence: repoClassification.confidence,
+        evidence: repoClassification.evidence,
+      };
+    } else {
+      return {
+        obligationId,
+        applies: false,
+        reason: `This rule only applies to tier-1 services. Current tier: ${repoClassification.serviceTier}`,
+        confidence: repoClassification.confidence,
+        evidence: repoClassification.evidence,
+      };
+    }
+  }
+
+  // Database-specific rules
+  if (ruleName.includes('migration') || ruleName.includes('database') || ruleName.includes('schema')) {
+    if (repoClassification.hasDatabase) {
+      return {
+        obligationId,
+        applies: true,
+        reason: 'This repository has database migrations',
+        confidence: 0.9,
+        evidence: ['Database files detected'],
+      };
+    } else {
+      return {
+        obligationId,
+        applies: false,
+        reason: 'This rule only applies to services with databases',
+        confidence: 0.9,
+        evidence: ['No database files detected'],
+      };
+    }
+  }
+
+  // Default: applies to all
+  return {
+    obligationId,
+    applies: true,
+    reason: 'General rule applies to all repositories',
+    confidence: 1.0,
+    evidence: [],
+  };
+}
+
+/**
+ * Compute deterministic risk score for a finding
+ * PHASE 2: Core Differentiation - Risk scoring
+ */
+function computeRiskScore(
+  obligation: NormalizedObligation,
+  repoClassification?: RepoClassification
+): RiskScore {
+  let blastRadius = 0;
+  let criticality = 0;
+  let immediacy = 0;
+  let dependency = 0;
+
+  // Blast Radius (0-30): How many systems/users affected
+  if (obligation.kind === ObligationKind.PARITY_INVARIANT) {
+    blastRadius = 25; // API changes affect all consumers
+  } else if (obligation.kind === ObligationKind.SECRET_SCAN) {
+    blastRadius = 30; // Security issues affect entire org
+  } else if (obligation.kind === ObligationKind.ARTIFACT_UPDATED) {
+    blastRadius = 15; // Documentation drift affects team
+  } else {
+    blastRadius = 10; // Default
+  }
+
+  // Criticality (0-30): Service tier + compliance
+  if (repoClassification) {
+    if (repoClassification.serviceTier === 'tier-1') {
+      criticality = 30; // Tier-1 services are critical
+    } else if (repoClassification.serviceTier === 'tier-2') {
+      criticality = 20;
+    } else if (repoClassification.serviceTier === 'tier-3') {
+      criticality = 10;
+    }
+  } else {
+    criticality = 15; // Unknown tier
+  }
+
+  // Immediacy (0-20): Blocks merge vs tech debt
+  if (obligation.decisionOnFail === 'block') {
+    immediacy = 20; // Blocks merge immediately
+  } else if (obligation.decisionOnFail === 'warn') {
+    immediacy = 10; // Should fix soon
+  } else {
+    immediacy = 5; // Tech debt
+  }
+
+  // Dependency (0-20): Blocks other work
+  if (obligation.kind === ObligationKind.CHECKRUN_PASSED) {
+    dependency = 20; // CI failures block everything
+  } else if (obligation.kind === ObligationKind.APPROVAL_REQUIRED) {
+    dependency = 15; // Waiting for approval blocks merge
+  } else {
+    dependency = 5; // Doesn't block other work
+  }
+
+  const score = blastRadius + criticality + immediacy + dependency;
+
+  return {
+    score,
+    factors: {
+      blastRadius,
+      criticality,
+      immediacy,
+      dependency,
+    },
+    reasoning: `Risk: ${score}/100 (Blast: ${blastRadius}, Criticality: ${criticality}, Immediacy: ${immediacy}, Dependency: ${dependency})`,
+  };
 }
 
 /**
@@ -236,8 +408,19 @@ function mapDecisionToSeverity(decision: 'pass' | 'warn' | 'block'): 'critical' 
 /**
  * Build "why it matters" explanation based on obligation kind
  */
-function buildWhyItMatters(obligation: NormalizedObligation): string {
-  switch (obligation.kind) {
+function buildWhyItMatters(obligation: NormalizedObligation, repoClassification?: RepoClassification): string {
+  const baseReason = getBaseWhyItMatters(obligation.kind);
+
+  // Add context based on repo classification
+  if (repoClassification && repoClassification.serviceTier === 'tier-1') {
+    return `${baseReason} This is especially critical for tier-1 services with high availability requirements.`;
+  }
+
+  return baseReason;
+}
+
+function getBaseWhyItMatters(kind: ObligationKind): string {
+  switch (kind) {
     case ObligationKind.ARTIFACT_PRESENT:
       return 'Missing required documentation or configuration files can lead to operational issues and knowledge gaps.';
 

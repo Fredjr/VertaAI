@@ -23,6 +23,8 @@ export interface CheckCreationInput {
   // PHASE 3 FIX: Multi-pack support
   packResults?: PackResult[];
   globalDecision?: 'pass' | 'warn' | 'block';
+  // PHASE 4: Ultimate Track A - Pass PR context for repo classification
+  prFiles?: any[];
 }
 
 /**
@@ -52,8 +54,14 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
     // In observe mode, always return success (don't block PR) but show true decision in output
     const conclusion = allObserveMode ? 'success' as const : conclusionMapping[decision];
 
-    // ULTIMATE TRACK A OUTPUT: Normalize and render
-    const normalized = normalizeEvaluationResults(input.packResults!, decision);
+    // ULTIMATE TRACK A OUTPUT: Normalize and render with repo classification
+    const repoName = `${input.owner}/${input.repo}`;
+    const normalized = normalizeEvaluationResults(
+      input.packResults!,
+      decision,
+      input.prFiles,
+      repoName
+    );
     const ultimateOutput = renderUltimateOutput(normalized);
 
     // Build check output for multi-pack
@@ -95,7 +103,13 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
       result: input.packResult,
     }];
 
-    const normalized = normalizeEvaluationResults(packResults, input.packResult.decision);
+    const repoName = `${input.owner}/${input.repo}`;
+    const normalized = normalizeEvaluationResults(
+      packResults,
+      input.packResult.decision,
+      input.prFiles,
+      repoName
+    );
     const ultimateOutput = renderUltimateOutput(normalized);
 
     const title = buildMultiPackCheckTitle(input.packResult.decision, packResults);
