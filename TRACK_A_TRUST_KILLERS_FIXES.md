@@ -4,7 +4,17 @@
 
 This document addresses the **5 critical trust-killers** identified in the senior architect review that prevent Track A output from being "decision-grade" and "enterprise-ready."
 
-**Status:** 3/5 COMPLETE (Confidence, Risk, Types), 2/5 IN PROGRESS (Evidence Rendering, Change Surface)
+**Status:** 3/5 COMPLETE ✅ (Confidence, Risk, Evidence Transparency, Change Surface), 2/5 PLANNED 🚧 (Service Owner Nuance, Consolidate Repetition)
+
+### Completed Fixes (Commits 9927593, fe64fee)
+1. ✅ **Confidence Transparency** - Split into classification/evidence/decision layers with explicit vs inferred sources
+2. ✅ **Risk Transparency** - Tier acts as multiplier with transparent drivers for each factor
+3. ✅ **Evidence Transparency** - Show where we looked, what we found, closest matches
+4. ✅ **Change Surface Summary** - Show THIS PR's files and triggered obligations
+
+### Planned Enhancements
+5. 🚧 **Service Owner Nuance** - Acknowledge alternative evidence sources
+6. 🚧 **Consolidate Repetition** - Reduce redundancy across sections
 
 ---
 
@@ -258,24 +268,33 @@ obligations:
 
 ---
 
+### Commit 2: Evidence Transparency & Change Surface Summary (fe64fee)
+1. `apps/api/src/services/gatekeeper/yaml-dsl/comparators/artifact/artifactPresent.ts`
+   - Added `findClosestMatches()` helper function
+   - Track searchedPaths, matchedPaths, closestMatches
+   - Populate `metadata.evidenceSearch` in comparator results
+
+2. `apps/api/src/services/gatekeeper/yaml-dsl/evaluationNormalizer.ts`
+   - Added `extractEvidenceSearch()` helper
+   - Extract evidenceSearch from comparator metadata
+   - Attach to normalized findings
+
+3. `apps/api/src/services/gatekeeper/yaml-dsl/ultimateOutputRenderer.ts`
+   - Render evidence search in collapsible details
+   - Enhanced change surface summary with THIS PR's files
+   - Show triggered obligations per surface
+   - Display detection patterns in collapsible details
+
+---
+
 ## Next Steps
 
-### Phase 1: Evidence Transparency (Next Commit)
-- Implement evidence search tracking in comparators
-- Show "where we looked" and "what we found"
-- Show "closest matches" when artifact missing
-
-### Phase 2: Change Surface Enhancement
-- Show changed paths that triggered obligations
-- Show detected domains and surfaces
-- Make surface summary actionable
-
-### Phase 3: Consolidate Repetitive Sections
+### Phase 3: Consolidate Repetitive Sections (Future)
 - Collapse audit trail
 - Remove redundant evidence
 - Focus on findings
 
-### Phase 4: Configurable Evidence Sources
+### Phase 4: Configurable Evidence Sources (Future)
 - Allow orgs to configure accepted evidence
 - Show alternative evidence paths
 - Reduce noise for custom org setups
