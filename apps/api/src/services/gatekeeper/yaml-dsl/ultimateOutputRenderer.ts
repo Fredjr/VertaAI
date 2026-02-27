@@ -11,7 +11,48 @@
  * F) Next Best Actions - Agentic, prioritized steps
  */
 
-import type { NormalizedEvaluationResult, NormalizedFinding, NotEvaluableItem } from './types.js';
+import type { NormalizedEvaluationResult, NormalizedFinding, NotEvaluableItem, NormalizedObligation } from './types.js';
+
+/**
+ * CRITICAL FIX: Split obligations into 3 buckets based on applicability
+ * This fixes Regression #1 (inconsistent counts) and Regression #2 (docs repo failing service checks)
+ */
+function splitObligationsByApplicability(obligations: NormalizedObligation[]): {
+  enforced: NormalizedObligation[];      // Applicable obligations (counted in decision)
+  suppressed: NormalizedObligation[];    // Not applicable (not counted)
+  informational: NormalizedObligation[]; // Low confidence applicability (not counted)
+} {
+  const enforced: NormalizedObligation[] = [];
+  const suppressed: NormalizedObligation[] = [];
+  const informational: NormalizedObligation[] = [];
+
+  for (const obligation of obligations) {
+    const applicability = obligation.applicability;
+
+    if (!applicability) {
+      // No applicability info - assume enforced (baseline obligations)
+      enforced.push(obligation);
+      continue;
+    }
+
+    if (!applicability.applies) {
+      // Not applicable - suppress
+      suppressed.push(obligation);
+      continue;
+    }
+
+    // Applicable but low confidence - informational
+    if (applicability.confidence < 0.7) {
+      informational.push(obligation);
+      continue;
+    }
+
+    // Applicable with high confidence - enforce
+    enforced.push(obligation);
+  }
+
+  return { enforced, suppressed, informational };
+}
 
 /**
  * Render normalized evaluation result as GitHub Check summary (markdown)
@@ -261,28 +302,49 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
 
     lines.push('');
 
-    // CRITICAL FIX: Show obligation sources (baseline vs overlay)
+    // CRITICAL FIX: Split obligations by applicability (fixes Regression #1 and #2)
+    const { enforced, suppressed, informational } = splitObligationsByApplicability(normalized.obligations);
+
+    // Show obligation sources (baseline vs overlay) - ONLY ENFORCED
     lines.push('## Triggered Obligations by Source');
     lines.push('');
 
-    const baselineObligations = normalized.obligations.filter(o =>
+    const baselineEnforced = enforced.filter(o =>
       !o.sourceRule.ruleId.includes('tier') && !o.sourceRule.ruleId.includes('service-specific')
     );
-    const tierObligations = normalized.obligations.filter(o =>
+    const tierEnforced = enforced.filter(o =>
       o.sourceRule.ruleId.includes('tier')
     );
-    const serviceObligations = normalized.obligations.filter(o =>
+    const serviceEnforced = enforced.filter(o =>
       o.sourceRule.ruleId.includes('service-specific') || o.sourceRule.ruleId.includes('service-owner')
     );
 
-    if (baselineObligations.length > 0) {
-      lines.push(`- **Baseline:** ${baselineObligations.length} obligation(s) (apply to all repos)`);
+    if (baselineEnforced.length > 0) {
+      lines.push(`- **Baseline:** ${baselineEnforced.length} obligation(s) (apply to all repos)`);
     }
-    if (serviceObligations.length > 0) {
-      lines.push(`- **Service overlay:** ${serviceObligations.length} obligation(s) (apply to service repos)`);
+    if (serviceEnforced.length > 0) {
+      lines.push(`- **Service overlay:** ${serviceEnforced.length} obligation(s) (apply to service repos)`);
     }
-    if (tierObligations.length > 0) {
-      lines.push(`- **${serviceTier.toUpperCase()} overlay:** ${tierObligations.length} obligation(s) (tier-specific requirements)`);
+    if (tierEnforced.length > 0) {
+      lines.push(`- **${serviceTier.toUpperCase()} overlay:** ${tierEnforced.length} obligation(s) (tier-specific requirements)`);
+    }
+
+    // CRITICAL FIX: Show suppressed obligations (not counted in decision)
+    if (suppressed.length > 0) {
+      lines.push('');
+      lines.push(`- **Suppressed:** ${suppressed.length} obligation(s) (not applicable to this repo type)`);
+
+      // Show which obligations were suppressed and why
+      const suppressedByType = suppressed.reduce((acc, o) => {
+        const reason = o.applicability?.reason || 'Not applicable';
+        if (!acc[reason]) acc[reason] = [];
+        acc[reason].push(o.description);
+        return acc;
+      }, {} as Record<string, string[]>);
+
+      Object.entries(suppressedByType).forEach(([reason, obligations]) => {
+        lines.push(`  - ${reason}: ${obligations.length} obligation(s)`);
+      });
     }
 
     lines.push('');
@@ -355,8 +417,9 @@ function renderChangeSurfaceSummary(normalized: NormalizedEvaluationResult): str
       }
     }
 
-    // CRITICAL FIX: Show which obligations this surface triggered
-    const triggeredObligations = normalized.obligations.filter(obl =>
+    // CRITICAL FIX: Show which ENFORCED obligations this surface triggered (not suppressed)
+    const { enforced } = splitObligationsByApplicability(normalized.obligations);
+    const triggeredObligations = enforced.filter(obl =>
       obl.triggeredBy.includes(surface.surfaceId)
     );
 
@@ -406,10 +469,13 @@ function renderRequiredContracts(normalized: NormalizedEvaluationResult): string
   lines.push('*For each change surface, these are the contract requirements and their current status.*');
   lines.push('');
 
-  // Group obligations by surface
-  const obligationsBySurface = new Map<string, typeof normalized.obligations>();
-  
-  for (const obligation of normalized.obligations) {
+  // CRITICAL FIX: Only show enforced obligations (not suppressed ones)
+  const { enforced } = splitObligationsByApplicability(normalized.obligations);
+
+  // Group enforced obligations by surface
+  const obligationsBySurface = new Map<string, typeof enforced>();
+
+  for (const obligation of enforced) {
     for (const surfaceId of obligation.triggeredBy) {
       if (!obligationsBySurface.has(surfaceId)) {
         obligationsBySurface.set(surfaceId, []);
@@ -427,17 +493,17 @@ function renderRequiredContracts(normalized: NormalizedEvaluationResult): string
     lines.push('');
 
     for (const obligation of obligations) {
-      const statusIcon = obligation.result.status === 'pass' ? '✅' : 
+      const statusIcon = obligation.result.status === 'pass' ? '✅' :
                         obligation.result.status === 'fail' ? '❌' : '❓';
-      
+
       lines.push(`${statusIcon} **${obligation.description}**`);
       lines.push(`   - Status: ${obligation.result.status.toUpperCase()}`);
       lines.push(`   - Impact if failed: ${obligation.decisionOnFail.toUpperCase()}`);
-      
+
       if (obligation.result.status !== 'pass') {
         lines.push(`   - Reason: ${obligation.result.message}`);
       }
-      
+
       lines.push('');
     }
   }
@@ -730,13 +796,16 @@ function renderPolicyProvenance(normalized: NormalizedEvaluationResult): string 
   lines.push(`- **Timestamp:** ${normalized.metadata.timestamp}`);
   lines.push('');
 
-  // Triggered rules with their decisions
+  // Triggered rules with their decisions (ONLY ENFORCED OBLIGATIONS)
   lines.push('## Triggered Rules');
   lines.push('');
 
-  // Group obligations by rule
-  const ruleMap = new Map<string, typeof normalized.obligations>();
-  for (const obligation of normalized.obligations) {
+  // CRITICAL FIX: Only show enforced obligations (not suppressed)
+  const { enforced } = splitObligationsByApplicability(normalized.obligations);
+
+  // Group enforced obligations by rule
+  const ruleMap = new Map<string, typeof enforced>();
+  for (const obligation of enforced) {
     const ruleKey = `${obligation.sourceRule.ruleId}:${obligation.sourceRule.ruleName}`;
     if (!ruleMap.has(ruleKey)) {
       ruleMap.set(ruleKey, []);
@@ -792,8 +861,11 @@ function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
   lines.push('*This section shows where we looked for evidence and what we found, ensuring transparency and debuggability.*');
   lines.push('');
 
-  // Group evidence by obligation
-  for (const obligation of normalized.obligations) {
+  // CRITICAL FIX: Only show enforced obligations (not suppressed)
+  const { enforced } = splitObligationsByApplicability(normalized.obligations);
+
+  // Group evidence by enforced obligation
+  for (const obligation of enforced) {
     // Only show evidence for failed or not-evaluable obligations
     if (obligation.result.status === 'pass') continue;
 
@@ -903,7 +975,9 @@ function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
     }
   }
 
-  if (normalized.obligations.filter(o => o.result.status !== 'pass').length === 0) {
+  // CRITICAL FIX: Check enforced obligations only
+  const { enforced: enforcedForCheck } = splitObligationsByApplicability(normalized.obligations);
+  if (enforcedForCheck.filter(o => o.result.status !== 'pass').length === 0) {
     lines.push('*All obligations passed - no evidence trace needed.*');
   }
 
@@ -916,6 +990,9 @@ function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
 function renderMetadata(normalized: NormalizedEvaluationResult): string {
   const lines: string[] = [];
 
+  // CRITICAL FIX: Show enforced vs suppressed counts
+  const { enforced, suppressed, informational } = splitObligationsByApplicability(normalized.obligations);
+
   lines.push('<details>');
   lines.push('<summary>📊 Evaluation Metadata</summary>');
   lines.push('');
@@ -924,7 +1001,7 @@ function renderMetadata(normalized: NormalizedEvaluationResult): string {
   lines.push(`- **Evaluation Time:** ${normalized.metadata.evaluationTimeMs}ms`);
   lines.push(`- **Timestamp:** ${normalized.metadata.timestamp}`);
   lines.push(`- **Surfaces Detected:** ${normalized.surfaces.length}`);
-  lines.push(`- **Obligations Checked:** ${normalized.obligations.length}`);
+  lines.push(`- **Obligations Checked:** ${enforced.length} enforced (${suppressed.length} suppressed, ${informational.length} informational)`);
   lines.push(`- **Findings:** ${normalized.findings.length}`);
   lines.push(`- **Not Evaluable:** ${normalized.notEvaluable.length}`);
   lines.push('</details>');

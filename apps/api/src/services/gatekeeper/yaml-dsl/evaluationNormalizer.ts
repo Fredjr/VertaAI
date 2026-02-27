@@ -123,8 +123,22 @@ function buildNormalizedObligations(
         // Infer obligation kind from evaluator type
         const kind = inferObligationKind(obligation.evaluator.id);
 
-        const normalized: NormalizedObligation = {
+        // CRITICAL FIX: Compute applicability for EVERY obligation (not just findings)
+        // This is the key architectural fix for Regression #1 and #2
+        const tempObligation = {
           id: uuidv4(),
+          kind,
+          description: obligation.description,
+          sourceRule: {
+            ruleId: ruleGraph.ruleId,
+            ruleName: ruleGraph.ruleName,
+          },
+          result: obligation.result,
+        };
+        const applicability = resolveObligationApplicability(tempObligation as any, repoClassification);
+
+        const normalized: NormalizedObligation = {
+          id: tempObligation.id,
           kind,
           description: obligation.description,
           triggeredBy, // EXPLICIT CAUSAL LINK
@@ -143,6 +157,7 @@ function buildNormalizedObligations(
           notEvaluableReason: obligation.result.status === 'unknown'
             ? buildNotEvaluableReason(obligation.result.reasonCode, obligation.result.message)
             : undefined,
+          applicability, // CRITICAL FIX: Add applicability to obligation (not just finding)
         };
 
         obligations.push(normalized);

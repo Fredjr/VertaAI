@@ -1115,6 +1115,9 @@ export interface NormalizedObligation {
     remediation: string;
     degradeTo?: 'pass' | 'warn' | 'block';
   };
+
+  /** CRITICAL FIX: Applicability (does this obligation apply to this repo?) */
+  applicability?: ObligationApplicability;
 }
 
 /**
