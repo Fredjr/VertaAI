@@ -57,6 +57,8 @@ export async function selectApplicablePacks(
 
   // 1. Find all published packs for this workspace
   // CRITICAL FIX: Exclude ARCHIVED packs (only load ACTIVE packs)
+  console.log(`[PackSelector] DEBUG: Looking for packs with workspaceId=${workspaceId}, repo=${fullRepo}, branch=${branch}, prAction=${prAction}`);
+
   const allPacks = await prisma.workspacePolicyPack.findMany({
     where: {
       workspaceId,
@@ -67,7 +69,15 @@ export async function selectApplicablePacks(
     },
   });
 
+  console.log(`[PackSelector] DEBUG: Found ${allPacks.length} published packs in database`);
+  if (allPacks.length > 0) {
+    allPacks.forEach(pack => {
+      console.log(`[PackSelector] DEBUG: Pack "${pack.name}" - status=${pack.status}, packStatus=${pack.packStatus}, trackAEnabled=${pack.trackAEnabled}, scopeType=${pack.scopeType}, scopeRef=${pack.scopeRef}`);
+    });
+  }
+
   if (allPacks.length === 0) {
+    console.log(`[PackSelector] DEBUG: No packs found - returning empty array`);
     return [];
   }
 
@@ -120,10 +130,17 @@ export async function selectApplicablePacks(
     branch,
   };
 
+  console.log(`[PackSelector] DEBUG: Matching ${eventFilteredPacks.length} event-filtered packs against context: ${JSON.stringify(context)}`);
+  eventFilteredPacks.forEach(({ pack }) => {
+    console.log(`[PackSelector] DEBUG: Pack "${pack.metadata.name}" scope: type=${pack.scope.type}, repositories=${JSON.stringify(pack.scope.repositories)}, branches=${JSON.stringify(pack.scope.branches)}`);
+  });
+
   const applicablePacks = matcher.findApplicablePacks(
     eventFilteredPacks.map(p => p.pack),
     context
   );
+
+  console.log(`[PackSelector] DEBUG: PackMatcher returned ${applicablePacks.length} applicable packs`);
 
   // 5. Map back to SelectedPack format with database info
   const result: SelectedPack[] = applicablePacks.map(ap => {
