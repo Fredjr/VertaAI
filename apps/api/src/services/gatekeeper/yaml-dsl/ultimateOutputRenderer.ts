@@ -450,6 +450,12 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
         lines.push('');
       }
     }
+  } else {
+    // Fallback: No repo classification available
+    lines.push('## Policy Activation');
+    lines.push('');
+    lines.push('Repository classification not available. All baseline obligations are enforced.');
+    lines.push('');
   }
 
   return lines.join('\n');
