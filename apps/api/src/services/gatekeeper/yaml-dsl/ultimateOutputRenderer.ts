@@ -266,24 +266,57 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
   try {
     const sections: string[] = [];
 
-    // A) Executive Summary
+    // FIX #3: Detect simple outcomes (1 enforced finding, artifact-missing baseline)
+    const { enforced } = splitObligationsByApplicability(normalized.obligations);
+    const enforcedFindings = normalized.findings.filter(f => f.decision !== 'pass');
+    const isSimpleOutcome = enforcedFindings.length === 1 &&
+                            enforcedFindings[0].result.code === 'ARTIFACT_MISSING';
+
+    // A) Executive Summary (always visible)
     sections.push(renderExecutiveSummary(normalized));
 
-    // B) Policy Activation (CRITICAL - shows signals → overlays → obligations)
-    sections.push(renderPolicyActivation(normalized));
+    // FIX #3: For simple outcomes, collapse "how we think" sections
+    if (isSimpleOutcome) {
+      // Show only: Findings + Evidence Trace (compact)
+      // Hide: Policy Activation, Change Surface, Required Contracts
 
-    // C) Change Surface Summary (shows what changed in THIS PR)
-    sections.push(renderChangeSurfaceSummary(normalized));
+      // D) Findings (ranked by risk) - VISIBLE
+      if (normalized.findings && normalized.findings.length > 0) {
+        sections.push(renderFindings(normalized));
+      }
 
-    // D) Required Contracts & Obligations
-    sections.push(renderRequiredContracts(normalized));
+      // F) Next Best Actions - VISIBLE
+      sections.push(renderNextActions(normalized));
 
-    // F) Next Best Actions (moved up for visibility)
-    sections.push(renderNextActions(normalized));
+      // Collapsed sections
+      sections.push('<details>');
+      sections.push('<summary><b>📊 Policy Evaluation Details</b> (click to expand)</summary>');
+      sections.push('');
+      sections.push(renderPolicyActivation(normalized));
+      sections.push('');
+      sections.push(renderChangeSurfaceSummary(normalized));
+      sections.push('');
+      sections.push(renderRequiredContracts(normalized));
+      sections.push('');
+      sections.push('</details>');
+    } else {
+      // Complex outcome: show all sections
+      // B) Policy Activation (CRITICAL - shows signals → overlays → obligations)
+      sections.push(renderPolicyActivation(normalized));
 
-    // D) Findings (ranked by risk)
-    if (normalized.findings && normalized.findings.length > 0) {
-      sections.push(renderFindings(normalized));
+      // C) Change Surface Summary (shows what changed in THIS PR)
+      sections.push(renderChangeSurfaceSummary(normalized));
+
+      // D) Required Contracts & Obligations
+      sections.push(renderRequiredContracts(normalized));
+
+      // F) Next Best Actions (moved up for visibility)
+      sections.push(renderNextActions(normalized));
+
+      // D) Findings (ranked by risk)
+      if (normalized.findings && normalized.findings.length > 0) {
+        sections.push(renderFindings(normalized));
+      }
     }
 
     // E) Not-Evaluable Section (separate)
@@ -291,10 +324,10 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
       sections.push(renderNotEvaluable(normalized));
     }
 
-    // Policy Provenance (CRITICAL - prevents regression)
+    // Policy Provenance (already collapsed in Elite v3.0)
     sections.push(renderPolicyProvenance(normalized));
 
-    // Evidence Trace (CRITICAL - shows where we looked)
+    // Evidence Trace (already collapsed in Elite v3.0)
     sections.push(renderEvidenceTrace(normalized));
 
     // Metadata (collapsed)
@@ -424,53 +457,63 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
     lines.push('');
   }
 
-  // CRITICAL FIX: 3-Layer Confidence Model (mathematically consistent)
-  const confidenceIcon = confidence.level === 'high' ? '🟢' : confidence.level === 'medium' ? '🟡' : '🔴';
-  lines.push(`**Overall Confidence:** ${confidenceIcon} **${confidence.level.toUpperCase()} (${confidence.score}%)**`);
+  // FIX #1: Split confidence into Decision Confidence vs Classification Confidence
+  // This prevents "LOW confidence" from making users think the decision is uncertain
+  const { enforced } = splitObligationsByApplicability(normalized.obligations);
+  const baselineFailures = enforced.filter(o =>
+    o.result.status === 'fail' &&
+    !o.sourceRule.ruleId.includes('tier') &&
+    !o.sourceRule.ruleId.includes('service-specific')
+  );
+
+  // Decision confidence: HIGH if based on baseline invariants, otherwise use overall confidence
+  const decisionConfidenceLevel = baselineFailures.length > 0 ? 'high' : confidence.level;
+  const decisionConfidenceIcon = decisionConfidenceLevel === 'high' ? '🟢' :
+                                  decisionConfidenceLevel === 'medium' ? '🟡' : '🔴';
+
+  lines.push(`**Decision Confidence:** ${decisionConfidenceIcon} **${decisionConfidenceLevel.toUpperCase()}**`);
+  if (baselineFailures.length > 0) {
+    lines.push(`- Based on ${baselineFailures.length} baseline invariant(s) – deterministic regardless of repo classification`);
+  } else {
+    lines.push(`- Based on repo-specific obligations – may change if classification is corrected`);
+  }
   lines.push('');
 
-  // Show 3-layer breakdown
+  // Classification confidence: Show applicability confidence separately
   if (confidence.applicabilityConfidence) {
     const appIcon = confidence.applicabilityConfidence.level === 'high' ? '🟢' :
                     confidence.applicabilityConfidence.level === 'medium' ? '🟡' : '🔴';
-    lines.push(`- **Applicability Confidence:** ${appIcon} ${confidence.applicabilityConfidence.level.toUpperCase()} (${confidence.applicabilityConfidence.score}%) – ${confidence.applicabilityConfidence.reason}`);
+    lines.push(`**Classification Confidence:** ${appIcon} **${confidence.applicabilityConfidence.level.toUpperCase()} (${confidence.applicabilityConfidence.score}%)**`);
+    lines.push(`- ${confidence.applicabilityConfidence.reason}`);
+    lines.push('');
   }
+
+  // Evidence confidence (collapsed for brevity)
+  lines.push('<details>');
+  lines.push('<summary><b>📊 Detailed Confidence Breakdown</b> (click to expand)</summary>');
+  lines.push('');
 
   const evIcon = confidence.evidenceConfidence.level === 'high' ? '🟢' :
                  confidence.evidenceConfidence.level === 'medium' ? '🟡' : '🔴';
-  lines.push(`- **Evidence Confidence:** ${evIcon} ${confidence.evidenceConfidence.level.toUpperCase()} (${confidence.evidenceConfidence.score}%) – ${confidence.evidenceConfidence.reason}`);
+  lines.push(`**Evidence Confidence:** ${evIcon} ${confidence.evidenceConfidence.level.toUpperCase()} (${confidence.evidenceConfidence.score}%)`);
+  lines.push(`- ${confidence.evidenceConfidence.reason}`);
+  lines.push('');
 
-  lines.push(`- **Decision Confidence:** ${confidenceIcon} ${confidence.level.toUpperCase()} (${confidence.score}%) – aggregate of above`);
+  const confidenceIcon = confidence.level === 'high' ? '🟢' : confidence.level === 'medium' ? '🟡' : '🔴';
+  lines.push(`**Overall Confidence:** ${confidenceIcon} ${confidence.level.toUpperCase()} (${confidence.score}%)`);
+  lines.push(`- Aggregate of applicability + evidence confidence`);
 
   if (confidence.degradationReasons.length > 0) {
     lines.push('');
-    lines.push('*Why confidence is not HIGH:*');
+    lines.push('**Why confidence is not HIGH:**');
     confidence.degradationReasons.forEach(reason => {
       lines.push(`- ${reason}`);
     });
   }
 
-  // SURGICAL UPGRADE #2: Decision Robustness Statement
-  // Explain what's certain vs uncertain when confidence is LOW
-  if (confidence.level === 'low' && decision.outcome !== 'pass') {
-    lines.push('');
-    lines.push('**Decision Robustness:**');
-
-    // Check if this decision is based on baseline obligations (always deterministic)
-    const { enforced } = splitObligationsByApplicability(normalized.obligations);
-    const baselineFailures = enforced.filter(o =>
-      o.result.status === 'fail' &&
-      !o.sourceRule.ruleId.includes('tier') &&
-      !o.sourceRule.ruleId.includes('service-specific')
-    );
-
-    if (baselineFailures.length > 0) {
-      lines.push(`Even with low applicability confidence, this ${decision.outcome.toUpperCase()} is based on ${baselineFailures.length} always-on baseline obligation(s) and is deterministic.`);
-      lines.push('The uncertainty is only about service overlays (runbook/tier/service owner), not these baseline failures.');
-    } else {
-      lines.push(`This ${decision.outcome.toUpperCase()} is based on service/tier-specific obligations. Low confidence means the decision may change if repo classification is corrected.`);
-    }
-  }
+  lines.push('');
+  lines.push('</details>');
+  lines.push('');
 
   // Decision thresholds (prevents "opaque scoring" regression)
   lines.push('');
