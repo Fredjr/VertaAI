@@ -393,20 +393,41 @@ function buildMultiPackCheckTitleFromNormalized(
   }
 
   if (decision === 'warn') {
-    // Use normalized findings (already filtered for applicability)
-    const totalWarnings = normalized.findings.filter(f => f.decision === 'warn').length;
+    // GAP #5 FIX: Show total findings with breakdown (enforced + suppressed)
+    const enforcedWarnings = normalized.findings.filter(f => f.decision === 'warn').length;
+    const suppressedCount = normalized.obligations.filter(o =>
+      o.applicability && !o.applicability.applies && o.result.status === 'fail'
+    ).length;
+    const totalFindings = enforcedWarnings + suppressedCount;
+
+    // Show breakdown if there are suppressed findings
+    if (suppressedCount > 0) {
+      return isObserveMode
+        ? `👁️ Would WARN (observe-only) - ${totalFindings} total (${enforcedWarnings} enforced, ${suppressedCount} suppressed)`
+        : `⚠️ ${totalFindings} finding(s): ${enforcedWarnings} enforced WARN, ${suppressedCount} suppressed`;
+    }
 
     return isObserveMode
-      ? `👁️ Would WARN (observe-only) - ${totalWarnings} warning(s) detected across ${packCount} pack${packCount > 1 ? 's' : ''}`
-      : `⚠️ ${totalWarnings} warning(s) found across ${packCount} pack${packCount > 1 ? 's' : ''}`;
+      ? `👁️ Would WARN (observe-only) - ${enforcedWarnings} warning(s) detected across ${packCount} pack${packCount > 1 ? 's' : ''}`
+      : `⚠️ ${enforcedWarnings} warning(s) found across ${packCount} pack${packCount > 1 ? 's' : ''}`;
   }
 
-  // Use normalized findings (already filtered for applicability)
-  const totalBlocking = normalized.findings.filter(f => f.decision === 'block').length;
+  // GAP #5 FIX: Show total findings with breakdown for blocking issues
+  const enforcedBlocking = normalized.findings.filter(f => f.decision === 'block').length;
+  const suppressedCount = normalized.obligations.filter(o =>
+    o.applicability && !o.applicability.applies && o.result.status === 'fail'
+  ).length;
+  const totalFindings = enforcedBlocking + suppressedCount;
+
+  if (suppressedCount > 0) {
+    return isObserveMode
+      ? `👁️ Would BLOCK (observe-only) - ${totalFindings} total (${enforcedBlocking} enforced, ${suppressedCount} suppressed)`
+      : `❌ ${totalFindings} finding(s): ${enforcedBlocking} enforced BLOCK, ${suppressedCount} suppressed`;
+  }
 
   return isObserveMode
-    ? `👁️ Would BLOCK (observe-only) - ${totalBlocking} blocking issue(s) detected across ${packCount} pack${packCount > 1 ? 's' : ''}`
-    : `❌ ${totalBlocking} blocking issue(s) found across ${packCount} pack${packCount > 1 ? 's' : ''}`;
+    ? `👁️ Would BLOCK (observe-only) - ${enforcedBlocking} blocking issue(s) detected across ${packCount} pack${packCount > 1 ? 's' : ''}`
+    : `❌ ${enforcedBlocking} blocking issue(s) found across ${packCount} pack${packCount > 1 ? 's' : ''}`;
 }
 
 /**
