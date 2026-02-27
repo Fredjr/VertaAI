@@ -710,6 +710,12 @@ function buildUltimateCheckSummary(
     !o.sourceRule.ruleId.includes('service-specific')
   );
 
+  console.log('[GitHubCheckCreator] Confidence calculation:', {
+    baselineFailuresCount: baselineFailures.length,
+    overallConfidence: confidence.level,
+    applicabilityConfidence: confidence.applicabilityConfidence?.level
+  });
+
   // Decision confidence: HIGH if based on baseline invariants, otherwise use overall confidence
   const decisionConfidenceLevel = baselineFailures.length > 0 ? 'high' : confidence.level;
   const decisionConfidenceIcon = decisionConfidenceLevel === 'high' ? '🟢' :
@@ -730,12 +736,16 @@ function buildUltimateCheckSummary(
     summary = `👁️ Would ${decision.outcome.toUpperCase()} (observe-only)`;
   }
 
-  // FIX #1: Show decision confidence (not aggregate) in headline
-  summary += ` | ${decisionConfidenceIcon} Decision: ${decisionConfidenceLevel.toUpperCase()}`;
+  // FIX A: Show decision confidence (not aggregate) in headline - clearer wording
+  if (decisionConfidenceLevel === 'high') {
+    summary += ` | ${decisionConfidenceIcon} Deterministic baseline failure`;
+  } else {
+    summary += ` | ${decisionConfidenceIcon} Decision: ${decisionConfidenceLevel.toUpperCase()}`;
+  }
 
-  // Only show classification if it's different from decision confidence
-  if (decisionConfidenceLevel === 'high' && classificationConfidence !== 'high') {
-    summary += ` | ${classificationIcon} Classification: ${classificationConfidence.toUpperCase()} (${classificationScore}%)`;
+  // Show classification separately if uncertain
+  if (classificationConfidence !== 'high') {
+    summary += ` | Repo classification: ${classificationIcon} ${classificationConfidence} (inferred)`;
   }
 
   if (blockingCount > 0) {

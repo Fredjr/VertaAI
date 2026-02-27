@@ -224,6 +224,47 @@ function getControlObjective(obligationDescription: string): string {
 }
 
 /**
+ * FIX C: Build governance impact statement (makes it feel like governance, not lint)
+ * This explains the business/operational impact of the failure
+ */
+function buildGovernanceImpact(failedObligations: NormalizedObligation[], repoType: string): string | null {
+  if (failedObligations.length === 0) return null;
+
+  // Get the primary failure type
+  const primaryObligation = failedObligations[0];
+  const desc = primaryObligation.description.toLowerCase();
+
+  // CODEOWNERS missing
+  if (desc.includes('codeowners')) {
+    if (repoType === 'docs') {
+      return 'Ownership routing contract missing → docs PRs may not reach subject-matter experts, risking outdated operational guidance.';
+    } else if (repoType === 'service') {
+      return 'Ownership routing contract missing → production changes may bypass required team review, violating change management controls.';
+    } else if (repoType === 'library') {
+      return 'Ownership routing contract missing → API changes may not reach dependent service owners, risking breaking changes.';
+    }
+    return 'Ownership routing contract missing → reviews may not reach accountable owners.';
+  }
+
+  // Runbook missing
+  if (desc.includes('runbook')) {
+    return 'Operational readiness contract missing → incident responders lack escalation paths and troubleshooting guidance.';
+  }
+
+  // Service catalog missing
+  if (desc.includes('service owner') || desc.includes('service catalog')) {
+    return 'Service ownership contract missing → cannot route incidents or map dependencies in service graph.';
+  }
+
+  // Generic governance gap
+  if (failedObligations.length === 1) {
+    return `Governance contract gap detected → ${getControlObjective(desc).toLowerCase()} controls not enforceable.`;
+  }
+
+  return `${failedObligations.length} governance contracts missing → reduced visibility and control over changes.`;
+}
+
+/**
  * CRITICAL FIX: Split obligations into 3 buckets based on applicability
  * This fixes Regression #1 (inconsistent counts) and Regression #2 (docs repo failing service checks)
  */
@@ -411,6 +452,17 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
   const decisionEmoji = decision.outcome === 'pass' ? '✅' : decision.outcome === 'warn' ? '⚠️' : '🚫';
   lines.push(`**Decision:** ${decisionEmoji} **${decision.outcome.toUpperCase()}**`);
   lines.push('');
+
+  // FIX C: Add Governance Impact statement (makes it feel like governance, not lint)
+  const { enforced: enforcedObligations } = splitObligationsByApplicability(normalized.obligations);
+  const failedEnforcedObligations = enforcedObligations.filter(o => o.result.status === 'fail');
+  if (failedEnforcedObligations.length > 0 && repoClassification) {
+    const governanceImpact = buildGovernanceImpact(failedEnforcedObligations, repoClassification.repoType);
+    if (governanceImpact) {
+      lines.push(`**Governance Impact:** ${governanceImpact}`);
+      lines.push('');
+    }
+  }
 
   // "Why" in 1-2 sentences (now contextualized)
   lines.push(`**Why:** ${decision.reason}`);
