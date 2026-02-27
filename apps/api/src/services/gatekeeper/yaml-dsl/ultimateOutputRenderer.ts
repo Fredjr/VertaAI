@@ -226,6 +226,7 @@ function getControlObjective(obligationDescription: string): string {
 /**
  * FIX C: Build governance impact statement (makes it feel like governance, not lint)
  * This explains the business/operational impact of the failure
+ * FIX: Less domain-specific, broader phrasing
  */
 function buildGovernanceImpact(failedObligations: NormalizedObligation[], repoType: string): string | null {
   if (failedObligations.length === 0) return null;
@@ -234,10 +235,10 @@ function buildGovernanceImpact(failedObligations: NormalizedObligation[], repoTy
   const primaryObligation = failedObligations[0];
   const desc = primaryObligation.description.toLowerCase();
 
-  // CODEOWNERS missing
+  // CODEOWNERS missing - FIX: broader, less domain-specific
   if (desc.includes('codeowners')) {
     if (repoType === 'docs') {
-      return 'Ownership routing contract missing → docs PRs may not reach subject-matter experts, risking outdated operational guidance.';
+      return 'Ownership routing contract missing → changes may not reach accountable maintainers; increases risk of stale or unreviewed documentation.';
     } else if (repoType === 'service') {
       return 'Ownership routing contract missing → production changes may bypass required team review, violating change management controls.';
     } else if (repoType === 'library') {
