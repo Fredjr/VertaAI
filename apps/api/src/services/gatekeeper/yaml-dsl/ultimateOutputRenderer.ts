@@ -63,7 +63,7 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
   lines.push('# 📋 Executive Summary');
   lines.push('');
 
-  // PHASE 4: Repository Context (NEW - adds context)
+  // CRITICAL FIX: Repository Context with confidence transparency
   if (repoClassification) {
     const tierEmoji = repoClassification.serviceTier === 'tier-1' ? '🔴' :
                       repoClassification.serviceTier === 'tier-2' ? '🟡' :
@@ -72,10 +72,36 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
                       repoClassification.repoType === 'library' ? '📚' :
                       repoClassification.repoType === 'infra' ? '🏗️' : '📦';
 
-    lines.push(`**Repository:** ${typeEmoji} ${repoClassification.repoType.toUpperCase()}`);
-    if (repoClassification.repoType === 'service') {
-      lines.push(`**Service Tier:** ${tierEmoji} ${repoClassification.serviceTier.toUpperCase()}`);
+    // Show repo type with confidence and source
+    const breakdown = repoClassification.confidenceBreakdown;
+    if (breakdown) {
+      const typeConfidenceLabel = breakdown.repoTypeConfidence >= 0.9 ? 'HIGH' :
+                                   breakdown.repoTypeConfidence >= 0.7 ? 'MEDIUM' : 'LOW';
+      const typeSource = breakdown.repoTypeSource === 'explicit' ?
+        `from ${breakdown.repoTypeEvidence[0]}` :
+        `inferred from ${breakdown.repoTypeEvidence.join(', ')}`;
+
+      lines.push(`**Repository:** ${typeEmoji} ${repoClassification.repoType.toUpperCase()} (${typeConfidenceLabel}) – ${typeSource}`);
+
+      if (repoClassification.repoType === 'service') {
+        const tierConfidenceLabel = breakdown.tierConfidence >= 0.9 ? 'HIGH' :
+                                     breakdown.tierConfidence >= 0.7 ? 'MEDIUM' : 'LOW';
+        const tierSource = breakdown.tierSource === 'explicit' ?
+          `from ${breakdown.tierEvidence[0]}` :
+          breakdown.tierSource === 'inferred' ?
+          `inferred from ${breakdown.tierEvidence.join(', ')}` :
+          'unknown (no tier markers found)';
+
+        lines.push(`**Service Tier:** ${tierEmoji} ${repoClassification.serviceTier.toUpperCase()} (${tierConfidenceLabel}) – ${tierSource}`);
+      }
+    } else {
+      // Fallback to old format
+      lines.push(`**Repository:** ${typeEmoji} ${repoClassification.repoType.toUpperCase()}`);
+      if (repoClassification.repoType === 'service') {
+        lines.push(`**Service Tier:** ${tierEmoji} ${repoClassification.serviceTier.toUpperCase()}`);
+      }
     }
+
     if (repoClassification.primaryLanguages.length > 0) {
       lines.push(`**Languages:** ${repoClassification.primaryLanguages.join(', ')}`);
     }
@@ -324,15 +350,23 @@ function renderFinding(finding: NormalizedFinding): string {
   lines.push(`### ${finding.what}`);
   lines.push('');
 
-  // PHASE 4: Risk Score (NEW - shows deterministic risk calculation)
+  // CRITICAL FIX: Risk Score with transparent drivers
   if (finding.riskScore) {
     const riskColor = finding.riskScore.score >= 70 ? '🔴' :
                       finding.riskScore.score >= 50 ? '🟡' : '🟢';
     lines.push(`**Risk Score:** ${riskColor} ${finding.riskScore.score}/100`);
-    lines.push(`- Blast Radius: ${finding.riskScore.factors.blastRadius}/30`);
-    lines.push(`- Criticality: ${finding.riskScore.factors.criticality}/30`);
-    lines.push(`- Immediacy: ${finding.riskScore.factors.immediacy}/20`);
-    lines.push(`- Dependency: ${finding.riskScore.factors.dependency}/20`);
+
+    if (finding.riskScore.drivers) {
+      lines.push(`- Blast Radius: ${finding.riskScore.factors.blastRadius}/30 (${finding.riskScore.drivers.blastRadiusReason})`);
+      lines.push(`- Criticality: ${finding.riskScore.factors.criticality}/30 (${finding.riskScore.drivers.criticalityReason})`);
+      lines.push(`- Immediacy: ${finding.riskScore.factors.immediacy}/20 (${finding.riskScore.drivers.immediacyReason})`);
+      lines.push(`- Dependency: ${finding.riskScore.factors.dependency}/20 (${finding.riskScore.drivers.dependencyReason})`);
+    } else {
+      lines.push(`- Blast Radius: ${finding.riskScore.factors.blastRadius}/30`);
+      lines.push(`- Criticality: ${finding.riskScore.factors.criticality}/30`);
+      lines.push(`- Immediacy: ${finding.riskScore.factors.immediacy}/20`);
+      lines.push(`- Dependency: ${finding.riskScore.factors.dependency}/20`);
+    }
     lines.push('');
   }
 

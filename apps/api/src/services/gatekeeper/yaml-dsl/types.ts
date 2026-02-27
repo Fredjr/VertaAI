@@ -1164,6 +1164,13 @@ export interface NormalizedFinding {
     code: string;
     message: string;
   };
+
+  /** CRITICAL FIX: Evidence transparency */
+  evidenceSearch?: {
+    searchedPaths: string[];
+    matchedPaths: string[];
+    closestMatches?: string[];
+  };
 }
 
 /**
@@ -1285,6 +1292,17 @@ export interface RepoClassification {
     hasRunbook?: boolean;
     hasMonorepoMarkers?: boolean;
   };
+
+  /** CRITICAL FIX: Detailed confidence breakdown */
+  confidenceBreakdown?: {
+    repoTypeConfidence: number;
+    repoTypeSource: 'explicit' | 'inferred';
+    repoTypeEvidence: string[];
+
+    tierConfidence: number;
+    tierSource: 'explicit' | 'inferred' | 'unknown';
+    tierEvidence: string[];
+  };
 }
 
 /**
@@ -1314,4 +1332,12 @@ export interface RiskScore {
     dependency: number;       // 0-20 (blocks other work)
   };
   reasoning: string;
+
+  /** CRITICAL FIX: Transparent risk drivers */
+  drivers?: {
+    blastRadiusReason: string;
+    criticalityReason: string;
+    immediacyReason: string;
+    dependencyReason: string;
+  };
 }

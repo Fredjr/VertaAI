@@ -442,66 +442,103 @@ function computeRiskScore(
   repoClassification?: RepoClassification
 ): RiskScore {
   let blastRadius = 0;
+  let blastRadiusReason = '';
   let criticality = 0;
+  let criticalityReason = '';
   let immediacy = 0;
+  let immediacyReason = '';
   let dependency = 0;
+  let dependencyReason = '';
 
   const ruleName = obligation.sourceRule.ruleName.toLowerCase();
 
   // Blast Radius (0-30): How many systems/users affected
   if (obligation.kind === ObligationKind.PARITY_INVARIANT) {
-    blastRadius = 25; // API changes affect all consumers
+    blastRadius = 25;
+    blastRadiusReason = 'API changes affect all consumers';
   } else if (obligation.kind === ObligationKind.SECRET_SCAN) {
-    blastRadius = 30; // Security issues affect entire org
+    blastRadius = 30;
+    blastRadiusReason = 'Security issues affect entire org';
   } else if (obligation.kind === ObligationKind.ARTIFACT_UPDATED) {
-    blastRadius = 15; // Documentation drift affects team
+    blastRadius = 15;
+    blastRadiusReason = 'Documentation drift affects team';
   } else if (ruleName.includes('codeowners')) {
-    blastRadius = 20; // Ownership clarity affects team coordination
+    blastRadius = 20;
+    blastRadiusReason = 'Ownership clarity affects team coordination';
   } else if (ruleName.includes('service catalog') || ruleName.includes('service owner')) {
-    blastRadius = 15; // Service ownership affects incident response
+    blastRadius = 15;
+    blastRadiusReason = 'Service ownership affects incident response';
   } else if (ruleName.includes('runbook')) {
-    blastRadius = 25; // Runbook missing affects incident recovery
+    blastRadius = 25;
+    blastRadiusReason = 'Runbook missing affects incident recovery';
   } else {
-    blastRadius = 10; // Default
+    blastRadius = 10;
+    blastRadiusReason = 'Limited scope impact';
   }
 
-  // Criticality (0-30): Service tier + compliance
+  // Criticality (0-30): Service tier + compliance (tier as multiplier, not hard max)
   if (repoClassification) {
+    const tierMultiplier = repoClassification.serviceTier === 'tier-1' ? 1.0 :
+                           repoClassification.serviceTier === 'tier-2' ? 0.67 :
+                           repoClassification.serviceTier === 'tier-3' ? 0.33 : 0.5;
+
+    // Base criticality depends on obligation type
+    let baseCriticality = 15;
+    if (ruleName.includes('runbook') || ruleName.includes('slo')) {
+      baseCriticality = 30; // Operational readiness is critical
+    } else if (ruleName.includes('codeowners') || ruleName.includes('service owner')) {
+      baseCriticality = 20; // Ownership is important
+    } else if (ruleName.includes('service catalog')) {
+      baseCriticality = 15; // Metadata is useful
+    }
+
+    criticality = Math.round(baseCriticality * tierMultiplier);
+
     if (repoClassification.serviceTier === 'tier-1') {
-      criticality = 30; // Tier-1 services are critical
+      criticalityReason = `Tier-1 service (${baseCriticality} × 1.0 multiplier)`;
     } else if (repoClassification.serviceTier === 'tier-2') {
-      criticality = 20;
+      criticalityReason = `Tier-2 service (${baseCriticality} × 0.67 multiplier)`;
     } else if (repoClassification.serviceTier === 'tier-3') {
-      criticality = 10;
+      criticalityReason = `Tier-3 service (${baseCriticality} × 0.33 multiplier)`;
     } else if (repoClassification.repoType === 'docs' || repoClassification.repoType === 'library') {
-      criticality = 5; // Docs/libraries are lower criticality
+      criticality = 5;
+      criticalityReason = `${repoClassification.repoType} repo (low criticality)`;
     } else {
-      criticality = 15; // Unknown tier but likely a service
+      criticalityReason = `Unknown tier (${baseCriticality} × 0.5 multiplier)`;
     }
   } else {
-    criticality = 15; // Unknown tier
+    criticality = 15;
+    criticalityReason = 'No repo classification available';
   }
 
   // Immediacy (0-20): Blocks merge vs tech debt
   if (obligation.decisionOnFail === 'block') {
-    immediacy = 20; // Blocks merge immediately
+    immediacy = 20;
+    immediacyReason = 'Blocks merge immediately';
   } else if (obligation.decisionOnFail === 'warn') {
-    immediacy = 10; // Should fix soon
+    immediacy = 10;
+    immediacyReason = 'Should fix soon (warning)';
   } else {
-    immediacy = 5; // Tech debt
+    immediacy = 5;
+    immediacyReason = 'Tech debt (informational)';
   }
 
   // Dependency (0-20): Blocks other work
   if (obligation.kind === ObligationKind.CHECKRUN_PASSED) {
-    dependency = 20; // CI failures block everything
+    dependency = 20;
+    dependencyReason = 'CI failures block everything';
   } else if (obligation.kind === ObligationKind.APPROVAL_REQUIRED) {
-    dependency = 15; // Waiting for approval blocks merge
+    dependency = 15;
+    dependencyReason = 'Waiting for approval blocks merge';
   } else if (ruleName.includes('codeowners')) {
-    dependency = 10; // Missing CODEOWNERS affects review routing
+    dependency = 10;
+    dependencyReason = 'Missing CODEOWNERS affects review routing';
   } else if (ruleName.includes('runbook')) {
-    dependency = 15; // Missing runbook affects on-call readiness
+    dependency = 15;
+    dependencyReason = 'Missing runbook affects on-call readiness';
   } else {
-    dependency = 5; // Doesn't block other work
+    dependency = 5;
+    dependencyReason = 'Does not block other work';
   }
 
   const score = blastRadius + criticality + immediacy + dependency;
@@ -515,6 +552,12 @@ function computeRiskScore(
       dependency,
     },
     reasoning: `Risk: ${score}/100 (Blast: ${blastRadius}, Criticality: ${criticality}, Immediacy: ${immediacy}, Dependency: ${dependency})`,
+    drivers: {
+      blastRadiusReason,
+      criticalityReason,
+      immediacyReason,
+      dependencyReason,
+    },
   };
 }
 

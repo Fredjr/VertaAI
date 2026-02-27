@@ -77,45 +77,100 @@ export function classifyRepo(files: GitHubFile[], repoName: string): RepoClassif
   
   // Determine repo type
   let repoType: RepoClassification['repoType'] = 'unknown';
-  
+  let repoTypeSource: 'explicit' | 'inferred' = 'inferred';
+  const repoTypeEvidence: string[] = [];
+
   if (hasMonorepoMarkers || hasMultipleServices) {
     repoType = 'monorepo';
-    evidence.push('Monorepo markers detected (pnpm-workspace.yaml, multiple services)');
+    repoTypeSource = hasMonorepoMarkers ? 'explicit' : 'inferred';
+    const marker = hasMonorepoMarkers ? 'pnpm-workspace.yaml/lerna.json/nx.json' : 'multiple service directories';
+    evidence.push(`Monorepo markers detected (${marker})`);
+    repoTypeEvidence.push(`Found ${marker}`);
   } else if (hasTerraform && !hasDockerfile) {
     repoType = 'infra';
+    repoTypeSource = 'inferred';
     evidence.push('Infrastructure repo (Terraform files, no Dockerfile)');
-  } else if (hasDockerfile || hasK8s || hasServiceYaml) {
+    repoTypeEvidence.push('Terraform files present', 'No Dockerfile found');
+  } else if (hasServiceYaml) {
     repoType = 'service';
-    evidence.push('Service repo (Dockerfile, K8s manifests, or service catalog)');
+    repoTypeSource = 'explicit';
+    const catalogFile = files.find(f => f.filename.match(/service\.yaml$|catalog-info\.yaml$|backstage\.yaml$/i))?.filename;
+    evidence.push(`Service repo (explicit service catalog: ${catalogFile})`);
+    repoTypeEvidence.push(`Service catalog found: ${catalogFile}`);
+  } else if (hasDockerfile || hasK8s) {
+    repoType = 'service';
+    repoTypeSource = 'inferred';
+    const marker = hasDockerfile ? 'Dockerfile' : 'K8s manifests';
+    evidence.push(`Service repo (${marker})`);
+    repoTypeEvidence.push(`${marker} detected`);
   } else if (hasPackageJson) {
     // Check if it's a library (has index.ts but no src/main.ts or src/server.ts)
     const hasLibraryStructure = files.some(f => f.filename.match(/^(index\.ts|index\.js|src\/index\.(ts|js))$/)) &&
                                 !files.some(f => f.filename.match(/src\/(main|server|app)\.(ts|js)$/));
     if (hasLibraryStructure) {
       repoType = 'library';
+      repoTypeSource = 'inferred';
       evidence.push('Library structure (index.ts, no main/server entry point)');
+      repoTypeEvidence.push('index.ts found', 'No main/server entry point');
     } else {
       repoType = 'service';
+      repoTypeSource = 'inferred';
       evidence.push('Service structure (package.json with main/server entry point)');
+      repoTypeEvidence.push('package.json with service entry point');
     }
   } else if (files.every(f => f.filename.match(/\.(md|txt|rst)$/i))) {
     repoType = 'docs';
+    repoTypeSource = 'inferred';
     evidence.push('Documentation repo (only markdown/text files)');
+    repoTypeEvidence.push('Only markdown/text files detected');
   }
   
   // Determine service tier (for services only)
   let serviceTier: RepoClassification['serviceTier'] = 'unknown';
-  
+  let tierSource: 'explicit' | 'inferred' | 'unknown' = 'unknown';
+  const tierEvidence: string[] = [];
+
   if (repoType === 'service') {
-    if (hasSLO || (hasRunbook && hasHighAvailability)) {
+    // Check for explicit tier declaration in service catalog
+    const catalogFile = files.find(f => f.filename.match(/service\.yaml$|catalog-info\.yaml$|backstage\.yaml$/i));
+    const hasTierAnnotation = catalogFile && catalogFile.patch?.includes('tier:');
+
+    if (hasTierAnnotation) {
+      // Explicit tier from service catalog
+      tierSource = 'explicit';
+      const tierMatch = catalogFile.patch?.match(/tier:\s*['"]?(tier-)?([123])['"]?/i);
+      if (tierMatch) {
+        const tierNum = tierMatch[2];
+        serviceTier = `tier-${tierNum}` as RepoClassification['serviceTier'];
+        evidence.push(`Tier-${tierNum} service (explicit from ${catalogFile.filename})`);
+        tierEvidence.push(`Tier declared in ${catalogFile.filename}`);
+      }
+    } else if (hasSLO) {
+      // Inferred tier-1 from SLO
       serviceTier = 'tier-1';
-      evidence.push('Tier-1 service (has SLO, runbook, or HA config)');
+      tierSource = 'inferred';
+      const sloFile = files.find(f => f.filename.match(/slo\.yaml$|sli\.yaml$/i))?.filename;
+      evidence.push(`Tier-1 service (inferred from SLO: ${sloFile})`);
+      tierEvidence.push(`SLO file found: ${sloFile}`, 'SLO implies tier-1 criticality');
+    } else if (hasRunbook && hasHighAvailability) {
+      // Inferred tier-1 from runbook + HA
+      serviceTier = 'tier-1';
+      tierSource = 'inferred';
+      evidence.push('Tier-1 service (inferred from runbook + HA config)');
+      tierEvidence.push('Runbook + HA config implies tier-1');
     } else if (hasRunbook || hasServiceYaml) {
+      // Inferred tier-2
       serviceTier = 'tier-2';
-      evidence.push('Tier-2 service (has runbook or service catalog)');
+      tierSource = 'inferred';
+      const marker = hasRunbook ? 'runbook' : 'service catalog';
+      evidence.push(`Tier-2 service (inferred from ${marker})`);
+      tierEvidence.push(`${marker} present, no tier-1 markers`);
     } else {
+      // Inferred tier-3
       serviceTier = 'tier-3';
-      evidence.push('Tier-3 service (no tier-1/tier-2 markers)');
+      tierSource = 'inferred';
+      evidence.push('Tier-3 service (inferred: no tier-1/tier-2 markers)');
+      tierEvidence.push('No SLO, runbook, or service catalog found');
     }
   }
   
@@ -129,10 +184,17 @@ export function classifyRepo(files: GitHubFile[], repoName: string): RepoClassif
   
   // Detect primary languages
   const primaryLanguages = detectLanguages(files);
-  
-  // Compute confidence
+
+  // Compute confidence (legacy)
   const confidence = evidence.length > 0 ? Math.min(0.9, 0.5 + (evidence.length * 0.1)) : 0.3;
-  
+
+  // CRITICAL FIX: Detailed confidence breakdown
+  const repoTypeConfidence = repoTypeSource === 'explicit' ? 0.95 :
+                             repoTypeEvidence.length >= 2 ? 0.8 : 0.6;
+
+  const tierConfidence = tierSource === 'explicit' ? 0.95 :
+                         tierSource === 'inferred' ? 0.7 : 0.3;
+
   return {
     repoType,
     serviceTier,
@@ -142,6 +204,14 @@ export function classifyRepo(files: GitHubFile[], repoName: string): RepoClassif
     confidence,
     evidence,
     metadata,
+    confidenceBreakdown: {
+      repoTypeConfidence,
+      repoTypeSource,
+      repoTypeEvidence,
+      tierConfidence,
+      tierSource,
+      tierEvidence,
+    },
   };
 }
 
