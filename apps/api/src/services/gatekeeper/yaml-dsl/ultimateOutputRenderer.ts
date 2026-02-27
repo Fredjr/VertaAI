@@ -1,17 +1,222 @@
 /**
- * Ultimate Track A Output Renderer (v2.0 - Top-Tier Decision-Grade Output)
+ * Ultimate Track A Output Renderer (v3.0 - Elite Governance Layer Output)
  *
- * Renders the canonical NormalizedEvaluationResult into the "Ultimate Track A" format:
+ * Renders the canonical NormalizedEvaluationResult into "Top-Tier Decision-Grade" format:
  *
- * A) Executive Summary - Global decision + why + merge recommendation + confidence
- * B) Change Surface Summary - THE DIFFERENTIATOR (detected surfaces with evidence)
- * C) Required Contracts & Obligations - For each surface, what's required and status
- * D) Findings - Ranked by risk with "why it matters" + "how to fix"
- * E) Not-Evaluable Section - Separate, with impact on confidence
- * F) Next Best Actions - Agentic, prioritized steps
+ * ELITE UPGRADES (v3.0):
+ * - Context-aware "why it matters" (repo-type + obligation-type specific)
+ * - Patch previews (copy-pasteable, correct-by-construction templates)
+ * - Fixed risk score color coding (0-30 green, 31-60 yellow, 61-100 red)
+ * - Deduplicated remediation (consolidated in Findings only)
+ * - Concise-first rendering (executive card + collapsible details)
+ * - Drift framing (Repo Invariant vs Diff-Derived Expectation)
+ * - Contract graph reasoning (artifact relationships + control objectives)
+ * - Strict terminology (applicable vs evaluated vs suppressed)
+ *
+ * STRUCTURE:
+ * A) Executive Summary - Tight decision card + confidence
+ * B) Policy Activation - Signals + overlays + suppressed obligations
+ * C) Change Surface Summary - What changed + what contracts triggered
+ * D) Required Contracts & Obligations - Status per surface
+ * E) Next Best Actions - Prioritized, actionable steps
+ * F) Findings - Ranked by risk with context-aware guidance
+ * G) Policy Provenance - Auditability (collapsed)
+ * H) Evidence Trace - Transparency (collapsed)
  */
 
 import type { NormalizedEvaluationResult, NormalizedFinding, NotEvaluableItem, NormalizedObligation } from './types.js';
+
+/**
+ * ELITE HELPER: Build context-aware "why it matters" based on repo type + obligation type
+ */
+function buildContextAwareWhyItMatters(
+  finding: NormalizedFinding,
+  repoType: string,
+  obligationDescription: string
+): string {
+  const desc = obligationDescription.toLowerCase();
+
+  // CODEOWNERS-specific reasoning
+  if (desc.includes('codeowners')) {
+    if (repoType === 'docs') {
+      return 'Without ownership, docs PRs may sit unreviewed or get merged without subject-matter expert approval, leading to outdated/incorrect documentation.';
+    } else if (repoType === 'service') {
+      return 'Missing CODEOWNERS means production changes may bypass required team review, violating change management controls and increasing incident risk.';
+    } else if (repoType === 'library') {
+      return 'Library changes without ownership review can introduce breaking changes that cascade to dependent services.';
+    } else {
+      return 'Missing ownership clarity affects review routing and accountability for changes.';
+    }
+  }
+
+  // Runbook-specific reasoning
+  if (desc.includes('runbook')) {
+    if (repoType === 'service') {
+      return 'Without a runbook, on-call engineers won\'t know how to respond to incidents, increasing MTTR and potential for cascading failures.';
+    } else {
+      return 'Missing runbook documentation increases operational risk during incidents.';
+    }
+  }
+
+  // Service catalog/owner-specific reasoning
+  if (desc.includes('service owner') || desc.includes('service catalog')) {
+    return 'Without declared ownership, incident routing fails and on-call escalation paths are undefined, violating operational readiness requirements.';
+  }
+
+  // Fallback to generic (but still better than current)
+  return finding.why || 'This policy violation may impact system reliability, security, or compliance.';
+}
+
+/**
+ * ELITE HELPER: Build concrete "how to fix" with patch previews
+ */
+function buildPatchPreview(
+  finding: NormalizedFinding,
+  obligationDescription: string,
+  repoType: string
+): { steps: string[]; patch?: string } {
+  const desc = obligationDescription.toLowerCase();
+
+  // CODEOWNERS patch preview
+  if (desc.includes('codeowners')) {
+    const patch = repoType === 'docs'
+      ? `# CODEOWNERS - Documentation ownership
+# Format: <path-pattern> <owner(s)>
+
+# Default owner for all docs
+* @your-docs-team
+
+# Specific sections (optional)
+# /api-docs/ @api-team
+# /guides/ @developer-experience-team`
+      : `# CODEOWNERS - Code ownership
+# Format: <path-pattern> <owner(s)>
+
+# Default owner for all code
+* @your-team-name
+
+# Specific paths (optional)
+# /src/api/ @backend-team
+# /src/frontend/ @frontend-team
+# *.tf @infrastructure-team`;
+
+    return {
+      steps: [
+        'Create `CODEOWNERS` file in repository root or `.github/CODEOWNERS`',
+        'Add ownership patterns (see suggested patch below)',
+        'Replace `@your-team-name` with your actual GitHub team',
+        'Commit and push - this check will re-run automatically'
+      ],
+      patch
+    };
+  }
+
+  // Runbook patch preview
+  if (desc.includes('runbook')) {
+    const patch = `# Runbook: [Service Name]
+
+## Service Overview
+- **Purpose:** [Brief description]
+- **Owner:** @your-team-name
+- **Tier:** [tier-1/tier-2/tier-3]
+
+## Common Issues
+
+### Issue: [Common Problem]
+**Symptoms:** [What you'll see]
+**Diagnosis:** [How to confirm]
+**Resolution:** [Step-by-step fix]
+
+## Escalation
+- **Primary:** @your-team-name
+- **Secondary:** [Escalation path]
+- **PagerDuty:** [Link if applicable]`;
+
+    return {
+      steps: [
+        'Create `RUNBOOK.md` in repository root or `/runbooks/<service>/README.md`',
+        'Use the template below and fill in service-specific details',
+        'Include: service overview, common issues, escalation paths',
+        'Link from README.md for discoverability'
+      ],
+      patch
+    };
+  }
+
+  // Service catalog patch preview
+  if (desc.includes('service catalog') || desc.includes('service owner')) {
+    const patch = `apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: your-service-name
+  description: [Brief service description]
+spec:
+  type: service
+  lifecycle: production
+  owner: your-team-name
+  tier: tier-2  # or tier-1, tier-3`;
+
+    return {
+      steps: [
+        'Create `catalog-info.yaml` in repository root',
+        'Add service metadata (see suggested patch below)',
+        'Replace `your-service-name` and `your-team-name` with actual values',
+        'Commit and push'
+      ],
+      patch
+    };
+  }
+
+  // Fallback to existing howToFix
+  return { steps: finding.howToFix };
+}
+
+/**
+ * ELITE HELPER: Determine if obligation is a repo invariant or diff-derived
+ */
+function getDriftFraming(obligation: NormalizedObligation): {
+  type: 'repo_invariant' | 'diff_derived';
+  explanation: string;
+} {
+  // Check if triggered by "protected_branch_pr" surface (always-on baseline)
+  const isBaseline = obligation.triggeredBy.some(surfaceId =>
+    surfaceId.includes('protected_branch') || surfaceId.includes('baseline')
+  );
+
+  if (isBaseline) {
+    return {
+      type: 'repo_invariant',
+      explanation: 'This is a repository-level invariant (independent of PR diff). It\'s checked on every protected-branch PR.'
+    };
+  }
+
+  return {
+    type: 'diff_derived',
+    explanation: 'This check was triggered by specific changes in your PR diff.'
+  };
+}
+
+/**
+ * ELITE HELPER: Get control objective for obligation
+ */
+function getControlObjective(obligationDescription: string): string {
+  const desc = obligationDescription.toLowerCase();
+
+  if (desc.includes('codeowners')) {
+    return 'Change Management & Review Routing';
+  }
+  if (desc.includes('runbook')) {
+    return 'Operational Readiness & Incident Response';
+  }
+  if (desc.includes('service owner') || desc.includes('service catalog')) {
+    return 'Service Ownership & Escalation Routing';
+  }
+  if (desc.includes('check-run') || desc.includes('checkrun')) {
+    return 'Policy Transparency & Auditability';
+  }
+
+  return 'Governance & Compliance';
+}
 
 /**
  * CRITICAL FIX: Split obligations into 3 buckets based on applicability
@@ -647,26 +852,26 @@ function renderFindings(normalized: NormalizedEvaluationResult): string {
   if (critical.length > 0) {
     lines.push('## 🚨 Critical Issues');
     lines.push('');
-    critical.forEach(finding => lines.push(renderFinding(finding)));
+    critical.forEach(finding => lines.push(renderFinding(finding, normalized)));
   }
 
   if (high.length > 0) {
     lines.push('## ❌ High Priority');
     lines.push('');
-    high.forEach(finding => lines.push(renderFinding(finding)));
+    high.forEach(finding => lines.push(renderFinding(finding, normalized)));
   }
 
   if (medium.length > 0) {
     lines.push('## ⚠️ Warnings');
     lines.push('');
-    medium.forEach(finding => lines.push(renderFinding(finding)));
+    medium.forEach(finding => lines.push(renderFinding(finding, normalized)));
   }
 
   if (low.length > 0) {
     lines.push('<details>');
     lines.push('<summary>ℹ️ Low Priority Issues</summary>');
     lines.push('');
-    low.forEach(finding => lines.push(renderFinding(finding)));
+    low.forEach(finding => lines.push(renderFinding(finding, normalized)));
     lines.push('</details>');
   }
 
@@ -674,18 +879,23 @@ function renderFindings(normalized: NormalizedEvaluationResult): string {
 }
 
 /**
- * Render a single finding with all details
+ * Render a single finding with all details (ELITE v3.0)
+ * Now accepts normalized result for context-aware rendering
  */
-function renderFinding(finding: NormalizedFinding): string {
+function renderFinding(finding: NormalizedFinding, normalized: NormalizedEvaluationResult): string {
   const lines: string[] = [];
 
   lines.push(`### ${finding.what}`);
   lines.push('');
 
-  // CRITICAL FIX: Risk Score with transparent drivers
+  // Get context for elite rendering
+  const relatedObligation = normalized.obligations.find(o => o.id === finding.obligationId);
+  const repoType = normalized.metadata?.repoClassification?.repoType || 'unknown';
+
+  // PRIORITY 3: Fixed risk score color coding (0-30 green, 31-60 yellow, 61-100 red)
   if (finding.riskScore) {
-    const riskColor = finding.riskScore.score >= 70 ? '🔴' :
-                      finding.riskScore.score >= 50 ? '🟡' : '🟢';
+    const riskColor = finding.riskScore.score >= 61 ? '🔴' :
+                      finding.riskScore.score >= 31 ? '🟡' : '🟢';
     lines.push(`**Risk Score:** ${riskColor} ${finding.riskScore.score}/100`);
 
     if (finding.riskScore.drivers) {
@@ -702,14 +912,27 @@ function renderFinding(finding: NormalizedFinding): string {
     lines.push('');
   }
 
-  // PHASE 4: Applicability (NEW - shows if this applies to this repo)
-  if (finding.applicability && !finding.applicability.applies) {
-    lines.push(`⚠️ **Note:** ${finding.applicability.reason}`);
+  // ELITE: Show control objective
+  if (relatedObligation) {
+    const controlObjective = getControlObjective(relatedObligation.description);
+    lines.push(`**Control Objective:** ${controlObjective}`);
     lines.push('');
   }
 
-  // Why it matters (now contextualized)
-  lines.push(`**Why it matters:** ${finding.why}`);
+  // ELITE: Show drift framing (repo invariant vs diff-derived)
+  if (relatedObligation) {
+    const driftFraming = getDriftFraming(relatedObligation);
+    const framingIcon = driftFraming.type === 'repo_invariant' ? '🔒' : '📝';
+    lines.push(`${framingIcon} **Check Type:** ${driftFraming.type === 'repo_invariant' ? 'Repo Invariant' : 'Diff-Derived'}`);
+    lines.push(`- ${driftFraming.explanation}`);
+    lines.push('');
+  }
+
+  // PRIORITY 1: Context-aware "why it matters"
+  const contextAwareWhy = relatedObligation
+    ? buildContextAwareWhyItMatters(finding, repoType, relatedObligation.description)
+    : finding.why;
+  lines.push(`**Why it matters:** ${contextAwareWhy}`);
   lines.push('');
 
   // Evidence
@@ -766,12 +989,29 @@ function renderFinding(finding: NormalizedFinding): string {
     lines.push('');
   }
 
-  // How to fix
+  // PRIORITY 2: Concrete "how to fix" with patch preview
+  const patchPreview = relatedObligation
+    ? buildPatchPreview(finding, relatedObligation.description, repoType)
+    : { steps: finding.howToFix };
+
   lines.push('**How to fix:**');
-  finding.howToFix.forEach((step, idx) => {
+  patchPreview.steps.forEach((step, idx) => {
     lines.push(`${idx + 1}. ${step}`);
   });
   lines.push('');
+
+  // PRIORITY 2: Show patch preview if available
+  if (patchPreview.patch) {
+    lines.push('<details>');
+    lines.push('<summary><b>📋 Suggested Patch (click to expand)</b></summary>');
+    lines.push('');
+    lines.push('```');
+    lines.push(patchPreview.patch);
+    lines.push('```');
+    lines.push('');
+    lines.push('</details>');
+    lines.push('');
+  }
 
   // Owner (if available)
   if (finding.owner) {
@@ -866,13 +1106,15 @@ function renderNotEvaluableItem(item: NotEvaluableItem): string {
 }
 
 /**
- * Render Policy Provenance (CRITICAL - prevents "advisor output" regression)
+ * Render Policy Provenance (ELITE v3.0 - Collapsed by default for concise-first rendering)
  * Shows which packs, rules, and codes were evaluated
  */
 function renderPolicyProvenance(normalized: NormalizedEvaluationResult): string {
   const lines: string[] = [];
 
-  lines.push('# 📋 Policy Provenance');
+  // ELITE: Wrap in <details> for concise-first rendering
+  lines.push('<details>');
+  lines.push('<summary><b>📋 Policy Provenance</b> (click to expand)</summary>');
   lines.push('');
   lines.push('*This section shows which policy packs and rules were evaluated, ensuring auditability and reproducibility.*');
   lines.push('');
@@ -936,15 +1178,23 @@ function renderPolicyProvenance(normalized: NormalizedEvaluationResult): string 
     lines.push('');
   }
 
+  // ELITE: Close details tag
+  lines.push('</details>');
+
   return lines.join('\n');
 }
 
 /**
- * Render Evidence Trace (CRITICAL - shows "where did we look")
- * Prevents "opaque scoring" regression by showing concrete evidence evaluation
+ * Render Evidence Trace (ELITE v3.0 - Collapsed by default for concise-first rendering)
+ * Shows "where did we look" - prevents "opaque scoring" regression
  */
 function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
   const lines: string[] = [];
+
+  // ELITE: Wrap in <details> for concise-first rendering
+  lines.push('<details>');
+  lines.push('<summary><b>🔍 Evidence Trace</b> (click to expand)</summary>');
+  lines.push('');
 
   lines.push('# 🔍 Evidence Trace');
   lines.push('');
@@ -1027,21 +1277,14 @@ function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
       lines.push('');
     }
 
-    // Show what would make this pass
+    // PRIORITY 4: Removed duplicate "how to fix" - now only in Findings section
+    // Link to findings instead
     if (obligation.result.status === 'fail') {
-      lines.push('**To pass this check:**');
-      lines.push('');
-
-      // Extract "how to fix" from the finding
       const relatedFinding = normalized.findings.find(f => f.obligationId === obligation.id);
       if (relatedFinding) {
-        relatedFinding.howToFix.forEach((step, idx) => {
-          lines.push(`${idx + 1}. ${step}`);
-        });
-      } else {
-        lines.push(`1. ${obligation.result.message}`);
+        lines.push('*See "Findings" section above for remediation steps.*');
+        lines.push('');
       }
-      lines.push('');
     }
 
     if (obligation.evaluationStatus === 'not_evaluable' && obligation.notEvaluableReason) {
@@ -1058,6 +1301,10 @@ function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
   if (enforcedForCheck.filter(o => o.result.status !== 'pass').length === 0) {
     lines.push('*All obligations passed - no evidence trace needed.*');
   }
+
+  // ELITE: Close details tag
+  lines.push('');
+  lines.push('</details>');
 
   return lines.join('\n');
 }

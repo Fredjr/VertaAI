@@ -393,18 +393,18 @@ function buildMultiPackCheckTitleFromNormalized(
   }
 
   if (decision === 'warn') {
-    // GAP #5 FIX: Show total findings with breakdown (enforced + suppressed)
+    // ELITE: Use precise governance terminology (applicable vs evaluated vs suppressed)
     const enforcedWarnings = normalized.findings.filter(f => f.decision === 'warn').length;
     const suppressedCount = normalized.obligations.filter(o =>
       o.applicability && !o.applicability.applies && o.result.status === 'fail'
     ).length;
-    const totalFindings = enforcedWarnings + suppressedCount;
+    const totalEvaluated = enforcedWarnings + suppressedCount;
 
-    // Show breakdown if there are suppressed findings
+    // Show breakdown if there are suppressed obligations
     if (suppressedCount > 0) {
       return isObserveMode
-        ? `👁️ Would WARN (observe-only) - ${totalFindings} total (${enforcedWarnings} enforced, ${suppressedCount} suppressed)`
-        : `⚠️ ${totalFindings} finding(s): ${enforcedWarnings} enforced WARN, ${suppressedCount} suppressed`;
+        ? `👁️ Would WARN (observe-only) - ${totalEvaluated} obligation(s) evaluated: ${enforcedWarnings} applicable, ${suppressedCount} suppressed`
+        : `⚠️ ${totalEvaluated} obligation(s) evaluated: ${enforcedWarnings} applicable WARN, ${suppressedCount} suppressed`;
     }
 
     return isObserveMode
@@ -412,17 +412,17 @@ function buildMultiPackCheckTitleFromNormalized(
       : `⚠️ ${enforcedWarnings} warning(s) found across ${packCount} pack${packCount > 1 ? 's' : ''}`;
   }
 
-  // GAP #5 FIX: Show total findings with breakdown for blocking issues
+  // ELITE: Use precise governance terminology for blocking issues
   const enforcedBlocking = normalized.findings.filter(f => f.decision === 'block').length;
   const suppressedCount = normalized.obligations.filter(o =>
     o.applicability && !o.applicability.applies && o.result.status === 'fail'
   ).length;
-  const totalFindings = enforcedBlocking + suppressedCount;
+  const totalEvaluated = enforcedBlocking + suppressedCount;
 
   if (suppressedCount > 0) {
     return isObserveMode
-      ? `👁️ Would BLOCK (observe-only) - ${totalFindings} total (${enforcedBlocking} enforced, ${suppressedCount} suppressed)`
-      : `❌ ${totalFindings} finding(s): ${enforcedBlocking} enforced BLOCK, ${suppressedCount} suppressed`;
+      ? `👁️ Would BLOCK (observe-only) - ${totalEvaluated} obligation(s) evaluated: ${enforcedBlocking} applicable, ${suppressedCount} suppressed`
+      : `❌ ${totalEvaluated} obligation(s) evaluated: ${enforcedBlocking} applicable BLOCK, ${suppressedCount} suppressed`;
   }
 
   return isObserveMode
