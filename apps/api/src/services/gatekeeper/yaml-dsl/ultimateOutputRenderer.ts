@@ -1,8 +1,8 @@
 /**
- * Ultimate Track A Output Renderer
- * 
+ * Ultimate Track A Output Renderer (v2.0 - Top-Tier Decision-Grade Output)
+ *
  * Renders the canonical NormalizedEvaluationResult into the "Ultimate Track A" format:
- * 
+ *
  * A) Executive Summary - Global decision + why + merge recommendation + confidence
  * B) Change Surface Summary - THE DIFFERENTIATOR (detected surfaces with evidence)
  * C) Required Contracts & Obligations - For each surface, what's required and status
