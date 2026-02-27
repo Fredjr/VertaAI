@@ -267,18 +267,35 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
     lines.push('## Detected Signals');
     lines.push('');
 
+    // GAP #1 FIX: Always show actual signals detected (never say "no signals")
     const signals: string[] = [];
-    if (metadata.hasDockerfile) signals.push('`Dockerfile` → Service classification');
-    if (metadata.hasSLO) signals.push('`slo.yaml` → Tier-1 overlay activation');
-    if (metadata.hasServiceCatalog) signals.push('Service catalog → Explicit classification');
-    if (metadata.hasRunbook) signals.push('Runbook → Tier-2 marker');
-    if (metadata.hasK8s) signals.push('K8s manifests → Service deployment');
 
+    // Show file-based signals
+    if (metadata.hasDockerfile) signals.push('`Dockerfile`');
+    if (metadata.hasSLO) signals.push('`slo.yaml`');
+    if (metadata.hasServiceCatalog) signals.push('`catalog-info.yaml` or `service.yaml`');
+    if (metadata.hasRunbook) signals.push('`RUNBOOK.md` or `/runbooks/`');
+    if (metadata.hasK8s) signals.push('K8s manifests');
+    if (metadata.hasTerraform) signals.push('Terraform files');
+    if (metadata.hasMonorepoMarkers) signals.push('Monorepo markers (pnpm-workspace.yaml, lerna.json, etc.)');
+
+    // Show absence signals (these are signals too!)
+    const absenceSignals: string[] = [];
+    if (!metadata.hasDockerfile && !metadata.hasK8s) absenceSignals.push('no_dockerfile');
+    if (!metadata.hasServiceCatalog) absenceSignals.push('no_catalog_manifest');
+    if (!metadata.hasSLO) absenceSignals.push('no_tier_signal');
+
+    // Show what we detected
     if (signals.length > 0) {
-      signals.forEach(signal => lines.push(`- ${signal}`));
-    } else {
-      lines.push('- No specific signals detected (default classification)');
+      lines.push(`**Signals:** ${signals.join(', ')}`);
     }
+    if (absenceSignals.length > 0) {
+      lines.push(`**Absence signals:** ${absenceSignals.join(', ')}`);
+    }
+
+    // Show classification result from signals
+    lines.push('');
+    lines.push(`**Classification result:** ${repoType} repo${serviceTier !== 'unknown' ? ` (${serviceTier})` : ''}`);
     lines.push('');
 
     // CRITICAL FIX: Show activated overlays
@@ -334,7 +351,7 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
       lines.push('');
       lines.push(`- **Suppressed:** ${suppressed.length} obligation(s) (not applicable to this repo type)`);
 
-      // Show which obligations were suppressed and why
+      // GAP #2 FIX: Show which obligations were suppressed and why + "what would happen if..."
       const suppressedByType = suppressed.reduce((acc, o) => {
         const reason = o.applicability?.reason || 'Not applicable';
         if (!acc[reason]) acc[reason] = [];
@@ -345,6 +362,18 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
       Object.entries(suppressedByType).forEach(([reason, obligations]) => {
         lines.push(`  - ${reason}: ${obligations.length} obligation(s)`);
       });
+
+      // GAP #2 FIX: Add "what would happen if..." actionable guidance
+      lines.push('');
+      lines.push('  **To activate suppressed obligations:**');
+      if (repoType === 'docs' && suppressed.some(o => o.sourceRule.ruleName.toLowerCase().includes('service'))) {
+        lines.push(`  - If this repo is actually a service: add \`catalog-info.yaml\` with \`spec.type: service\``);
+        lines.push(`  - This will enable service ownership + tier policies`);
+      }
+      if (serviceTier === 'unknown' && suppressed.some(o => o.sourceRule.ruleName.toLowerCase().includes('tier'))) {
+        lines.push(`  - To declare service tier: add \`catalog-info.yaml\` with \`spec.tier: tier-1\` (or tier-2, tier-3)`);
+        lines.push(`  - Or add tier markers: \`slo.yaml\` (tier-1), \`RUNBOOK.md\` (tier-2)`);
+      }
     }
 
     lines.push('');
@@ -876,32 +905,38 @@ function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
     lines.push(`**Code:** \`${obligation.result.reasonCode}\``);
     lines.push('');
 
-    // CRITICAL FIX: Show evidence search transparency (where we looked, what we found)
+    // GAP #3 FIX: Show compact evidence search (where we looked, what we found)
     const finding = normalized.findings.find(f => f.obligationId === obligation.id);
     const evidenceSearch = finding?.evidenceSearch;
 
-    if (evidenceSearch) {
-      lines.push('**Evidence Search:**');
-      lines.push('');
+    if (evidenceSearch && evidenceSearch.searchedPaths && evidenceSearch.searchedPaths.length > 0) {
+      const matchedCount = evidenceSearch.matchedPaths?.length || 0;
+      const searchedCount = evidenceSearch.searchedPaths.length;
 
-      // Show searched paths
-      if (evidenceSearch.searchedPaths && evidenceSearch.searchedPaths.length > 0) {
-        lines.push(`- **Searched paths:** ${evidenceSearch.searchedPaths.map(p => `\`${p}\``).join(', ')}`);
-      }
+      // GAP #3 FIX: Compact format "Searched paths: X, Y, Z (0 found)"
+      lines.push(`**Searched paths:** ${evidenceSearch.searchedPaths.map(p => `\`${p}\``).join(', ')} **(${matchedCount} found)**`);
+      lines.push('');
 
       // Show matched paths (if any)
       if (evidenceSearch.matchedPaths && evidenceSearch.matchedPaths.length > 0) {
-        lines.push(`- **Matched paths:** ${evidenceSearch.matchedPaths.map(p => `\`${p}\``).join(', ')}`);
-      } else {
-        lines.push(`- **Result:** Not found`);
+        lines.push(`**Matched:** ${evidenceSearch.matchedPaths.map(p => `\`${p}\``).join(', ')}`);
+        lines.push('');
       }
 
       // Show closest matches (near-misses)
       if (evidenceSearch.closestMatches && evidenceSearch.closestMatches.length > 0) {
-        lines.push(`- **Closest matches:** ${evidenceSearch.closestMatches.join(', ')}`);
+        lines.push(`**Closest matches:** ${evidenceSearch.closestMatches.join(', ')}`);
+        lines.push('');
       }
-
-      lines.push('');
+    } else if (obligation.result.message) {
+      // Fallback: Extract expected paths from message
+      const expectedMatch = obligation.result.message.match(/Expected one of: (.+)/);
+      if (expectedMatch) {
+        const expectedPaths = expectedMatch[1].split(',').map(p => p.trim());
+        lines.push(`**Searched paths:** ${expectedPaths.map(p => `\`${p}\``).join(', ')} **(0 found)**`);
+        lines.push('');
+      }
+    }
 
       // CRITICAL FIX: Repo-specific guidance
       if (obligation.result.status === 'fail') {
