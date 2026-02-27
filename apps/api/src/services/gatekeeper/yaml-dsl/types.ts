@@ -854,7 +854,7 @@ export interface EvaluatedObligation {
 
   /** Evaluation result */
   result: {
-    status: 'pass' | 'fail' | 'unknown';
+    status: 'pass' | 'fail' | 'unknown' | 'not_evaluable' | 'not_applicable';
     reasonCode: string;
     message: string;
   };
@@ -922,7 +922,7 @@ export interface EvaluatedInvariant {
 
   /** Evaluation result */
   result: {
-    status: 'pass' | 'fail' | 'unknown';
+    status: 'pass' | 'fail' | 'unknown' | 'not_evaluable' | 'not_applicable';
     reasonCode: string;
     message: string;
     /** Specific mismatches or inconsistencies found */
@@ -1092,7 +1092,7 @@ export interface NormalizedObligation {
 
   /** Evaluation result */
   result: {
-    status: 'pass' | 'fail' | 'unknown';
+    status: 'pass' | 'fail' | 'unknown' | 'not_evaluable' | 'not_applicable';
     reasonCode: string;
     message: string;
   };
@@ -1160,7 +1160,7 @@ export interface NormalizedFinding {
 
   /** Result from obligation evaluation */
   result: {
-    status: 'pass' | 'fail' | 'unknown';
+    status: 'pass' | 'fail' | 'unknown' | 'not_evaluable' | 'not_applicable';
     code: string;
     message: string;
   };
@@ -1297,6 +1297,8 @@ export interface ObligationApplicability {
   reason: string;
   confidence: number;
   evidence: string[];
+  /** Recommended status if not applicable */
+  recommendedStatus?: 'not_applicable' | 'not_evaluable';
 }
 
 /**

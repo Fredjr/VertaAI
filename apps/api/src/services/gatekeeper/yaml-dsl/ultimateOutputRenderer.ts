@@ -105,6 +105,23 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
   lines.push(mergeRec);
   lines.push('');
 
+  // CRITICAL FIX: Minimum to PASS (decision-grade clarity)
+  const failedFindings = normalized.findings.filter(f =>
+    f.result.status === 'fail' && f.decision !== 'pass'
+  );
+
+  if (failedFindings.length > 0) {
+    lines.push(`**Minimum to PASS:** ${failedFindings.length} action(s) required`);
+    const topActions = failedFindings.slice(0, 3).map(f => f.what);
+    topActions.forEach(action => {
+      lines.push(`- ${action}`);
+    });
+    if (failedFindings.length > 3) {
+      lines.push(`- *...and ${failedFindings.length - 3} more*`);
+    }
+    lines.push('');
+  }
+
   // Confidence score (and why it's reduced)
   const confidenceIcon = confidence.level === 'high' ? '🟢' : confidence.level === 'medium' ? '🟡' : '🔴';
   lines.push(`**Confidence:** ${confidenceIcon} **${confidence.level.toUpperCase()} (${confidence.score}%)**`);

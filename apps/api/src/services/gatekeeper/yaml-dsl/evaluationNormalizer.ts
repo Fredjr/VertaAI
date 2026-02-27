@@ -221,6 +221,27 @@ function buildNormalizedFindings(
     // Compute applicability (does this obligation apply to this repo?)
     const applicability = resolveObligationApplicability(obligation, repoClassification);
 
+    // CRITICAL FIX: If obligation doesn't apply, override the result status
+    let finalResult = obligation.result;
+    if (!applicability.applies && applicability.recommendedStatus) {
+      finalResult = {
+        ...obligation.result,
+        status: applicability.recommendedStatus,
+        message: applicability.reason,
+      };
+
+      // If not applicable, skip adding to findings (don't show in warnings)
+      if (applicability.recommendedStatus === 'not_applicable') {
+        continue;
+      }
+
+      // If not evaluable, we might still want to show it (depending on policy)
+      // For now, skip it to reduce noise
+      if (applicability.recommendedStatus === 'not_evaluable') {
+        continue;
+      }
+    }
+
     // Compute risk score (deterministic)
     const riskScore = computeRiskScore(obligation, repoClassification);
 
@@ -237,7 +258,7 @@ function buildNormalizedFindings(
       decision: obligation.decisionOnFail,
       riskScore,
       applicability,
-      result: obligation.result,
+      result: finalResult,
     };
 
     findings.push(finding);
@@ -258,23 +279,33 @@ function resolveObligationApplicability(
   repoClassification?: RepoClassification
 ): ObligationApplicability {
   const obligationId = obligation.id;
-
-  if (!repoClassification) {
-    return {
-      obligationId,
-      applies: true,
-      reason: 'No repo classification available',
-      confidence: 0.5,
-      evidence: [],
-    };
-  }
-
-  // Check if obligation is tier-specific
   const ruleName = obligation.sourceRule.ruleName.toLowerCase();
   const ruleId = obligation.sourceRule.ruleId.toLowerCase();
 
-  // Tier-1 specific rules
+  // TIER-SPECIFIC RULES
   if (ruleName.includes('tier-1') || ruleName.includes('tier1') || ruleId.includes('tier-1')) {
+    if (!repoClassification) {
+      return {
+        obligationId,
+        applies: false,
+        reason: 'Cannot determine service tier (classification unavailable)',
+        confidence: 0,
+        evidence: [],
+        recommendedStatus: 'not_evaluable',
+      };
+    }
+
+    if (repoClassification.serviceTier === 'unknown') {
+      return {
+        obligationId,
+        applies: false,
+        reason: 'Service tier not declared; cannot evaluate tier-1 requirement',
+        confidence: repoClassification.confidence,
+        evidence: repoClassification.evidence,
+        recommendedStatus: 'not_evaluable',
+      };
+    }
+
     if (repoClassification.serviceTier === 'tier-1') {
       return {
         obligationId,
@@ -283,39 +314,116 @@ function resolveObligationApplicability(
         confidence: repoClassification.confidence,
         evidence: repoClassification.evidence,
       };
-    } else {
-      return {
-        obligationId,
-        applies: false,
-        reason: `This rule only applies to tier-1 services. Current tier: ${repoClassification.serviceTier}`,
-        confidence: repoClassification.confidence,
-        evidence: repoClassification.evidence,
-      };
     }
+
+    // Tier-2 or Tier-3
+    return {
+      obligationId,
+      applies: false,
+      reason: `This rule only applies to tier-1 services. Current tier: ${repoClassification.serviceTier}`,
+      confidence: repoClassification.confidence,
+      evidence: repoClassification.evidence,
+      recommendedStatus: 'not_applicable',
+    };
   }
 
-  // Database-specific rules
-  if (ruleName.includes('migration') || ruleName.includes('database') || ruleName.includes('schema')) {
-    if (repoClassification.hasDatabase) {
+  // SERVICE CATALOG RULES (only for services, not docs/libraries)
+  if (ruleName.includes('service catalog') || ruleName.includes('service owner') || ruleId.includes('service-owner')) {
+    if (!repoClassification) {
       return {
         obligationId,
         applies: true,
-        reason: 'This repository has database migrations',
-        confidence: 0.9,
-        evidence: ['Database files detected'],
+        reason: 'Cannot determine repo type; assuming service',
+        confidence: 0.5,
+        evidence: [],
       };
-    } else {
+    }
+
+    if (repoClassification.repoType === 'docs' || repoClassification.repoType === 'library') {
+      return {
+        obligationId,
+        applies: false,
+        reason: `This rule applies to services. Current repo type: ${repoClassification.repoType}`,
+        confidence: repoClassification.confidence,
+        evidence: repoClassification.evidence,
+        recommendedStatus: 'not_applicable',
+      };
+    }
+
+    return {
+      obligationId,
+      applies: true,
+      reason: `This is a ${repoClassification.repoType} repository`,
+      confidence: repoClassification.confidence,
+      evidence: repoClassification.evidence,
+    };
+  }
+
+  // DATABASE-SPECIFIC RULES
+  if (ruleName.includes('migration') || ruleName.includes('database') || ruleName.includes('schema')) {
+    if (!repoClassification) {
+      return {
+        obligationId,
+        applies: true,
+        reason: 'Cannot determine database presence',
+        confidence: 0.5,
+        evidence: [],
+      };
+    }
+
+    if (!repoClassification.hasDatabase) {
       return {
         obligationId,
         applies: false,
         reason: 'This rule only applies to services with databases',
         confidence: 0.9,
         evidence: ['No database files detected'],
+        recommendedStatus: 'not_applicable',
       };
     }
+
+    return {
+      obligationId,
+      applies: true,
+      reason: 'This repository has database migrations',
+      confidence: 0.9,
+      evidence: ['Database files detected'],
+    };
   }
 
-  // Default: applies to all
+  // RUNBOOK RULES (tier-specific, but also service-specific)
+  if (ruleName.includes('runbook') && !ruleName.includes('tier')) {
+    if (!repoClassification) {
+      return {
+        obligationId,
+        applies: true,
+        reason: 'Cannot determine repo type',
+        confidence: 0.5,
+        evidence: [],
+      };
+    }
+
+    if (repoClassification.repoType === 'docs' || repoClassification.repoType === 'library') {
+      return {
+        obligationId,
+        applies: false,
+        reason: `Runbooks typically not required for ${repoClassification.repoType} repositories`,
+        confidence: repoClassification.confidence,
+        evidence: repoClassification.evidence,
+        recommendedStatus: 'not_applicable',
+      };
+    }
+
+    return {
+      obligationId,
+      applies: true,
+      reason: `This is a ${repoClassification.repoType} repository`,
+      confidence: repoClassification.confidence,
+      evidence: repoClassification.evidence,
+    };
+  }
+
+  // DEFAULT: CODEOWNERS, CI checks, etc. - applies to all
   return {
     obligationId,
     applies: true,
@@ -338,6 +446,8 @@ function computeRiskScore(
   let immediacy = 0;
   let dependency = 0;
 
+  const ruleName = obligation.sourceRule.ruleName.toLowerCase();
+
   // Blast Radius (0-30): How many systems/users affected
   if (obligation.kind === ObligationKind.PARITY_INVARIANT) {
     blastRadius = 25; // API changes affect all consumers
@@ -345,6 +455,12 @@ function computeRiskScore(
     blastRadius = 30; // Security issues affect entire org
   } else if (obligation.kind === ObligationKind.ARTIFACT_UPDATED) {
     blastRadius = 15; // Documentation drift affects team
+  } else if (ruleName.includes('codeowners')) {
+    blastRadius = 20; // Ownership clarity affects team coordination
+  } else if (ruleName.includes('service catalog') || ruleName.includes('service owner')) {
+    blastRadius = 15; // Service ownership affects incident response
+  } else if (ruleName.includes('runbook')) {
+    blastRadius = 25; // Runbook missing affects incident recovery
   } else {
     blastRadius = 10; // Default
   }
@@ -357,6 +473,10 @@ function computeRiskScore(
       criticality = 20;
     } else if (repoClassification.serviceTier === 'tier-3') {
       criticality = 10;
+    } else if (repoClassification.repoType === 'docs' || repoClassification.repoType === 'library') {
+      criticality = 5; // Docs/libraries are lower criticality
+    } else {
+      criticality = 15; // Unknown tier but likely a service
     }
   } else {
     criticality = 15; // Unknown tier
@@ -376,6 +496,10 @@ function computeRiskScore(
     dependency = 20; // CI failures block everything
   } else if (obligation.kind === ObligationKind.APPROVAL_REQUIRED) {
     dependency = 15; // Waiting for approval blocks merge
+  } else if (ruleName.includes('codeowners')) {
+    dependency = 10; // Missing CODEOWNERS affects review routing
+  } else if (ruleName.includes('runbook')) {
+    dependency = 15; // Missing runbook affects on-call readiness
   } else {
     dependency = 5; // Doesn't block other work
   }
