@@ -41,6 +41,12 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
     sections.push(renderNotEvaluable(normalized));
   }
 
+  // Policy Provenance (CRITICAL - prevents regression)
+  sections.push(renderPolicyProvenance(normalized));
+
+  // Evidence Trace (CRITICAL - shows where we looked)
+  sections.push(renderEvidenceTrace(normalized));
+
   // Metadata (collapsed)
   sections.push(renderMetadata(normalized));
 
@@ -78,7 +84,7 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
   // Confidence score (and why it's reduced)
   const confidenceIcon = confidence.level === 'high' ? '🟢' : confidence.level === 'medium' ? '🟡' : '🔴';
   lines.push(`**Confidence:** ${confidenceIcon} **${confidence.level.toUpperCase()} (${confidence.score}%)**`);
-  
+
   if (confidence.degradationReasons.length > 0) {
     lines.push('');
     lines.push('*Confidence reduced by:*');
@@ -86,6 +92,13 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
       lines.push(`- ${reason}`);
     });
   }
+
+  // Decision thresholds (prevents "opaque scoring" regression)
+  lines.push('');
+  lines.push('**Decision Thresholds:**');
+  lines.push('- BLOCK: Any obligation with `decisionOnFail: block` fails');
+  lines.push('- WARN: Any obligation with `decisionOnFail: warn` fails (and no blocks)');
+  lines.push('- PASS: All obligations pass or have `decisionOnFail: pass`');
 
   return lines.join('\n');
 }
@@ -389,6 +402,164 @@ function renderNotEvaluableItem(item: NotEvaluableItem): string {
   }
 
   lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Render Policy Provenance (CRITICAL - prevents "advisor output" regression)
+ * Shows which packs, rules, and codes were evaluated
+ */
+function renderPolicyProvenance(normalized: NormalizedEvaluationResult): string {
+  const lines: string[] = [];
+
+  lines.push('# 📋 Policy Provenance');
+  lines.push('');
+  lines.push('*This section shows which policy packs and rules were evaluated, ensuring auditability and reproducibility.*');
+  lines.push('');
+
+  // Pack information
+  lines.push('## Evaluated Packs');
+  lines.push('');
+  lines.push(`- **Pack:** ${normalized.metadata.packName} v${normalized.metadata.packVersion}`);
+  lines.push(`- **Pack ID:** \`${normalized.metadata.packId}\``);
+  lines.push(`- **Evaluation Time:** ${normalized.metadata.evaluationTimeMs}ms`);
+  lines.push(`- **Timestamp:** ${normalized.metadata.timestamp}`);
+  lines.push('');
+
+  // Triggered rules with their decisions
+  lines.push('## Triggered Rules');
+  lines.push('');
+
+  // Group obligations by rule
+  const ruleMap = new Map<string, typeof normalized.obligations>();
+  for (const obligation of normalized.obligations) {
+    const ruleKey = `${obligation.sourceRule.ruleId}:${obligation.sourceRule.ruleName}`;
+    if (!ruleMap.has(ruleKey)) {
+      ruleMap.set(ruleKey, []);
+    }
+    ruleMap.get(ruleKey)!.push(obligation);
+  }
+
+  for (const [ruleKey, obligations] of ruleMap.entries()) {
+    const [ruleId, ruleName] = ruleKey.split(':');
+    const failedCount = obligations.filter(o => o.result.status === 'fail').length;
+    const notEvaluableCount = obligations.filter(o => o.evaluationStatus === 'not_evaluable').length;
+    const passedCount = obligations.filter(o => o.result.status === 'pass').length;
+
+    const statusIcon = failedCount > 0 ? '❌' : notEvaluableCount > 0 ? '❓' : '✅';
+    const decision = failedCount > 0 ? obligations.find(o => o.result.status === 'fail')?.decisionOnFail.toUpperCase() : 'PASS';
+
+    lines.push(`### ${statusIcon} \`${ruleId}\` - ${ruleName}`);
+    lines.push('');
+    lines.push(`- **Decision:** ${decision}`);
+    lines.push(`- **Obligations:** ${obligations.length} total (${passedCount} passed, ${failedCount} failed, ${notEvaluableCount} not evaluable)`);
+    lines.push(`- **Pack:** ${normalized.metadata.packName}`);
+
+    // Show individual obligation results
+    if (failedCount > 0 || notEvaluableCount > 0) {
+      lines.push('');
+      lines.push('**Details:**');
+      for (const obligation of obligations) {
+        if (obligation.result.status === 'fail' || obligation.evaluationStatus === 'not_evaluable') {
+          const icon = obligation.result.status === 'fail' ? '❌' : '❓';
+          lines.push(`- ${icon} ${obligation.description}`);
+          lines.push(`  - **Status:** ${obligation.result.status.toUpperCase()}`);
+          lines.push(`  - **Code:** \`${obligation.result.reasonCode}\``);
+          lines.push(`  - **Reason:** ${obligation.result.message}`);
+        }
+      }
+    }
+
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Render Evidence Trace (CRITICAL - shows "where did we look")
+ * Prevents "opaque scoring" regression by showing concrete evidence evaluation
+ */
+function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
+  const lines: string[] = [];
+
+  lines.push('# 🔍 Evidence Trace');
+  lines.push('');
+  lines.push('*This section shows where we looked for evidence and what we found, ensuring transparency and debuggability.*');
+  lines.push('');
+
+  // Group evidence by obligation
+  for (const obligation of normalized.obligations) {
+    // Only show evidence for failed or not-evaluable obligations
+    if (obligation.result.status === 'pass') continue;
+
+    lines.push(`## ${obligation.description}`);
+    lines.push('');
+    lines.push(`**Rule:** \`${obligation.sourceRule.ruleId}\` - ${obligation.sourceRule.ruleName}`);
+    lines.push(`**Status:** ${obligation.result.status.toUpperCase()}`);
+    lines.push(`**Code:** \`${obligation.result.reasonCode}\``);
+    lines.push('');
+
+    if (obligation.evidence.length > 0) {
+      lines.push('**Looked for evidence in:**');
+      lines.push('');
+
+      for (const evidence of obligation.evidence) {
+        const icon = evidence.type === 'file' ? '📄' :
+                     evidence.type === 'approval' ? '👤' :
+                     evidence.type === 'checkrun' ? '🔍' :
+                     evidence.type === 'diff' ? '📝' : '📌';
+
+        lines.push(`- ${icon} **${evidence.type}:** ${evidence.value}`);
+
+        if (evidence.metadata) {
+          if (evidence.metadata.path) {
+            lines.push(`  - Path: \`${evidence.metadata.path}\``);
+          }
+          if (evidence.metadata.pattern) {
+            lines.push(`  - Pattern: \`${evidence.metadata.pattern}\``);
+          }
+          if (evidence.metadata.status) {
+            lines.push(`  - Status: ${evidence.metadata.status}`);
+          }
+        }
+      }
+      lines.push('');
+    } else {
+      lines.push('**No evidence found** - This is why the obligation failed or could not be evaluated.');
+      lines.push('');
+    }
+
+    // Show what would make this pass
+    if (obligation.result.status === 'fail') {
+      lines.push('**To pass this check:**');
+      lines.push('');
+
+      // Extract "how to fix" from the finding
+      const relatedFinding = normalized.findings.find(f => f.obligationId === obligation.id);
+      if (relatedFinding) {
+        relatedFinding.howToFix.forEach((step, idx) => {
+          lines.push(`${idx + 1}. ${step}`);
+        });
+      } else {
+        lines.push(`1. ${obligation.result.message}`);
+      }
+      lines.push('');
+    }
+
+    if (obligation.evaluationStatus === 'not_evaluable' && obligation.notEvaluableReason) {
+      lines.push('**Why not evaluable:**');
+      lines.push('');
+      lines.push(`- **Category:** ${obligation.notEvaluableReason.category}`);
+      lines.push(`- **Remediation:** ${obligation.notEvaluableReason.remediation}`);
+      lines.push('');
+    }
+  }
+
+  if (normalized.obligations.filter(o => o.result.status !== 'pass').length === 0) {
+    lines.push('*All obligations passed - no evidence trace needed.*');
+  }
 
   return lines.join('\n');
 }
