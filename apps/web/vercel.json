@@ -1,12 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "installCommand": "cd ../.. && corepack enable && corepack prepare pnpm@8.15.0 --activate && pnpm install --no-frozen-lockfile",
-  "buildCommand": "cd ../.. && pnpm turbo build --filter=@vertaai/web",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
   "env": {
-    "ENABLE_EXPERIMENTAL_COREPACK": "1",
-    "NPM_CONFIG_REGISTRY": "https://registry.npmjs.org/",
-    "PNPM_VERSION": "8.15.0"
+    "NPM_CONFIG_REGISTRY": "https://registry.npmjs.org/"
   }
 }
 
