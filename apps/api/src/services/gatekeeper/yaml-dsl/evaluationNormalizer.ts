@@ -204,6 +204,23 @@ function buildNotEvaluableReason(reasonCode: string, message: string): {
 }
 
 /**
+ * Extract evidence search metadata from comparator result
+ * CRITICAL FIX: Evidence transparency
+ */
+function extractEvidenceSearch(obligation: NormalizedObligation): {
+  searchedPaths?: string[];
+  matchedPaths?: string[];
+  closestMatches?: string[];
+} | undefined {
+  // Check if comparator result has evidenceSearch metadata
+  const metadata = obligation.result.metadata as any;
+  if (metadata?.evidenceSearch) {
+    return metadata.evidenceSearch;
+  }
+  return undefined;
+}
+
+/**
  * Build normalized findings with risk/why/how-to-fix
  */
 function buildNormalizedFindings(
@@ -245,6 +262,9 @@ function buildNormalizedFindings(
     // Compute risk score (deterministic)
     const riskScore = computeRiskScore(obligation, repoClassification);
 
+    // CRITICAL FIX: Extract evidence search from comparator metadata
+    const evidenceSearch = extractEvidenceSearch(obligation);
+
     // Build finding from failed obligation
     const finding: NormalizedFinding = {
       id: uuidv4(),
@@ -259,6 +279,7 @@ function buildNormalizedFindings(
       riskScore,
       applicability,
       result: finalResult,
+      evidenceSearch,
     };
 
     findings.push(finding);

@@ -188,15 +188,16 @@ function renderChangeSurfaceSummary(normalized: NormalizedEvaluationResult): str
 
   for (const surface of normalized.surfaces) {
     const confidenceIcon = surface.confidence >= 0.9 ? '🟢' : surface.confidence >= 0.7 ? '🟡' : '🔴';
-    
+
     lines.push(`### ${surface.description}`);
     lines.push('');
     lines.push(`**Confidence:** ${confidenceIcon} ${Math.round(surface.confidence * 100)}%`);
     lines.push(`**Detection Method:** ${surface.detectionMethod}`);
-    
+
+    // CRITICAL FIX: Show which files in THIS PR triggered this surface
     if (surface.files.length > 0) {
       lines.push('');
-      lines.push('**Files:**');
+      lines.push('**Files changed in this PR:**');
       surface.files.slice(0, 5).forEach(file => {
         lines.push(`- \`${file}\``);
       });
@@ -205,12 +206,38 @@ function renderChangeSurfaceSummary(normalized: NormalizedEvaluationResult): str
       }
     }
 
-    if (surface.metadata?.matchedGlobs && surface.metadata.matchedGlobs.length > 0) {
+    // CRITICAL FIX: Show which obligations this surface triggered
+    const triggeredObligations = normalized.obligations.filter(obl =>
+      obl.triggeredBy.includes(surface.surfaceId)
+    );
+
+    if (triggeredObligations.length > 0) {
       lines.push('');
-      lines.push('**Matched patterns:**');
-      surface.metadata.matchedGlobs.slice(0, 3).forEach(glob => {
+      lines.push('**Triggered obligations:**');
+      triggeredObligations.slice(0, 3).forEach(obl => {
+        const statusIcon = obl.result.status === 'pass' ? '✅' :
+                          obl.result.status === 'fail' ? '❌' :
+                          obl.result.status === 'warn' ? '⚠️' : '❓';
+        lines.push(`- ${statusIcon} ${obl.description}`);
+      });
+      if (triggeredObligations.length > 3) {
+        lines.push(`- *...and ${triggeredObligations.length - 3} more*`);
+      }
+    }
+
+    if (surface.metadata?.globs && surface.metadata.globs.length > 0) {
+      lines.push('');
+      lines.push('<details>');
+      lines.push('<summary>🔍 Detection patterns used</summary>');
+      lines.push('');
+      surface.metadata.globs.slice(0, 5).forEach((glob: string) => {
         lines.push(`- \`${glob}\``);
       });
+      if (surface.metadata.globs.length > 5) {
+        lines.push(`- *...and ${surface.metadata.globs.length - 5} more*`);
+      }
+      lines.push('');
+      lines.push('</details>');
     }
 
     lines.push('');
@@ -397,6 +424,40 @@ function renderFinding(finding: NormalizedFinding): string {
     if (finding.evidence.length > 3) {
       lines.push(`- *...and ${finding.evidence.length - 3} more*`);
     }
+    lines.push('');
+  }
+
+  // CRITICAL FIX: Evidence Transparency (show where we looked, what we found)
+  if (finding.evidenceSearch) {
+    lines.push('<details>');
+    lines.push('<summary>🔍 Evidence Search Details</summary>');
+    lines.push('');
+
+    if (finding.evidenceSearch.searchedPaths && finding.evidenceSearch.searchedPaths.length > 0) {
+      lines.push('**Where we looked:**');
+      finding.evidenceSearch.searchedPaths.forEach(path => {
+        lines.push(`- \`${path}\``);
+      });
+      lines.push('');
+    }
+
+    if (finding.evidenceSearch.matchedPaths && finding.evidenceSearch.matchedPaths.length > 0) {
+      lines.push('**What we found:**');
+      finding.evidenceSearch.matchedPaths.forEach(path => {
+        lines.push(`- ✅ \`${path}\``);
+      });
+      lines.push('');
+    }
+
+    if (finding.evidenceSearch.closestMatches && finding.evidenceSearch.closestMatches.length > 0) {
+      lines.push('**Closest matches:**');
+      finding.evidenceSearch.closestMatches.forEach(match => {
+        lines.push(`- 📁 ${match}`);
+      });
+      lines.push('');
+    }
+
+    lines.push('</details>');
     lines.push('');
   }
 
