@@ -65,7 +65,8 @@ export async function createYAMLGatekeeperCheck(input: CheckCreationInput): Prom
     const ultimateOutput = renderUltimateOutput(normalized);
 
     // Build check output for multi-pack
-    const title = buildMultiPackCheckTitle(decision, input.packResults!);
+    // CRITICAL FIX: Use normalized findings count (not raw pack findings)
+    const title = buildMultiPackCheckTitleFromNormalized(decision, normalized, input.packResults!.length, allObserveMode);
     const summary = buildUltimateCheckSummary(normalized, allObserveMode);
     const text = ultimateOutput; // Use the new Ultimate Track A output
 
@@ -375,6 +376,43 @@ function formatFinding(finding: any): string {
 
 // PHASE 3 FIX: Multi-pack check building functions
 
+/**
+ * CRITICAL FIX: Build title from normalized findings (not raw pack findings)
+ * This ensures the title count matches the findings count (fixes Regression #1)
+ */
+function buildMultiPackCheckTitleFromNormalized(
+  decision: 'pass' | 'warn' | 'block',
+  normalized: import('./types.js').NormalizedEvaluationResult,
+  packCount: number,
+  isObserveMode: boolean
+): string {
+  if (decision === 'pass') {
+    return isObserveMode
+      ? `👁️ Observation complete - no issues detected (${packCount} pack${packCount > 1 ? 's' : ''})`
+      : `✅ All policy checks passed (${packCount} pack${packCount > 1 ? 's' : ''})`;
+  }
+
+  if (decision === 'warn') {
+    // Use normalized findings (already filtered for applicability)
+    const totalWarnings = normalized.findings.filter(f => f.decision === 'warn').length;
+
+    return isObserveMode
+      ? `👁️ Would WARN (observe-only) - ${totalWarnings} warning(s) detected across ${packCount} pack${packCount > 1 ? 's' : ''}`
+      : `⚠️ ${totalWarnings} warning(s) found across ${packCount} pack${packCount > 1 ? 's' : ''}`;
+  }
+
+  // Use normalized findings (already filtered for applicability)
+  const totalBlocking = normalized.findings.filter(f => f.decision === 'block').length;
+
+  return isObserveMode
+    ? `👁️ Would BLOCK (observe-only) - ${totalBlocking} blocking issue(s) detected across ${packCount} pack${packCount > 1 ? 's' : ''}`
+    : `❌ ${totalBlocking} blocking issue(s) found across ${packCount} pack${packCount > 1 ? 's' : ''}`;
+}
+
+/**
+ * DEPRECATED: Use buildMultiPackCheckTitleFromNormalized instead
+ * This function counts raw pack findings which may include non-applicable obligations
+ */
 function buildMultiPackCheckTitle(decision: 'pass' | 'warn' | 'block', packResults: PackResult[]): string {
   const allObserveMode = packResults.every(pr => pr.pack.metadata.packMode === 'observe');
 
