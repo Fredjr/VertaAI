@@ -1243,11 +1243,22 @@ export interface NormalizedEvaluationResult {
     }>;
   };
 
-  /** Confidence score */
+  /** Confidence score (3-layer model) */
   confidence: {
-    score: number; // 0-100
+    score: number; // 0-100 (aggregate = min of applicability + evidence)
     level: 'high' | 'medium' | 'low';
     degradationReasons: string[];
+    // CRITICAL FIX: 3-layer breakdown
+    applicabilityConfidence?: {
+      score: number;
+      level: 'high' | 'medium' | 'low';
+      reason: string;
+    };
+    evidenceConfidence: {
+      score: number;
+      level: 'high' | 'medium' | 'low';
+      reason: string;
+    };
   };
 
   /** Next best actions (prioritized) */

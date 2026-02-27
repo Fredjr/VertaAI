@@ -58,8 +58,8 @@ export function normalizeEvaluationResults(
   // Step 5: Compute decision with contributing factors
   const decision = computeNormalizedDecision(globalDecision, findings, notEvaluable);
 
-  // Step 6: Compute confidence with degradation reasons
-  const confidence = computeConfidenceScore(packResults, notEvaluable);
+  // Step 6: Compute confidence with degradation reasons (3-layer model)
+  const confidence = computeConfidenceScore(packResults, notEvaluable, repoClassification);
 
   // Step 7: Generate prioritized next actions
   const nextActions = generateNextActions(findings, notEvaluable, globalDecision);
@@ -823,30 +823,90 @@ function computeNormalizedDecision(
 }
 
 /**
- * Compute confidence score with degradation reasons
+ * Compute confidence score with 3-layer model
+ * CRITICAL FIX: Confidence must be mathematically consistent
+ *
+ * Layer 1: Applicability Confidence (repo type/tier classification)
+ * Layer 2: Evidence Confidence (artifact checks)
+ * Layer 3: Decision Confidence (aggregate = min of above)
  */
 function computeConfidenceScore(
   packResults: PackResult[],
-  notEvaluable: NotEvaluableItem[]
+  notEvaluable: NotEvaluableItem[],
+  repoClassification?: RepoClassification
 ): {
   score: number;
   level: 'high' | 'medium' | 'low';
   degradationReasons: string[];
+  // CRITICAL FIX: 3-layer breakdown
+  applicabilityConfidence?: {
+    score: number;
+    level: 'high' | 'medium' | 'low';
+    reason: string;
+  };
+  evidenceConfidence: {
+    score: number;
+    level: 'high' | 'medium' | 'low';
+    reason: string;
+  };
 } {
+  // Layer 1: Applicability Confidence (from repo classification)
+  let applicabilityScore = 100;
+  let applicabilityLevel: 'high' | 'medium' | 'low' = 'high';
+  let applicabilityReason = 'No classification required';
+
+  if (repoClassification?.confidenceBreakdown) {
+    const breakdown = repoClassification.confidenceBreakdown;
+
+    // Take minimum of repo type and tier confidence
+    const repoTypeScore = breakdown.repoTypeConfidence * 100;
+    const tierScore = breakdown.tierConfidence * 100;
+    applicabilityScore = Math.min(repoTypeScore, tierScore);
+
+    // Determine level
+    if (applicabilityScore >= 90) applicabilityLevel = 'high';
+    else if (applicabilityScore >= 60) applicabilityLevel = 'medium';
+    else applicabilityLevel = 'low';
+
+    // Build reason
+    const repoSource = breakdown.repoTypeSource === 'explicit' ? 'explicit' : 'inferred';
+    const tierSource = breakdown.tierSource === 'explicit' ? 'explicit' :
+                       breakdown.tierSource === 'inferred' ? 'inferred' : 'unknown';
+    applicabilityReason = `Repo type ${repoSource}, tier ${tierSource}`;
+  }
+
+  // Layer 2: Evidence Confidence (from artifact checks)
   const totalCoverage = packResults.reduce((sum, pr) => ({
     evaluable: sum.evaluable + pr.result.coverage.evaluable,
     total: sum.total + pr.result.coverage.total,
     notEvaluable: sum.notEvaluable + pr.result.coverage.notEvaluable,
   }), { evaluable: 0, total: 0, notEvaluable: 0 });
 
-  const score = totalCoverage.total === 0 ? 100 : Math.round((totalCoverage.evaluable / totalCoverage.total) * 100);
+  const evidenceScore = totalCoverage.total === 0 ? 100 : Math.round((totalCoverage.evaluable / totalCoverage.total) * 100);
+
+  let evidenceLevel: 'high' | 'medium' | 'low';
+  if (evidenceScore >= 90) evidenceLevel = 'high';
+  else if (evidenceScore >= 70) evidenceLevel = 'medium';
+  else evidenceLevel = 'low';
+
+  const evidenceReason = totalCoverage.notEvaluable > 0
+    ? `${totalCoverage.notEvaluable} check(s) not evaluable`
+    : 'All artifact checks deterministic';
+
+  // Layer 3: Decision Confidence (aggregate = minimum of above)
+  // CRITICAL: Global confidence cannot exceed applicability confidence
+  const score = Math.min(applicabilityScore, evidenceScore);
 
   let level: 'high' | 'medium' | 'low';
   if (score >= 90) level = 'high';
-  else if (score >= 70) level = 'medium';
+  else if (score >= 60) level = 'medium';
   else level = 'low';
 
   const degradationReasons: string[] = [];
+
+  if (applicabilityLevel !== 'high') {
+    degradationReasons.push(`Applicability ${applicabilityLevel} (${applicabilityReason})`);
+  }
 
   if (totalCoverage.notEvaluable > 0) {
     degradationReasons.push(`${totalCoverage.notEvaluable} check(s) not evaluable`);
@@ -871,6 +931,16 @@ function computeConfidenceScore(
     score,
     level,
     degradationReasons,
+    applicabilityConfidence: repoClassification ? {
+      score: applicabilityScore,
+      level: applicabilityLevel,
+      reason: applicabilityReason,
+    } : undefined,
+    evidenceConfidence: {
+      score: evidenceScore,
+      level: evidenceLevel,
+      reason: evidenceReason,
+    },
   };
 }
 

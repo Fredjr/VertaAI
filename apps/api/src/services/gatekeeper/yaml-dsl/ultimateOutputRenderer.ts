@@ -148,13 +148,27 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
     lines.push('');
   }
 
-  // Confidence score (and why it's reduced)
+  // CRITICAL FIX: 3-Layer Confidence Model (mathematically consistent)
   const confidenceIcon = confidence.level === 'high' ? '🟢' : confidence.level === 'medium' ? '🟡' : '🔴';
-  lines.push(`**Confidence:** ${confidenceIcon} **${confidence.level.toUpperCase()} (${confidence.score}%)**`);
+  lines.push(`**Overall Confidence:** ${confidenceIcon} **${confidence.level.toUpperCase()} (${confidence.score}%)**`);
+  lines.push('');
+
+  // Show 3-layer breakdown
+  if (confidence.applicabilityConfidence) {
+    const appIcon = confidence.applicabilityConfidence.level === 'high' ? '🟢' :
+                    confidence.applicabilityConfidence.level === 'medium' ? '🟡' : '🔴';
+    lines.push(`- **Applicability Confidence:** ${appIcon} ${confidence.applicabilityConfidence.level.toUpperCase()} (${confidence.applicabilityConfidence.score}%) – ${confidence.applicabilityConfidence.reason}`);
+  }
+
+  const evIcon = confidence.evidenceConfidence.level === 'high' ? '🟢' :
+                 confidence.evidenceConfidence.level === 'medium' ? '🟡' : '🔴';
+  lines.push(`- **Evidence Confidence:** ${evIcon} ${confidence.evidenceConfidence.level.toUpperCase()} (${confidence.evidenceConfidence.score}%) – ${confidence.evidenceConfidence.reason}`);
+
+  lines.push(`- **Decision Confidence:** ${confidenceIcon} ${confidence.level.toUpperCase()} (${confidence.score}%) – aggregate of above`);
 
   if (confidence.degradationReasons.length > 0) {
     lines.push('');
-    lines.push('*Confidence reduced by:*');
+    lines.push('*Why confidence is not HIGH:*');
     confidence.degradationReasons.forEach(reason => {
       lines.push(`- ${reason}`);
     });
