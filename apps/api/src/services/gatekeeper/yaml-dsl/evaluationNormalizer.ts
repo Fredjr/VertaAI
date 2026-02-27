@@ -498,6 +498,9 @@ function computeRiskScore(
   } else if (obligation.kind === ObligationKind.ARTIFACT_UPDATED) {
     blastRadius = 15;
     blastRadiusReason = 'Documentation drift affects team';
+  } else if (ruleName.includes('openapi') && (ruleName.includes('schema') || ruleName.includes('valid'))) {
+    blastRadius = 20;
+    blastRadiusReason = 'Invalid API schema breaks tooling for all consumers';
   } else if (ruleName.includes('codeowners')) {
     blastRadius = 20;
     blastRadiusReason = 'Ownership clarity affects team coordination';
@@ -523,6 +526,8 @@ function computeRiskScore(
     let baseCriticality = 15;
     if (ruleName.includes('runbook') || ruleName.includes('slo')) {
       baseCriticality = 30; // Operational readiness is critical
+    } else if (ruleName.includes('openapi') && (ruleName.includes('schema') || ruleName.includes('valid'))) {
+      baseCriticality = 25; // API schema validity is critical for integrations
     } else if (ruleName.includes('codeowners') || ruleName.includes('service owner')) {
       baseCriticality = 20; // Ownership is important
     } else if (ruleName.includes('service catalog')) {
@@ -582,6 +587,9 @@ function computeRiskScore(
   } else if (obligation.kind === ObligationKind.APPROVAL_REQUIRED) {
     dependency = 15;
     dependencyReason = 'Waiting for approval blocks merge';
+  } else if (ruleName.includes('openapi') && (ruleName.includes('schema') || ruleName.includes('valid'))) {
+    dependency = 10;
+    dependencyReason = 'Invalid schema blocks SDK generation and contract testing';
   } else if (ruleName.includes('codeowners')) {
     dependency = 10;
     dependencyReason = 'Missing CODEOWNERS affects review routing';
