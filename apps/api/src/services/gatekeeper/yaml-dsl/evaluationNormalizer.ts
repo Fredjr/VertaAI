@@ -498,6 +498,7 @@ function computeRiskScore(
   }
 
   // Criticality (0-30): Service tier + compliance (tier as multiplier, not hard max)
+  // CRITICAL FIX: Confidence-weight tier-based risk when tier is inferred
   if (repoClassification) {
     const tierMultiplier = repoClassification.serviceTier === 'tier-1' ? 1.0 :
                            repoClassification.serviceTier === 'tier-2' ? 0.67 :
@@ -513,19 +514,34 @@ function computeRiskScore(
       baseCriticality = 15; // Metadata is useful
     }
 
-    criticality = Math.round(baseCriticality * tierMultiplier);
+    // CRITICAL FIX: Apply confidence weighting if tier is inferred
+    let finalMultiplier = tierMultiplier;
+    const tierConfidence = repoClassification.confidenceBreakdown?.tierConfidence || 1.0;
+    const tierSource = repoClassification.confidenceBreakdown?.tierSource || 'unknown';
 
+    if (tierSource === 'inferred' && tierConfidence < 0.9) {
+      // Reduce tier multiplier by confidence (e.g., 70% confidence → 0.7x multiplier)
+      finalMultiplier = tierMultiplier * tierConfidence;
+    }
+
+    criticality = Math.round(baseCriticality * finalMultiplier);
+
+    // CRITICAL FIX: Drop "1.0 multiplier" text when redundant
     if (repoClassification.serviceTier === 'tier-1') {
-      criticalityReason = `Tier-1 service (${baseCriticality} × 1.0 multiplier)`;
+      if (tierSource === 'inferred' && tierConfidence < 0.9) {
+        criticalityReason = `Tier-1 service (${baseCriticality} × ${tierConfidence.toFixed(2)} confidence-weighted)`;
+      } else {
+        criticalityReason = `Tier-1 service (${baseCriticality} base)`;
+      }
     } else if (repoClassification.serviceTier === 'tier-2') {
-      criticalityReason = `Tier-2 service (${baseCriticality} × 0.67 multiplier)`;
+      criticalityReason = `Tier-2 service (${baseCriticality} × 0.67)`;
     } else if (repoClassification.serviceTier === 'tier-3') {
-      criticalityReason = `Tier-3 service (${baseCriticality} × 0.33 multiplier)`;
+      criticalityReason = `Tier-3 service (${baseCriticality} × 0.33)`;
     } else if (repoClassification.repoType === 'docs' || repoClassification.repoType === 'library') {
       criticality = 5;
       criticalityReason = `${repoClassification.repoType} repo (low criticality)`;
     } else {
-      criticalityReason = `Unknown tier (${baseCriticality} × 0.5 multiplier)`;
+      criticalityReason = `Unknown tier (${baseCriticality} × 0.5)`;
     }
   } else {
     criticality = 15;

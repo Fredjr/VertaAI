@@ -150,8 +150,9 @@ export function classifyRepo(files: GitHubFile[], repoName: string): RepoClassif
       serviceTier = 'tier-1';
       tierSource = 'inferred';
       const sloFile = files.find(f => f.filename.match(/slo\.yaml$|sli\.yaml$/i))?.filename;
+      // CRITICAL FIX: Show exact heuristic, not just "implies"
       evidence.push(`Tier-1 service (inferred from SLO: ${sloFile})`);
-      tierEvidence.push(`SLO file found: ${sloFile}`, 'SLO implies tier-1 criticality');
+      tierEvidence.push(`SLO file found: ${sloFile}`, 'Heuristic: SLO presence → likely tier-1 (overridable by catalog)');
     } else if (hasRunbook && hasHighAvailability) {
       // Inferred tier-1 from runbook + HA
       serviceTier = 'tier-1';

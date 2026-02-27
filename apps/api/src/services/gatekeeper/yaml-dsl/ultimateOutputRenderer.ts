@@ -22,10 +22,13 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
   // A) Executive Summary
   sections.push(renderExecutiveSummary(normalized));
 
-  // B) Change Surface Summary (THE DIFFERENTIATOR)
+  // B) Policy Activation (CRITICAL - shows signals → overlays → obligations)
+  sections.push(renderPolicyActivation(normalized));
+
+  // C) Change Surface Summary (shows what changed in THIS PR)
   sections.push(renderChangeSurfaceSummary(normalized));
 
-  // C) Required Contracts & Obligations
+  // D) Required Contracts & Obligations
   sections.push(renderRequiredContracts(normalized));
 
   // F) Next Best Actions (moved up for visibility)
@@ -131,17 +134,38 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
   lines.push(mergeRec);
   lines.push('');
 
-  // CRITICAL FIX: Minimum to PASS (decision-grade clarity)
+  // CRITICAL FIX: Minimum to PASS (decision-grade clarity with actionable templates)
   const failedFindings = normalized.findings.filter(f =>
     f.result.status === 'fail' && f.decision !== 'pass'
   );
 
   if (failedFindings.length > 0) {
     lines.push(`**Minimum to PASS:** ${failedFindings.length} action(s) required`);
-    const topActions = failedFindings.slice(0, 3).map(f => f.what);
-    topActions.forEach(action => {
-      lines.push(`- ${action}`);
+    lines.push('');
+
+    // CRITICAL FIX: Include exact file path templates for each action
+    const topActions = failedFindings.slice(0, 3);
+    topActions.forEach(finding => {
+      const action = finding.what.toLowerCase();
+      lines.push(`- **${finding.what}**`);
+
+      // Add specific file path guidance
+      if (action.includes('codeowners')) {
+        lines.push(`  - Create: \`CODEOWNERS\` or \`.github/CODEOWNERS\``);
+        lines.push(`  - Format: \`* @your-team\` or \`* @username\``);
+      } else if (action.includes('runbook')) {
+        lines.push(`  - Create: \`RUNBOOK.md\` or \`/runbooks/<service>/README.md\``);
+        lines.push(`  - Include: service overview, common issues, escalation paths`);
+      } else if (action.includes('service catalog') || action.includes('service owner')) {
+        lines.push(`  - Create: \`catalog-info.yaml\` with \`spec.owner: team-name\``);
+        lines.push(`  - Or add to existing service catalog file`);
+      } else if (action.includes('slo')) {
+        lines.push(`  - Create: \`slo.yaml\` with availability/latency targets`);
+      } else {
+        lines.push(`  - See rule documentation for specific guidance`);
+      }
     });
+
     if (failedFindings.length > 3) {
       lines.push(`- *...and ${failedFindings.length - 3} more*`);
     }
@@ -185,14 +209,125 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
 }
 
 /**
- * B) Change Surface Summary (THE DIFFERENTIATOR!)
+ * B) Policy Activation Summary (CRITICAL - shows signals → overlays → obligations)
+ */
+function renderPolicyActivation(normalized: NormalizedEvaluationResult): string {
+  const lines: string[] = [];
+
+  lines.push('# 🎯 Policy Activation');
+  lines.push('');
+  lines.push('*This section shows which signals were detected and which policy overlays were activated.*');
+  lines.push('');
+
+  // CRITICAL FIX: Show detected signals (files that triggered classification/overlays)
+  if (normalized.repoClassification) {
+    const { repoType, serviceTier, metadata, confidenceBreakdown } = normalized.repoClassification;
+
+    lines.push('## Detected Signals');
+    lines.push('');
+
+    const signals: string[] = [];
+    if (metadata.hasDockerfile) signals.push('`Dockerfile` → Service classification');
+    if (metadata.hasSLO) signals.push('`slo.yaml` → Tier-1 overlay activation');
+    if (metadata.hasServiceCatalog) signals.push('Service catalog → Explicit classification');
+    if (metadata.hasRunbook) signals.push('Runbook → Tier-2 marker');
+    if (metadata.hasK8s) signals.push('K8s manifests → Service deployment');
+
+    if (signals.length > 0) {
+      signals.forEach(signal => lines.push(`- ${signal}`));
+    } else {
+      lines.push('- No specific signals detected (default classification)');
+    }
+    lines.push('');
+
+    // CRITICAL FIX: Show activated overlays
+    lines.push('## Activated Policy Overlays');
+    lines.push('');
+    lines.push(`- **Base pack:** ${normalized.metadata.packName} (always-on)`);
+
+    if (repoType === 'service' && serviceTier !== 'unknown') {
+      const tierConfidence = confidenceBreakdown?.tierConfidence || 0;
+      const tierSource = confidenceBreakdown?.tierSource || 'unknown';
+      const confidenceLabel = tierConfidence >= 0.9 ? 'HIGH' : tierConfidence >= 0.6 ? 'MEDIUM' : 'LOW';
+      const sourceLabel = tierSource === 'explicit' ? 'explicit from catalog' :
+                          tierSource === 'inferred' ? 'inferred from heuristics' : 'unknown';
+
+      lines.push(`- **${serviceTier.toUpperCase()} overlay:** Activated (confidence: ${confidenceLabel}, source: ${sourceLabel})`);
+
+      if (tierSource === 'inferred' && confidenceBreakdown?.tierEvidence) {
+        lines.push(`  - Heuristic: ${confidenceBreakdown.tierEvidence.join(', ')}`);
+      }
+    }
+
+    lines.push('');
+
+    // CRITICAL FIX: Show obligation sources (baseline vs overlay)
+    lines.push('## Triggered Obligations by Source');
+    lines.push('');
+
+    const baselineObligations = normalized.obligations.filter(o =>
+      !o.sourceRule.ruleId.includes('tier') && !o.sourceRule.ruleId.includes('service-specific')
+    );
+    const tierObligations = normalized.obligations.filter(o =>
+      o.sourceRule.ruleId.includes('tier')
+    );
+    const serviceObligations = normalized.obligations.filter(o =>
+      o.sourceRule.ruleId.includes('service-specific') || o.sourceRule.ruleId.includes('service-owner')
+    );
+
+    if (baselineObligations.length > 0) {
+      lines.push(`- **Baseline:** ${baselineObligations.length} obligation(s) (apply to all repos)`);
+    }
+    if (serviceObligations.length > 0) {
+      lines.push(`- **Service overlay:** ${serviceObligations.length} obligation(s) (apply to service repos)`);
+    }
+    if (tierObligations.length > 0) {
+      lines.push(`- **${serviceTier.toUpperCase()} overlay:** ${tierObligations.length} obligation(s) (tier-specific requirements)`);
+    }
+
+    lines.push('');
+
+    // CRITICAL FIX: Show applicability uncertainty
+    if (confidenceBreakdown) {
+      const applicabilityScore = Math.min(
+        confidenceBreakdown.repoTypeConfidence * 100,
+        confidenceBreakdown.tierConfidence * 100
+      );
+
+      if (applicabilityScore < 90) {
+        lines.push('## ⚠️ Applicability Uncertainty');
+        lines.push('');
+        lines.push(`Classification confidence is ${Math.round(applicabilityScore)}% (not HIGH). This means:`);
+        lines.push('');
+
+        if (confidenceBreakdown.repoTypeSource === 'inferred') {
+          lines.push(`- Repository type (${repoType}) is **inferred**, not explicit`);
+          lines.push(`  - To increase confidence: Add \`catalog-info.yaml\` with \`spec.type: service\``);
+        }
+
+        if (confidenceBreakdown.tierSource === 'inferred') {
+          lines.push(`- Service tier (${serviceTier}) is **inferred**, not explicit`);
+          lines.push(`  - To increase confidence: Add \`tier: 1\` annotation to service catalog`);
+          lines.push(`  - Current heuristic: ${confidenceBreakdown.tierEvidence.join(', ')}`);
+        }
+
+        lines.push('');
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * C) Change Surface Summary (shows what changed in THIS PR)
  */
 function renderChangeSurfaceSummary(normalized: NormalizedEvaluationResult): string {
   const lines: string[] = [];
 
-  lines.push('# 🎯 Change Surface Summary');
+  lines.push('# 📝 Change Surface Summary');
   lines.push('');
-  lines.push('*This section shows what changed in your PR and why it triggered policy evaluation.*');
+  lines.push('*This section shows what changed in your PR and which specific files triggered obligations.*');
   lines.push('');
 
   if (normalized.surfaces.length === 0) {
@@ -669,7 +804,50 @@ function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
     lines.push(`**Code:** \`${obligation.result.reasonCode}\``);
     lines.push('');
 
-    if (obligation.evidence.length > 0) {
+    // CRITICAL FIX: Show evidence search transparency (where we looked, what we found)
+    const finding = normalized.findings.find(f => f.obligationId === obligation.id);
+    const evidenceSearch = finding?.evidenceSearch;
+
+    if (evidenceSearch) {
+      lines.push('**Evidence Search:**');
+      lines.push('');
+
+      // Show searched paths
+      if (evidenceSearch.searchedPaths && evidenceSearch.searchedPaths.length > 0) {
+        lines.push(`- **Searched paths:** ${evidenceSearch.searchedPaths.map(p => `\`${p}\``).join(', ')}`);
+      }
+
+      // Show matched paths (if any)
+      if (evidenceSearch.matchedPaths && evidenceSearch.matchedPaths.length > 0) {
+        lines.push(`- **Matched paths:** ${evidenceSearch.matchedPaths.map(p => `\`${p}\``).join(', ')}`);
+      } else {
+        lines.push(`- **Result:** Not found`);
+      }
+
+      // Show closest matches (near-misses)
+      if (evidenceSearch.closestMatches && evidenceSearch.closestMatches.length > 0) {
+        lines.push(`- **Closest matches:** ${evidenceSearch.closestMatches.join(', ')}`);
+      }
+
+      lines.push('');
+
+      // CRITICAL FIX: Repo-specific guidance
+      if (obligation.result.status === 'fail') {
+        lines.push('**Suggestion:**');
+        const artifactType = obligation.description.toLowerCase();
+        if (artifactType.includes('codeowners')) {
+          lines.push('- Create `CODEOWNERS` file in repository root or `.github/CODEOWNERS`');
+          lines.push('- Format: `* @your-team` or `* @username`');
+        } else if (artifactType.includes('runbook')) {
+          lines.push('- Create `RUNBOOK.md` in repository root or `/runbooks/<service>/README.md`');
+          lines.push('- Include: service overview, common issues, escalation paths');
+        } else if (artifactType.includes('service catalog') || artifactType.includes('service owner')) {
+          lines.push('- Create `catalog-info.yaml` with `spec.owner: team-name`');
+          lines.push('- Or add to existing service catalog file');
+        }
+        lines.push('');
+      }
+    } else if (obligation.evidence.length > 0) {
       lines.push('**Looked for evidence in:**');
       lines.push('');
 
