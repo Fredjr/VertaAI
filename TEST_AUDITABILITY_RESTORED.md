@@ -100,3 +100,9 @@ This PR validates that we've achieved both:
 1. ✅ **Human-first narrative** (decision-grade summary)
 2. ✅ **Evidence audit trail** (policy provenance + evidence trace)
 
+## Latest Fix (Trigger Re-evaluation)
+
+Applied Ultimate Track A output to **both single-pack and multi-pack modes**. The initial implementation only worked for multi-pack mode, causing single-pack evaluations to still use the old output format.
+
+Now all PRs should show the new Ultimate Track A output with Policy Provenance and Evidence Trace sections.
+
