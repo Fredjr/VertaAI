@@ -63,6 +63,15 @@ function buildContextAwareWhyItMatters(
     return 'Without declared ownership, incident routing fails and on-call escalation paths are undefined, violating operational readiness requirements.';
   }
 
+  // OpenAPI schema validation reasoning
+  if (desc.includes('openapi') && (desc.includes('schema') || desc.includes('valid'))) {
+    if (repoType === 'service') {
+      return 'Invalid OpenAPI schema breaks API documentation generation, client SDK generation, and contract testing, preventing consumers from reliably integrating with your service.';
+    } else {
+      return 'Invalid OpenAPI schema prevents automated validation, documentation generation, and integration testing, reducing API quality and consumer confidence.';
+    }
+  }
+
   // Fallback to generic (but still better than current)
   return finding.why || 'This policy violation may impact system reliability, security, or compliance.';
 }
@@ -162,6 +171,41 @@ spec:
         'Add service metadata (see suggested patch below)',
         'Replace `your-service-name` and `your-team-name` with actual values',
         'Commit and push'
+      ],
+      patch
+    };
+  }
+
+  // OpenAPI schema validation patch preview
+  if (desc.includes('openapi') && (desc.includes('schema') || desc.includes('valid'))) {
+    const patch = `openapi: 3.0.0
+info:
+  title: Your API
+  version: 1.0.0
+  description: Brief description of your API
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok`;
+
+    return {
+      steps: [
+        'Fix invalid OpenAPI schema in your spec file (e.g., `openapi.yaml` or `openapi.json`)',
+        'Ensure the schema has required fields: `openapi`, `info`, `paths`',
+        'Validate using: `npx @redocly/cli lint openapi.yaml`',
+        'Common issues: missing version field, invalid $ref, missing required fields',
+        'Use the minimal valid schema below as a starting point if needed'
       ],
       patch
     };
