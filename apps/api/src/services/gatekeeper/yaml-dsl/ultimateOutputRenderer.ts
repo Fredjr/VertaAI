@@ -294,19 +294,21 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
     const signals: string[] = [];
     const absenceSignals: string[] = [];
 
-    // Show file-based presence signals
-    if (metadata.hasDockerfile) signals.push('`Dockerfile`');
-    if (metadata.hasSLO) signals.push('`slo.yaml`');
-    if (metadata.hasServiceCatalog) signals.push('`catalog-info.yaml` or `service.yaml`');
-    if (metadata.hasRunbook) signals.push('`RUNBOOK.md` or `/runbooks/`');
-    if (metadata.hasK8s) signals.push('K8s manifests');
-    if (metadata.hasTerraform) signals.push('Terraform files');
-    if (metadata.hasMonorepoMarkers) signals.push('Monorepo markers (pnpm-workspace.yaml, lerna.json, etc.)');
+    // Show file-based presence signals (with defensive checks)
+    if (metadata) {
+      if (metadata.hasDockerfile) signals.push('`Dockerfile`');
+      if (metadata.hasSLO) signals.push('`slo.yaml`');
+      if (metadata.hasServiceCatalog) signals.push('`catalog-info.yaml` or `service.yaml`');
+      if (metadata.hasRunbook) signals.push('`RUNBOOK.md` or `/runbooks/`');
+      if (metadata.hasK8s) signals.push('K8s manifests');
+      if (metadata.hasTerraform) signals.push('Terraform files');
+      if (metadata.hasMonorepoMarkers) signals.push('Monorepo markers (pnpm-workspace.yaml, lerna.json, etc.)');
 
-    // Show absence signals (these are signals too!)
-    if (!metadata.hasDockerfile && !metadata.hasK8s) absenceSignals.push('no_dockerfile');
-    if (!metadata.hasServiceCatalog) absenceSignals.push('no_catalog_manifest');
-    if (!metadata.hasSLO) absenceSignals.push('no_tier_signal');
+      // Show absence signals (these are signals too!)
+      if (!metadata.hasDockerfile && !metadata.hasK8s) absenceSignals.push('no_dockerfile');
+      if (!metadata.hasServiceCatalog) absenceSignals.push('no_catalog_manifest');
+      if (!metadata.hasSLO) absenceSignals.push('no_tier_signal');
+    }
 
     // CRITICAL FIX: For docs repos or when no file signals, show the classification evidence
     if (signals.length === 0 && confidenceBreakdown?.repoTypeEvidence && Array.isArray(confidenceBreakdown.repoTypeEvidence)) {
