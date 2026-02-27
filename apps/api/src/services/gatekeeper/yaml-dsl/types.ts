@@ -1284,6 +1284,30 @@ export interface NormalizedEvaluationResult {
 
   /** Repository classification (for contextualized guidance) */
   repoClassification?: RepoClassification;
+
+  /**
+   * NEW: Governance IR (Intermediate Representation)
+   * This is the canonical IR that will eventually replace the above fields.
+   * For now, it's built in parallel to ensure zero regressions.
+   *
+   * Phase 1.2-1.3: Build IR alongside existing structures
+   * Phase 2: Add GOC validation
+   * Phase 3: Migrate renderer to use IR
+   * Phase 4: Deprecate old fields
+   */
+  ir?: {
+    /** Run context (repo, PR, signals, confidence) */
+    runContext: import('./ir/types.js').RunContext;
+
+    /** Policy plan (packs, overlays, activation ledger) */
+    policyPlan: import('./ir/types.js').PolicyPlan;
+
+    /** Obligation results (structured evidence, remediation, risk) */
+    obligationResults: import('./ir/types.js').ObligationResult[];
+
+    /** Governance Output Contract (validated before render) */
+    contract?: import('./ir/types.js').GovernanceOutputContract;
+  };
 }
 
 /**

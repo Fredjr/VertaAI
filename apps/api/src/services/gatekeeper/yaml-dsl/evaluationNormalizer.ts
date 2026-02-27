@@ -28,15 +28,25 @@ import { ObligationKind } from './types.js'; // Import as value (enum)
 import { v4 as uuidv4 } from 'uuid';
 import { classifyRepo } from './repoClassifier.js';
 import type { GitHubFile } from './comparators/types.js';
+import type { GatekeeperInput } from '../../index.js';
+
+// NEW: IR builders (Phase 1.2)
+import { buildRunContext } from './ir/runContextBuilder.js';
+import { buildPolicyPlan } from './ir/policyPlanBuilder.js';
+import { buildObligationResult } from './ir/obligationResultBuilder.js';
 
 /**
  * Normalize pack evaluation results into canonical model
+ *
+ * NEW (Phase 1.3): Optionally accepts gatekeeperInput to build IR
+ * This is ADDITIVE - existing callers don't need to change
  */
 export function normalizeEvaluationResults(
   packResults: PackResult[],
   globalDecision: 'pass' | 'warn' | 'block',
   prFiles?: GitHubFile[],
-  repoName?: string
+  repoName?: string,
+  gatekeeperInput?: GatekeeperInput // NEW: Optional for IR building
 ): NormalizedEvaluationResult {
   // Step 0: Classify repository (deterministic, cacheable)
   const repoClassification = prFiles && repoName
@@ -67,6 +77,44 @@ export function normalizeEvaluationResults(
   // Step 8: Build metadata
   const metadata = buildMetadata(packResults);
 
+  // Step 9 (NEW - Phase 1.3): Build IR in parallel (additive, optional)
+  // This runs alongside existing normalization to ensure zero regressions
+  let ir: NormalizedEvaluationResult['ir'] = undefined;
+
+  if (gatekeeperInput) {
+    try {
+      // Extract signals from detected surfaces
+      const signals = extractSignalsFromSurfaces(surfaces);
+
+      // Build RunContext
+      const runContext = buildRunContext(
+        gatekeeperInput,
+        prFiles,
+        repoClassification,
+        undefined, // baseSha - not available yet
+        undefined  // isDraft - not available yet
+      );
+
+      // Build PolicyPlan
+      const policyPlan = buildPolicyPlan(packResults, signals);
+
+      // Build ObligationResults from findings
+      const obligationResults = findings.map(finding => buildObligationResult(finding));
+
+      // Assemble IR (contract validation will come in Phase 2)
+      ir = {
+        runContext,
+        policyPlan,
+        obligationResults,
+        // contract: undefined, // Phase 2: GOC validation
+      };
+    } catch (error) {
+      // IR building is optional - don't break existing functionality
+      console.warn('[IR Builder] Failed to build IR:', error);
+      ir = undefined;
+    }
+  }
+
   return {
     surfaces,
     obligations,
@@ -77,6 +125,7 @@ export function normalizeEvaluationResults(
     nextActions,
     metadata,
     repoClassification,
+    ir, // NEW: Optional IR
   };
 }
 
@@ -98,6 +147,16 @@ function extractAllSurfaces(packResults: PackResult[]): DetectedSurface[] {
   }
 
   return Array.from(surfaceMap.values());
+}
+
+/**
+ * Extract signals from detected surfaces (for IR building)
+ * This is a lightweight helper to convert surfaces to signals
+ */
+function extractSignalsFromSurfaces(surfaces: DetectedSurface[]): import('./ir/types.js').DetectedSignals | undefined {
+  // For now, return undefined - signals are built from files in runContextBuilder
+  // This is a placeholder for future enhancement where we could extract more signals from surfaces
+  return undefined;
 }
 
 /**
