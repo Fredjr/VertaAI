@@ -395,13 +395,15 @@ function buildMultiPackCheckTitleFromNormalized(
   if (decision === 'warn') {
     // FIX 1A: Consistent obligation counting model
     // Count ALL obligations considered (enforced pass + enforced fail + suppressed)
+    // CRITICAL FIX: Count ALL suppressed obligations (not just failed ones)
     const enforcedObligations = normalized.obligations.filter(o =>
       o.applicability?.applies !== false
     );
     const enforcedPass = enforcedObligations.filter(o => o.result.status === 'pass').length;
     const enforcedWarn = normalized.findings.filter(f => f.decision === 'warn').length;
+    // FIX: Count ALL suppressed obligations (both pass and fail)
     const suppressedCount = normalized.obligations.filter(o =>
-      o.applicability && !o.applicability.applies && o.result.status === 'fail'
+      o.applicability && !o.applicability.applies
     ).length;
     const totalConsidered = enforcedObligations.length + suppressedCount;
 
@@ -419,8 +421,9 @@ function buildMultiPackCheckTitleFromNormalized(
 
   // ELITE: Use precise governance terminology for blocking issues
   const enforcedBlocking = normalized.findings.filter(f => f.decision === 'block').length;
+  // FIX: Count ALL suppressed obligations (both pass and fail)
   const suppressedCount = normalized.obligations.filter(o =>
-    o.applicability && !o.applicability.applies && o.result.status === 'fail'
+    o.applicability && !o.applicability.applies
   ).length;
   const totalEvaluated = enforcedBlocking + suppressedCount;
 
