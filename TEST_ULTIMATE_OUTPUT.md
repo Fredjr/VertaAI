@@ -46,3 +46,10 @@ Added new normalization layer and renderer that transforms raw evaluation result
 
 This PR should trigger the policy pack evaluation and display the new output format in the GitHub check.
 
+## Auditability Restored
+
+The latest version includes:
+- **Policy Provenance** section showing packs, rules, and codes
+- **Evidence Trace** section showing where we looked and what we found
+- **Decision Thresholds** in Executive Summary to prevent opaque scoring
+
