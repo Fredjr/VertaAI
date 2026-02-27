@@ -239,6 +239,28 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
     });
   }
 
+  // SURGICAL UPGRADE #2: Decision Robustness Statement
+  // Explain what's certain vs uncertain when confidence is LOW
+  if (confidence.level === 'low' && decision.outcome !== 'pass') {
+    lines.push('');
+    lines.push('**Decision Robustness:**');
+
+    // Check if this decision is based on baseline obligations (always deterministic)
+    const { enforced } = splitObligationsByApplicability(normalized.obligations);
+    const baselineFailures = enforced.filter(o =>
+      o.result.status === 'fail' &&
+      !o.sourceRule.ruleId.includes('tier') &&
+      !o.sourceRule.ruleId.includes('service-specific')
+    );
+
+    if (baselineFailures.length > 0) {
+      lines.push(`Even with low applicability confidence, this ${decision.outcome.toUpperCase()} is based on ${baselineFailures.length} always-on baseline obligation(s) and is deterministic.`);
+      lines.push('The uncertainty is only about service overlays (runbook/tier/service owner), not these baseline failures.');
+    } else {
+      lines.push(`This ${decision.outcome.toUpperCase()} is based on service/tier-specific obligations. Low confidence means the decision may change if repo classification is corrected.`);
+    }
+  }
+
   // Decision thresholds (prevents "opaque scoring" regression)
   lines.push('');
   lines.push('**Decision Thresholds:**');
@@ -351,16 +373,25 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
       lines.push('');
       lines.push(`- **Suppressed:** ${suppressed.length} obligation(s) (not applicable to this repo type)`);
 
-      // GAP #2 FIX: Show which obligations were suppressed and why + "what would happen if..."
-      const suppressedByType = suppressed.reduce((acc, o) => {
-        const reason = o.applicability?.reason || 'Not applicable';
-        if (!acc[reason]) acc[reason] = [];
-        acc[reason].push(o.description);
+      // SURGICAL UPGRADE #3: Clean table-like format instead of log-like
+      // Group by rule ID for cleaner presentation
+      const suppressedByRule = suppressed.reduce((acc, o) => {
+        const ruleId = o.sourceRule.ruleId;
+        if (!acc[ruleId]) {
+          acc[ruleId] = {
+            ruleName: o.sourceRule.ruleName,
+            reason: o.applicability?.reason || 'Not applicable',
+            count: 0
+          };
+        }
+        acc[ruleId].count++;
         return acc;
-      }, {} as Record<string, string[]>);
+      }, {} as Record<string, { ruleName: string; reason: string; count: number }>);
 
-      Object.entries(suppressedByType).forEach(([reason, obligations]) => {
-        lines.push(`  - ${reason}: ${obligations.length} obligation(s)`);
+      // Show as clean list
+      lines.push('');
+      Object.entries(suppressedByRule).forEach(([ruleId, info]) => {
+        lines.push(`  - **${info.ruleName}** (${info.reason})`);
       });
 
       // GAP #2 FIX: Add "what would happen if..." actionable guidance
