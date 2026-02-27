@@ -1041,7 +1041,7 @@ function extractEvaluatedObligations(findings: Finding[]): EvaluatedObligation[]
     // Determine obligation type and evaluator
     let type: 'artifact' | 'approval' | 'invariant' | 'condition' = 'condition';
     let evaluator: { type: 'comparator' | 'condition'; id: string; params?: Record<string, any> };
-    let result: { status: 'pass' | 'fail' | 'unknown'; reasonCode: string; message: string };
+    let result: { status: 'pass' | 'fail' | 'unknown'; reasonCode: string; message: string; metadata?: any };
     let evidence: EvidenceItem[] = [];
 
     if (comparatorResult) {
@@ -1054,10 +1054,12 @@ function extractEvaluatedObligations(findings: Finding[]): EvaluatedObligation[]
         id: comparatorResult.comparatorId || 'UNKNOWN',
       };
 
+      // CRITICAL FIX: Preserve metadata from comparator (e.g., evidenceSearch)
       result = {
         status: comparatorResult.status,
         reasonCode: comparatorResult.reasonCode,
         message: comparatorResult.message,
+        ...(comparatorResult.metadata ? { metadata: comparatorResult.metadata } : {}),
       };
 
       // Convert comparator evidence to EvidenceItem format

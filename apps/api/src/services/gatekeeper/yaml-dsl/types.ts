@@ -857,6 +857,7 @@ export interface EvaluatedObligation {
     status: 'pass' | 'fail' | 'unknown' | 'not_evaluable' | 'not_applicable';
     reasonCode: string;
     message: string;
+    metadata?: any; // CRITICAL FIX: Preserve comparator metadata (e.g., evidenceSearch)
   };
 
   /** Evidence collected during evaluation */
