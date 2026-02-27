@@ -19,9 +19,9 @@ import type {
   NormalizedObligation,
   NormalizedFinding,
   NotEvaluableItem,
-  ObligationKind,
   DetectedSurface,
 } from './types.js';
+import { ObligationKind } from './types.js'; // Import as value (enum)
 import { v4 as uuidv4 } from 'uuid';
 
 /**
