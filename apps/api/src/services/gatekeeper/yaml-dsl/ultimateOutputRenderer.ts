@@ -173,6 +173,7 @@ spec:
 
 /**
  * ELITE HELPER: Determine if obligation is a repo invariant or diff-derived
+ * FIX #2: Correctly identify baseline obligations (repo invariants)
  */
 function getDriftFraming(obligation: NormalizedObligation): {
   type: 'repo_invariant' | 'diff_derived';
@@ -183,7 +184,11 @@ function getDriftFraming(obligation: NormalizedObligation): {
     surfaceId.includes('protected_branch') || surfaceId.includes('baseline')
   );
 
-  if (isBaseline) {
+  // FIX #2: Also check if the rule itself is a baseline rule (codeowners, checkrun, etc.)
+  const baselineRuleIds = ['codeowners-required', 'checkrun-always', 'baseline'];
+  const isBaselineRule = baselineRuleIds.some(id => obligation.sourceRule.ruleId.includes(id));
+
+  if (isBaseline || isBaselineRule) {
     return {
       type: 'repo_invariant',
       explanation: 'This is a repository-level invariant (independent of PR diff). It\'s checked on every protected-branch PR.'
@@ -271,6 +276,12 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
     const enforcedFindings = normalized.findings.filter(f => f.decision !== 'pass');
     const isSimpleOutcome = enforcedFindings.length === 1 &&
                             enforcedFindings[0].result.code === 'ARTIFACT_MISSING';
+
+    console.log('[UltimateRenderer] Simple outcome detection:', {
+      enforcedFindingsCount: enforcedFindings.length,
+      firstFindingCode: enforcedFindings[0]?.result?.code,
+      isSimpleOutcome
+    });
 
     // A) Executive Summary (always visible)
     sections.push(renderExecutiveSummary(normalized));
@@ -593,7 +604,9 @@ function renderPolicyActivation(normalized: NormalizedEvaluationResult): string 
     // CRITICAL FIX: Show activated overlays
     lines.push('## Activated Policy Overlays');
     lines.push('');
-    lines.push(`- **Base pack:** ${normalized.metadata.packName} (always-on)`);
+    // FIX #4: Enterprise naming (not "Pack: Test")
+    const frameworkName = normalized.metadata.packName === 'Test' ? 'Repository Baseline Controls' : normalized.metadata.packName;
+    lines.push(`- **Governance Framework:** ${frameworkName} (always-on)`);
 
     if (repoType === 'service' && serviceTier !== 'unknown') {
       const tierConfidence = confidenceBreakdown?.tierConfidence || 0;
@@ -1162,11 +1175,12 @@ function renderPolicyProvenance(normalized: NormalizedEvaluationResult): string 
   lines.push('*This section shows which policy packs and rules were evaluated, ensuring auditability and reproducibility.*');
   lines.push('');
 
-  // Pack information
-  lines.push('## Evaluated Packs');
+  // FIX #4: Enterprise naming for policy framework
+  const frameworkName = normalized.metadata.packName === 'Test' ? 'Repository Baseline Controls' : normalized.metadata.packName;
+  lines.push('## Policy Framework');
   lines.push('');
-  lines.push(`- **Pack:** ${normalized.metadata.packName} v${normalized.metadata.packVersion}`);
-  lines.push(`- **Pack ID:** \`${normalized.metadata.packId}\``);
+  lines.push(`- **Framework:** ${frameworkName} v${normalized.metadata.packVersion}`);
+  lines.push(`- **Framework ID:** \`${normalized.metadata.packId}\``);
   lines.push(`- **Evaluation Time:** ${normalized.metadata.evaluationTimeMs}ms`);
   lines.push(`- **Timestamp:** ${normalized.metadata.timestamp}`);
   lines.push('');
@@ -1201,7 +1215,9 @@ function renderPolicyProvenance(normalized: NormalizedEvaluationResult): string 
     lines.push('');
     lines.push(`- **Decision:** ${decision}`);
     lines.push(`- **Obligations:** ${obligations.length} total (${passedCount} passed, ${failedCount} failed, ${notEvaluableCount} not evaluable)`);
-    lines.push(`- **Pack:** ${normalized.metadata.packName}`);
+    // FIX #4: Enterprise naming
+    const frameworkName = normalized.metadata.packName === 'Test' ? 'Repository Baseline Controls' : normalized.metadata.packName;
+    lines.push(`- **Framework:** ${frameworkName}`);
 
     // Show individual obligation results
     if (failedCount > 0 || notEvaluableCount > 0) {
@@ -1364,8 +1380,10 @@ function renderMetadata(normalized: NormalizedEvaluationResult): string {
   lines.push('<details>');
   lines.push('<summary>📊 Evaluation Metadata</summary>');
   lines.push('');
-  lines.push(`- **Pack:** ${normalized.metadata.packName} v${normalized.metadata.packVersion}`);
-  lines.push(`- **Pack ID:** \`${normalized.metadata.packId}\``);
+  // FIX #4: Enterprise naming
+  const frameworkName = normalized.metadata.packName === 'Test' ? 'Repository Baseline Controls' : normalized.metadata.packName;
+  lines.push(`- **Framework:** ${frameworkName} v${normalized.metadata.packVersion}`);
+  lines.push(`- **Framework ID:** \`${normalized.metadata.packId}\``);
   lines.push(`- **Evaluation Time:** ${normalized.metadata.evaluationTimeMs}ms`);
   lines.push(`- **Timestamp:** ${normalized.metadata.timestamp}`);
   lines.push(`- **Surfaces Detected:** ${normalized.surfaces.length}`);

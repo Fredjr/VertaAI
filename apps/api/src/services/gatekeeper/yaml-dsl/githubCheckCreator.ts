@@ -692,15 +692,34 @@ function extractActionItems(findings: any[]): string[] {
 
 /**
  * Build Ultimate Track A check summary from normalized results
+ * FIX #1: Split confidence into Decision vs Classification to prevent trust erosion
  */
 function buildUltimateCheckSummary(
   normalized: import('./types.js').NormalizedEvaluationResult,
   isObserveMode: boolean
 ): string {
-  const { decision, confidence, findings, notEvaluable } = normalized;
+  const { decision, confidence, findings, notEvaluable, obligations } = normalized;
 
   const decisionEmoji = decision.outcome === 'pass' ? '✅' : decision.outcome === 'warn' ? '⚠️' : '🚫';
-  const confidenceIcon = confidence.level === 'high' ? '🟢' : confidence.level === 'medium' ? '🟡' : '🔴';
+
+  // FIX #1: Determine decision confidence based on baseline invariants
+  const baselineFailures = obligations.filter(o =>
+    o.result.status === 'fail' &&
+    o.applicability?.applies !== false && // Only count enforced obligations
+    !o.sourceRule.ruleId.includes('tier') &&
+    !o.sourceRule.ruleId.includes('service-specific')
+  );
+
+  // Decision confidence: HIGH if based on baseline invariants, otherwise use overall confidence
+  const decisionConfidenceLevel = baselineFailures.length > 0 ? 'high' : confidence.level;
+  const decisionConfidenceIcon = decisionConfidenceLevel === 'high' ? '🟢' :
+                                  decisionConfidenceLevel === 'medium' ? '🟡' : '🔴';
+
+  // Classification confidence: Use applicability confidence if available
+  const classificationConfidence = confidence.applicabilityConfidence?.level || confidence.level;
+  const classificationIcon = classificationConfidence === 'high' ? '🟢' :
+                              classificationConfidence === 'medium' ? '🟡' : '🔴';
+  const classificationScore = confidence.applicabilityConfidence?.score || confidence.score;
 
   const blockingCount = findings.filter(f => f.decision === 'block').length;
   const warningCount = findings.filter(f => f.decision === 'warn').length;
@@ -711,7 +730,13 @@ function buildUltimateCheckSummary(
     summary = `👁️ Would ${decision.outcome.toUpperCase()} (observe-only)`;
   }
 
-  summary += ` | ${confidenceIcon} Confidence: ${confidence.level.toUpperCase()} (${confidence.score}%)`;
+  // FIX #1: Show decision confidence (not aggregate) in headline
+  summary += ` | ${decisionConfidenceIcon} Decision: ${decisionConfidenceLevel.toUpperCase()}`;
+
+  // Only show classification if it's different from decision confidence
+  if (decisionConfidenceLevel === 'high' && classificationConfidence !== 'high') {
+    summary += ` | ${classificationIcon} Classification: ${classificationConfidence.toUpperCase()} (${classificationScore}%)`;
+  }
 
   if (blockingCount > 0) {
     summary += ` | 🚨 ${blockingCount} blocking issue(s)`;
