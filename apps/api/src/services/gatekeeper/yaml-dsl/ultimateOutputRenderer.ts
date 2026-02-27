@@ -58,43 +58,49 @@ function splitObligationsByApplicability(obligations: NormalizedObligation[]): {
  * Render normalized evaluation result as GitHub Check summary (markdown)
  */
 export function renderUltimateOutput(normalized: NormalizedEvaluationResult): string {
-  const sections: string[] = [];
+  try {
+    const sections: string[] = [];
 
-  // A) Executive Summary
-  sections.push(renderExecutiveSummary(normalized));
+    // A) Executive Summary
+    sections.push(renderExecutiveSummary(normalized));
 
-  // B) Policy Activation (CRITICAL - shows signals → overlays → obligations)
-  sections.push(renderPolicyActivation(normalized));
+    // B) Policy Activation (CRITICAL - shows signals → overlays → obligations)
+    sections.push(renderPolicyActivation(normalized));
 
-  // C) Change Surface Summary (shows what changed in THIS PR)
-  sections.push(renderChangeSurfaceSummary(normalized));
+    // C) Change Surface Summary (shows what changed in THIS PR)
+    sections.push(renderChangeSurfaceSummary(normalized));
 
-  // D) Required Contracts & Obligations
-  sections.push(renderRequiredContracts(normalized));
+    // D) Required Contracts & Obligations
+    sections.push(renderRequiredContracts(normalized));
 
-  // F) Next Best Actions (moved up for visibility)
-  sections.push(renderNextActions(normalized));
+    // F) Next Best Actions (moved up for visibility)
+    sections.push(renderNextActions(normalized));
 
-  // D) Findings (ranked by risk)
-  if (normalized.findings.length > 0) {
-    sections.push(renderFindings(normalized));
+    // D) Findings (ranked by risk)
+    if (normalized.findings && normalized.findings.length > 0) {
+      sections.push(renderFindings(normalized));
+    }
+
+    // E) Not-Evaluable Section (separate)
+    if (normalized.notEvaluable && normalized.notEvaluable.length > 0) {
+      sections.push(renderNotEvaluable(normalized));
+    }
+
+    // Policy Provenance (CRITICAL - prevents regression)
+    sections.push(renderPolicyProvenance(normalized));
+
+    // Evidence Trace (CRITICAL - shows where we looked)
+    sections.push(renderEvidenceTrace(normalized));
+
+    // Metadata (collapsed)
+    sections.push(renderMetadata(normalized));
+
+    return sections.join('\n\n---\n\n');
+  } catch (error) {
+    console.error('CRITICAL ERROR in renderUltimateOutput:', error);
+    // Return minimal fallback output to prevent complete failure
+    return `# ⚠️ Policy Evaluation Error\n\nAn error occurred while rendering the policy output.\n\n**Error:** ${error instanceof Error ? error.message : String(error)}\n\nPlease contact the platform team if this persists.`;
   }
-
-  // E) Not-Evaluable Section (separate)
-  if (normalized.notEvaluable.length > 0) {
-    sections.push(renderNotEvaluable(normalized));
-  }
-
-  // Policy Provenance (CRITICAL - prevents regression)
-  sections.push(renderPolicyProvenance(normalized));
-
-  // Evidence Trace (CRITICAL - shows where we looked)
-  sections.push(renderEvidenceTrace(normalized));
-
-  // Metadata (collapsed)
-  sections.push(renderMetadata(normalized));
-
-  return sections.join('\n\n---\n\n');
 }
 
 /**
@@ -989,24 +995,6 @@ function renderEvidenceTrace(normalized: NormalizedEvaluationResult): string {
       if (expectedMatch) {
         const expectedPaths = expectedMatch[1].split(',').map(p => p.trim());
         lines.push(`**Searched paths:** ${expectedPaths.map(p => `\`${p}\``).join(', ')} **(0 found)**`);
-        lines.push('');
-      }
-    }
-
-      // CRITICAL FIX: Repo-specific guidance
-      if (obligation.result.status === 'fail') {
-        lines.push('**Suggestion:**');
-        const artifactType = obligation.description.toLowerCase();
-        if (artifactType.includes('codeowners')) {
-          lines.push('- Create `CODEOWNERS` file in repository root or `.github/CODEOWNERS`');
-          lines.push('- Format: `* @your-team` or `* @username`');
-        } else if (artifactType.includes('runbook')) {
-          lines.push('- Create `RUNBOOK.md` in repository root or `/runbooks/<service>/README.md`');
-          lines.push('- Include: service overview, common issues, escalation paths');
-        } else if (artifactType.includes('service catalog') || artifactType.includes('service owner')) {
-          lines.push('- Create `catalog-info.yaml` with `spec.owner: team-name`');
-          lines.push('- Or add to existing service catalog file');
-        }
         lines.push('');
       }
     } else if (obligation.evidence.length > 0) {
