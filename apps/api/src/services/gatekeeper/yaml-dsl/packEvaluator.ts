@@ -1428,7 +1428,7 @@ function buildPackEvaluationGraph(
   private async runCrossArtifactComparators(
     context: PRContext,
     usedComparators: Set<ComparatorId>
-  ): Promise<Finding[]> {
+  ) {
     const findings: Finding[] = [];
     const comparatorRegistry = getComparatorRegistry();
 
