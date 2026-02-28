@@ -1,0 +1,40 @@
+// Test Scenario: Database Schema Change Without Migration
+//
+// VIOLATION: This schema change adds a new field but no migration file is created
+// This should trigger the "schema-migration-required" governance rule
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  
+  // BREAKING CHANGE: Removed direct email field
+  // email     String   @unique  // REMOVED
+  
+  // NEW FIELD: Added contactInfo JSON field
+  // VIOLATION: No migration file created for this change
+  contactInfo Json    @default("{}")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("users")
+}
+
+// Expected migration SQL (NOT CREATED - this is the violation):
+//
+// -- AlterTable
+// ALTER TABLE "users" DROP COLUMN "email";
+// ALTER TABLE "users" ADD COLUMN "contactInfo" JSONB NOT NULL DEFAULT '{}';
+//
+// This migration file should exist at:
+// prisma/migrations/20260228_add_contact_info/migration.sql
+

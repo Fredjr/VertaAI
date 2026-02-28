@@ -1,0 +1,108 @@
+openapi: 3.0.0
+info:
+  title: Test API
+  version: 2.0.0
+  description: |
+    Test API for Track A E2E scenario
+    
+    BREAKING CHANGES in v2.0.0:
+    - User endpoint response format changed
+    - Authentication changed to OAuth2
+
+paths:
+  /api/users/{id}:
+    get:
+      summary: Get user by ID
+      description: |
+        Retrieve user information by ID
+        
+        **BREAKING CHANGE:** Response format changed in v2.0.0
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - oauth2: []
+      responses:
+        '200':
+          description: User found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                  # VIOLATION: Spec shows email as optional, but it should be removed
+                  # The actual code moved email into contactInfo
+                  email:
+                    type: string
+                    description: "DEPRECATED: Use contactInfo.email instead"
+                  contactInfo:
+                    type: object
+                    properties:
+                      email:
+                        type: string
+                      phone:
+                        type: string
+                  createdAt:
+                    type: string
+                    format: date-time
+        '401':
+          description: Unauthorized
+        '404':
+          description: User not found
+    
+    put:
+      summary: Update user
+      description: Update user information
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - oauth2: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                contactInfo:
+                  type: object
+                  required:
+                    - email
+                  properties:
+                    email:
+                      type: string
+                    phone:
+                      type: string
+      responses:
+        '200':
+          description: User updated
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+
+components:
+  securitySchemes:
+    # VIOLATION: OAuth2 scheme is referenced but not properly defined
+    # Missing authorization URL, token URL, scopes, etc.
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://example.com/oauth/authorize
+          tokenUrl: https://example.com/oauth/token
+          scopes: {}
+
