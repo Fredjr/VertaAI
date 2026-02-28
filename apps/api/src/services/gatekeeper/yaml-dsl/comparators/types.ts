@@ -308,9 +308,36 @@ export type Evidence =
 // Comparator Interface
 // ============================================================================
 
+/**
+ * Comparator interface
+ *
+ * Phase 4: Dual-format support
+ * - evaluate(): Legacy unstructured output (ComparatorResult)
+ * - evaluateStructured(): NEW structured IR output (ObligationResult)
+ *
+ * Migration strategy:
+ * 1. Add evaluateStructured() to new comparators
+ * 2. Keep evaluate() for backward compatibility
+ * 3. Normalizer prefers evaluateStructured() when available
+ * 4. Gradually migrate all comparators
+ */
 export interface Comparator {
   id: ComparatorId;
   version: string;
+
+  /**
+   * Legacy evaluation method (unstructured output)
+   * Returns raw findings that must be parsed by normalizer
+   */
   evaluate(context: PRContext, params: any): Promise<ComparatorResult>;
+
+  /**
+   * NEW: Structured evaluation method (IR output)
+   * Returns fully structured ObligationResult
+   *
+   * Phase 4: Optional for now, will become required in future
+   * Normalizer will prefer this method when available
+   */
+  evaluateStructured?(context: PRContext, params: any): Promise<import('../ir/types.js').ObligationResult>;
 }
 
