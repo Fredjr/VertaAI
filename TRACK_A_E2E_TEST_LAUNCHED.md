@@ -152,21 +152,50 @@ This PR should exercise and display:
 
 ---
 
+## 🔧 Railway Deployment Fixes
+
+### **Fix 1: Duplicate Variable Declaration** ✅
+- **Error:** `SyntaxError: Identifier 'baselineFailures' has already been declared`
+- **Location:** `ultimateOutputRenderer.ts` line 560
+- **Fix:** Removed duplicate declaration at line 647
+- **Commit:** `0bc7b98`
+
+### **Fix 2: Incorrect Import in evaluationNormalizer** ✅
+- **Error:** `SyntaxError: The requested module './ir/semanticValidator.js' does not provide an export named 'validateGovernanceIR'`
+- **Location:** `evaluationNormalizer.ts` line 25
+- **Fix:** Changed import from `validateGovernanceIR` to `validateSemantics`
+- **Commit:** `f4ced1f`
+
+### **Fix 3: Incorrect Import in ultimateOutputRenderer** ✅
+- **Error:** Same as Fix 2
+- **Location:** `ultimateOutputRenderer.ts` line 27
+- **Fix:** Changed import from `validateGovernanceIR` to `validateSemantics`
+- **Commit:** `d5f01d4`
+
+**Status:** All fixes deployed to Railway ✅
+
+---
+
 ## 🚀 Next Steps
 
-1. **Monitor PR for GitHub Check:**
+1. **Monitor Railway Deployment:**
+   - Wait for Railway to redeploy with fixes
+   - Verify API starts successfully
+   - Check logs for any remaining errors
+
+2. **Monitor PR for GitHub Check:**
    - Check should be created: "VertaAI Policy Evaluation"
    - Output should show all Track A features
    - Monitor at: https://github.com/Fredjr/vertaai-e2e-test/pull/34
 
-2. **Inspect Governance Output:**
+3. **Inspect Governance Output:**
    - Verify vector confidence breakdown
    - Verify stable fingerprints
    - Verify runtime validation results
    - Verify risk scores
    - Verify evidence collection
 
-3. **Validate Track A Features:**
+4. **Validate Track A Features:**
    - Confirm 3-component confidence model
    - Confirm no multiplication (min-score logic)
    - Confirm explicit basis for each component
