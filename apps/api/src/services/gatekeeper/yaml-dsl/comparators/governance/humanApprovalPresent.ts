@@ -12,6 +12,7 @@
 
 import type { Comparator, ComparatorResult, PRContext } from '../types.js';
 import { ComparatorId, FindingCode } from '../types.js';
+import { formatMessage } from '../../ir/messageCatalog.js';
 import type { ObligationResult } from '../../ir/types.js';
 import {
   createObligation,
@@ -82,8 +83,9 @@ export const humanApprovalPresentComparator: Comparator = {
 
     // At least one human approval - PASS
     if (validApprovals.length > 0) {
-      return obligation.pass(
-        `Found ${validApprovals.length} human approval(s)`
+      return obligation.passWithMessage(
+        'pass.governance.human_approval_present',
+        { count: validApprovals.length.toString() }
       );
     }
 
@@ -93,13 +95,14 @@ export const humanApprovalPresentComparator: Comparator = {
     );
 
     const reasonCode = allBots ? 'APPROVALS_ALL_BOTS' : 'NO_HUMAN_APPROVAL';
-    const reasonHuman = allBots
-      ? 'All approvals are from bots'
-      : 'No human approval found';
+    const messageId = allBots
+      ? 'fail.governance.approvals_all_bots'
+      : 'fail.governance.no_human_approval';
 
-    return obligation.fail({
+    return obligation.failWithMessage({
       reasonCode: reasonCode as any,
-      reasonHuman,
+      messageId,
+      messageParams: {},
       evidence: [{
         location: 'PR approvals',
         found: false,

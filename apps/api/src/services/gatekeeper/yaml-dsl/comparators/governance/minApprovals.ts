@@ -12,6 +12,7 @@
 
 import type { Comparator, ComparatorResult, PRContext } from '../types.js';
 import { ComparatorId, FindingCode } from '../types.js';
+import { formatMessage } from '../../ir/messageCatalog.js';
 import type { ObligationResult } from '../../ir/types.js';
 import {
   createObligation,
@@ -51,8 +52,9 @@ export const minApprovalsComparator: Comparator = {
     });
 
     if (!minCount || minCount < 1) {
-      return obligation.notEvaluable(
-        'Invalid minCount parameter',
+      return obligation.notEvaluableWithMessage(
+        'not_evaluable.policy_misconfig',
+        { detail: 'Invalid minCount parameter' },
         'policy_misconfig'
       );
     }
@@ -89,15 +91,23 @@ export const minApprovalsComparator: Comparator = {
 
     // Minimum approvals met - PASS
     if (validApprovals.length >= minCount) {
-      return obligation.pass(
-        `Found ${validApprovals.length} approval(s), required ${minCount}`
+      return obligation.passWithMessage(
+        'pass.governance.min_approvals_met',
+        {
+          count: validApprovals.length.toString(),
+          minCount: minCount.toString(),
+        }
       );
     }
 
     // Insufficient approvals - FAIL
-    return obligation.fail({
+    return obligation.failWithMessage({
       reasonCode: 'INSUFFICIENT_APPROVALS',
-      reasonHuman: `Found ${validApprovals.length} approval(s), required ${minCount}`,
+      messageId: 'fail.governance.insufficient_approvals',
+      messageParams: {
+        count: validApprovals.length.toString(),
+        minCount: minCount.toString(),
+      },
       evidence: validApprovals.map((review: any) => ({
         location: `Approval by ${review.user.login}`,
         found: true,

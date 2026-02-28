@@ -20,6 +20,7 @@ import {
   mismatchEvidence,
   calculateSchemaRisk,
 } from '../../ir/obligationDSL.js';
+import { formatMessage } from '../../ir/messageCatalog.js';
 
 export const openapiSchemaValidComparator: Comparator = {
   id: ComparatorId.OPENAPI_SCHEMA_VALID,
@@ -45,8 +46,9 @@ export const openapiSchemaValidComparator: Comparator = {
     const targets = await resolveArtifactTargets(context, artifactType);
 
     if (targets.length === 0) {
-      return obligation.notEvaluable(
-        `No artifact registry configured for type: ${artifactType}`,
+      return obligation.notEvaluableWithMessage(
+        'not_evaluable.no_artifact_registry',
+        { artifactType },
         'policy_misconfig'
       );
     }
@@ -112,18 +114,30 @@ export const openapiSchemaValidComparator: Comparator = {
 
     // All schemas valid - PASS
     if (invalidSchemas.length === 0) {
-      return obligation.pass(
-        `All ${artifactType} schemas are valid`
+      return obligation.passWithMessage(
+        'pass.schema.valid',
+        { artifactType }
       );
     }
 
     // Some schemas invalid - FAIL
-    return obligation.fail({
+    return obligation.failWithMessage({
       reasonCode: 'ARTIFACT_INVALID_SCHEMA',
-      reasonHuman: `Invalid ${artifactType} schemas: ${invalidSchemas.map(s => s.path).join(', ')}`,
+      messageId: 'fail.schema.invalid',
+      messageParams: {
+        artifactType,
+        invalidPaths: invalidSchemas.map(s => s.path).join(', '),
+      },
       evidence: [
-        ...invalidSchemas.map(s => mismatchEvidence(s.path, 'Valid OpenAPI schema', s.error)),
-        ...validSchemas.map(path => presentFileEvidence(path, 'Valid schema')),
+        ...invalidSchemas.map(s => mismatchEvidence(
+          s.path,
+          formatMessage('evidence.schema.expected_valid', { artifactType }),
+          s.error
+        )),
+        ...validSchemas.map(path => presentFileEvidence(
+          path,
+          formatMessage('evidence.schema.valid', { artifactType })
+        )),
       ],
       evidenceSearch: {
         locationsSearched: targets.map(t => t.path),

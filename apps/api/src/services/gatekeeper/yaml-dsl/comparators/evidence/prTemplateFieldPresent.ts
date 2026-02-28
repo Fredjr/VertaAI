@@ -16,6 +16,7 @@ import {
   createObligation,
   calculateGovernanceRisk,
 } from '../../ir/obligationDSL.js';
+import { formatMessage } from '../../ir/messageCatalog.js';
 
 export const prTemplateFieldPresentComparator: Comparator = {
   id: ComparatorId.PR_TEMPLATE_FIELD_PRESENT,
@@ -40,8 +41,9 @@ export const prTemplateFieldPresentComparator: Comparator = {
     // Get field patterns from workspace defaults
     const fieldConfig = context.defaults?.prTemplate?.requiredFields?.[fieldName];
     if (!fieldConfig) {
-      return obligation.notEvaluable(
-        `No PR template configuration found for field: ${fieldName}`,
+      return obligation.notEvaluableWithMessage(
+        'not_evaluable.policy_misconfig',
+        { detail: `No PR template configuration found for field: ${fieldName}` },
         'policy_misconfig'
       );
     }
@@ -52,8 +54,9 @@ export const prTemplateFieldPresentComparator: Comparator = {
         const regex = new RegExp(pattern, 'i');
         const match = context.body.match(regex);
         if (match) {
-          return obligation.pass(
-            `PR template field '${fieldName}' found`
+          return obligation.passWithMessage(
+            'pass.evidence.pr_field_present',
+            { fieldName }
           );
         }
       } catch (error) {
@@ -62,9 +65,13 @@ export const prTemplateFieldPresentComparator: Comparator = {
     }
 
     // Field not found - FAIL
-    return obligation.fail({
+    return obligation.failWithMessage({
       reasonCode: 'PR_FIELD_MISSING',
-      reasonHuman: `PR template field '${fieldName}' not found. Expected patterns: ${fieldConfig.matchAny.join(', ')}`,
+      messageId: 'fail.evidence.pr_field_missing',
+      messageParams: {
+        fieldName,
+        expectedPatterns: fieldConfig.matchAny.join(', '),
+      },
       evidence: [{
         location: 'PR body',
         found: false,

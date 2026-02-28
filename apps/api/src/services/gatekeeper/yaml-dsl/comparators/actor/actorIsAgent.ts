@@ -12,6 +12,7 @@
 
 import type { Comparator, ComparatorResult, PRContext } from '../types.js';
 import { ComparatorId, FindingCode } from '../types.js';
+import { formatMessage } from '../../ir/messageCatalog.js';
 import type { ObligationResult } from '../../ir/types.js';
 import {
   createObligation,
@@ -102,8 +103,9 @@ export const actorIsAgentComparator: Comparator = {
 
     // Agent detected - PASS (this is a positive detection)
     if (isAgentAuthored) {
-      return obligation.pass(
-        `Agent-authored PR detected (${(confidence * 100).toFixed(0)}% confidence)`
+      return obligation.passWithMessage(
+        'pass.actor.agent_detected',
+        { confidence: (confidence * 100).toFixed(0) }
       );
     }
 

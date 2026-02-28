@@ -12,6 +12,7 @@
 import { minimatch } from 'minimatch';
 import type { Comparator, ComparatorResult, PRContext } from '../types.js';
 import { ComparatorId, FindingCode } from '../types.js';
+import { formatMessage } from '../../ir/messageCatalog.js';
 import type { ObligationResult } from '../../ir/types.js';
 import {
   createObligation,
@@ -40,8 +41,9 @@ export const changedPathMatchesComparator: Comparator = {
     });
 
     if (!patterns || patterns.length === 0) {
-      return obligation.notEvaluable(
-        'No patterns specified',
+      return obligation.notEvaluableWithMessage(
+        'not_evaluable.policy_misconfig',
+        { detail: 'No patterns specified' },
         'policy_misconfig'
       );
     }
@@ -63,8 +65,9 @@ export const changedPathMatchesComparator: Comparator = {
 
     // Files matched - PASS (this is a positive detection)
     if (matchedFiles.length > 0) {
-      return obligation.pass(
-        `Found ${matchedFiles.length} file(s) matching patterns`
+      return obligation.passWithMessage(
+        'pass.trigger.path_matched',
+        { count: matchedFiles.length.toString() }
       );
     }
 

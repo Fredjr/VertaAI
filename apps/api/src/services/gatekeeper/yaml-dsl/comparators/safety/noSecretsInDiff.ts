@@ -12,6 +12,7 @@
 
 import type { Comparator, ComparatorResult, PRContext } from '../types.js';
 import { ComparatorId, FindingCode } from '../types.js';
+import { formatMessage } from '../../ir/messageCatalog.js';
 import crypto from 'crypto';
 import RE2 from 're2';
 import type { ObligationResult } from '../../ir/types.js';
@@ -115,13 +116,19 @@ export const noSecretsInDiffComparator: Comparator = {
 
     // No secrets detected - PASS
     if (detectedSecrets.length === 0) {
-      return obligation.pass('No secrets detected in diff');
+      return obligation.passWithMessage(
+        'pass.safety.no_secrets',
+        {}
+      );
     }
 
     // Secrets detected - FAIL
-    return obligation.fail({
+    return obligation.failWithMessage({
       reasonCode: 'SECRET_DETECTED',
-      reasonHuman: `Detected ${detectedSecrets.length} potential secret(s) in diff`,
+      messageId: 'fail.safety.secrets_detected',
+      messageParams: {
+        count: detectedSecrets.length.toString(),
+      },
       evidence: detectedSecrets.map(s => ({
         location: `${s.file}:${s.line}`,
         found: true,

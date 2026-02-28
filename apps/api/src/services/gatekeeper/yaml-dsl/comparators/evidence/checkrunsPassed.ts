@@ -11,6 +11,7 @@
 
 import type { Comparator, ComparatorResult, PRContext } from '../types.js';
 import { ComparatorId, FindingCode } from '../types.js';
+import { formatMessage } from '../../ir/messageCatalog.js';
 import type { ObligationResult } from '../../ir/types.js';
 import {
   createObligation,
@@ -38,8 +39,9 @@ export const checkrunsPassedComparator: Comparator = {
     });
 
     if (!requiredChecks || requiredChecks.length === 0) {
-      return obligation.notEvaluable(
-        'No required checks specified',
+      return obligation.notEvaluableWithMessage(
+        'not_evaluable.policy_misconfig',
+        { detail: 'No required checks specified' },
         'policy_misconfig'
       );
     }
@@ -88,20 +90,25 @@ export const checkrunsPassedComparator: Comparator = {
 
     // All checks passed - PASS
     if (missingChecks.length === 0 && failedChecks.length === 0) {
-      return obligation.pass(
-        `All required checks passed: ${passedChecks.join(', ')}`
+      return obligation.passWithMessage(
+        'pass.evidence.checkruns_passed',
+        { checkNames: passedChecks.join(', ') }
       );
     }
 
     // Some checks missing or failed - FAIL
     const reasonCode = missingChecks.length > 0 ? 'CHECKRUNS_REQUIRED_MISSING' : 'CHECKRUNS_FAILED';
-    const reasonHuman = missingChecks.length > 0
-      ? `Required checks not found: ${missingChecks.join(', ')}`
-      : `Required checks failed: ${failedChecks.join(', ')}`;
+    const messageId = missingChecks.length > 0
+      ? 'fail.evidence.checkruns_missing'
+      : 'fail.evidence.checkruns_failed';
+    const messageParams = missingChecks.length > 0
+      ? { checkNames: missingChecks.join(', ') }
+      : { checkNames: failedChecks.join(', ') };
 
-    return obligation.fail({
+    return obligation.failWithMessage({
       reasonCode: reasonCode as any,
-      reasonHuman,
+      messageId,
+      messageParams,
       evidence: [
         ...missingChecks.map(name => ({
           location: `Check: ${name}`,

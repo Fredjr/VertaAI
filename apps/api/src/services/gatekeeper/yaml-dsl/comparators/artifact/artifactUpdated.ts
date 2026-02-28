@@ -21,6 +21,7 @@ import {
   calculateArtifactRisk,
   outdatedArtifactRemediation,
 } from '../../ir/obligationDSL.js';
+import { formatMessage } from '../../ir/messageCatalog.js';
 
 function normalizePath(path: string): string {
   return path.replace(/^\.\//, '').replace(/\\/g, '/').trim();
@@ -50,8 +51,9 @@ export const artifactUpdatedComparator: Comparator = {
     const targets = await resolveArtifactTargets(context, artifactType);
 
     if (targets.length === 0) {
-      return obligation.notEvaluable(
-        `No artifact registry configured for type: ${artifactType}. Configure workspace defaults artifactRegistry.`,
+      return obligation.notEvaluableWithMessage(
+        'not_evaluable.no_artifact_registry',
+        { artifactType },
         'policy_misconfig'
       );
     }
@@ -66,18 +68,26 @@ export const artifactUpdatedComparator: Comparator = {
 
     // All targets updated - PASS
     if (updatedTargets.length > 0) {
-      return obligation.pass(
-        `Artifact ${artifactType} updated for services: ${updatedTargets.map(t => t.service).join(', ')}`
+      return obligation.passWithMessage(
+        'pass.artifact.updated',
+        {
+          artifactType,
+          paths: updatedTargets.map(t => t.path).join(', '),
+        }
       );
     }
 
     // Artifact not updated - FAIL
-    return obligation.fail({
+    return obligation.failWithMessage({
       reasonCode: 'ARTIFACT_NOT_UPDATED',
-      reasonHuman: `Artifact ${artifactType} not updated. Expected paths: ${targets.map(t => t.path).join(', ')}`,
+      messageId: 'fail.artifact.not_updated',
+      messageParams: {
+        artifactType,
+        outdatedPaths: targets.map(t => t.path).join(', '),
+      },
       evidence: targets.map(t => missingFileEvidence(
         t.path,
-        `Expected for service: ${t.service}`
+        formatMessage('evidence.file.outdated', { service: t.service })
       )),
       evidenceSearch: {
         locationsSearched: targets.map(t => t.path),
