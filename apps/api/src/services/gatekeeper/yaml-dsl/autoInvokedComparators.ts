@@ -16,7 +16,7 @@
 
 import type { PRContext } from './types.js';
 import type { ComparatorId } from './comparators/types.js';
-import { getComparatorRegistry } from './comparators/registry.js';
+import { comparatorRegistry } from './comparators/registry.js';
 
 /**
  * Finding structure for PackEvaluator
@@ -87,7 +87,7 @@ export async function runAutoInvokedComparators(
   usedComparators: Set<ComparatorId>
 ) {
   const findings: AutoInvokedFinding[] = [];
-  const registry = getComparatorRegistry();
+  const registry = comparatorRegistry;
 
   console.log('[AutoInvoked] Running auto-invoked comparators...');
 
