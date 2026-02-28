@@ -1112,36 +1112,99 @@ function renderFindings(normalized: NormalizedEvaluationResult): string {
   lines.push('# 🔍 Findings (Ranked by Risk)');
   lines.push('');
 
-  // Group by severity
-  const critical = normalized.findings.filter(f => f.severity === 'critical');
-  const high = normalized.findings.filter(f => f.severity === 'high');
-  const medium = normalized.findings.filter(f => f.severity === 'medium');
-  const low = normalized.findings.filter(f => f.severity === 'low');
+  // TRACK A TASK 2: Separate auto-invoked findings from policy pack findings
+  const autoInvokedFindings = normalized.findings.filter(f => {
+    const obligation = normalized.obligations.find(o => o.id === f.obligationId);
+    return obligation?.sourceRule.ruleId.startsWith('auto-invoked-');
+  });
 
-  if (critical.length > 0) {
-    lines.push('## 🚨 Critical Issues');
+  const policyPackFindings = normalized.findings.filter(f => {
+    const obligation = normalized.obligations.find(o => o.id === f.obligationId);
+    return !obligation?.sourceRule.ruleId.startsWith('auto-invoked-');
+  });
+
+  // Render auto-invoked findings first (cross-artifact + safety checks)
+  if (autoInvokedFindings.length > 0) {
+    lines.push('## 🔍 Cross-Artifact & Safety Checks');
     lines.push('');
-    critical.forEach(finding => lines.push(renderFinding(finding, normalized)));
+    lines.push('*These checks run automatically on every PR to detect drift and safety issues, independent of policy pack configuration.*');
+    lines.push('');
+
+    // Group auto-invoked by severity
+    const autoInvokedCritical = autoInvokedFindings.filter(f => f.severity === 'critical');
+    const autoInvokedHigh = autoInvokedFindings.filter(f => f.severity === 'high');
+    const autoInvokedMedium = autoInvokedFindings.filter(f => f.severity === 'medium');
+    const autoInvokedLow = autoInvokedFindings.filter(f => f.severity === 'low');
+
+    if (autoInvokedCritical.length > 0) {
+      lines.push('### 🚨 Critical');
+      lines.push('');
+      autoInvokedCritical.forEach(finding => lines.push(renderFinding(finding, normalized)));
+    }
+
+    if (autoInvokedHigh.length > 0) {
+      lines.push('### ❌ High Priority');
+      lines.push('');
+      autoInvokedHigh.forEach(finding => lines.push(renderFinding(finding, normalized)));
+    }
+
+    if (autoInvokedMedium.length > 0) {
+      lines.push('### ⚠️ Warnings');
+      lines.push('');
+      autoInvokedMedium.forEach(finding => lines.push(renderFinding(finding, normalized)));
+    }
+
+    if (autoInvokedLow.length > 0) {
+      lines.push('<details>');
+      lines.push('<summary>ℹ️ Low Priority</summary>');
+      lines.push('');
+      autoInvokedLow.forEach(finding => lines.push(renderFinding(finding, normalized)));
+      lines.push('</details>');
+    }
+
+    lines.push('');
+    lines.push('---');
+    lines.push('');
   }
 
-  if (high.length > 0) {
-    lines.push('## ❌ High Priority');
-    lines.push('');
-    high.forEach(finding => lines.push(renderFinding(finding, normalized)));
-  }
+  // Render policy pack findings
+  if (policyPackFindings.length > 0) {
+    if (autoInvokedFindings.length > 0) {
+      lines.push('## 📋 Policy Pack Findings');
+      lines.push('');
+    }
 
-  if (medium.length > 0) {
-    lines.push('## ⚠️ Warnings');
-    lines.push('');
-    medium.forEach(finding => lines.push(renderFinding(finding, normalized)));
-  }
+    // Group by severity
+    const critical = policyPackFindings.filter(f => f.severity === 'critical');
+    const high = policyPackFindings.filter(f => f.severity === 'high');
+    const medium = policyPackFindings.filter(f => f.severity === 'medium');
+    const low = policyPackFindings.filter(f => f.severity === 'low');
 
-  if (low.length > 0) {
-    lines.push('<details>');
-    lines.push('<summary>ℹ️ Low Priority Issues</summary>');
-    lines.push('');
-    low.forEach(finding => lines.push(renderFinding(finding, normalized)));
-    lines.push('</details>');
+    if (critical.length > 0) {
+      lines.push('### 🚨 Critical Issues');
+      lines.push('');
+      critical.forEach(finding => lines.push(renderFinding(finding, normalized)));
+    }
+
+    if (high.length > 0) {
+      lines.push('### ❌ High Priority');
+      lines.push('');
+      high.forEach(finding => lines.push(renderFinding(finding, normalized)));
+    }
+
+    if (medium.length > 0) {
+      lines.push('### ⚠️ Warnings');
+      lines.push('');
+      medium.forEach(finding => lines.push(renderFinding(finding, normalized)));
+    }
+
+    if (low.length > 0) {
+      lines.push('<details>');
+      lines.push('<summary>ℹ️ Low Priority Issues</summary>');
+      lines.push('');
+      low.forEach(finding => lines.push(renderFinding(finding, normalized)));
+      lines.push('</details>');
+    }
   }
 
   return lines.join('\n');

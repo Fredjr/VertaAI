@@ -1371,11 +1371,62 @@ function buildPackEvaluationGraph(
     }
   }
 
-  // Global decision
-  const contributingRules = ruleGraphs.map(rg => ({
-    ruleId: rg.ruleId,
-    decision: rg.decision.outcome,
-  }));
+  // TRACK A TASK 2: Build synthetic rule graphs for auto-invoked comparator findings
+  // These are findings with ruleId starting with 'auto-invoked-'
+  const autoInvokedFindings = findings.filter(f => f.ruleId.startsWith('auto-invoked-'));
+  const autoInvokedRuleGraphs: PolicyEvaluationGraph[] = [];
+
+  if (autoInvokedFindings.length > 0) {
+    console.log(`[PackEvaluator] Building ${autoInvokedFindings.length} auto-invoked rule graphs for evaluation graph`);
+
+    // Group auto-invoked findings by ruleId
+    const findingsByRuleId = new Map<string, Finding[]>();
+    for (const finding of autoInvokedFindings) {
+      const existing = findingsByRuleId.get(finding.ruleId) || [];
+      existing.push(finding);
+      findingsByRuleId.set(finding.ruleId, existing);
+    }
+
+    // Create a synthetic rule graph for each auto-invoked comparator
+    for (const [ruleId, ruleFindings] of findingsByRuleId.entries()) {
+      const syntheticRule = {
+        id: ruleId,
+        name: ruleFindings[0].ruleName,
+        description: `Auto-invoked comparator: ${ruleFindings[0].comparatorResult?.comparatorId || 'UNKNOWN'}`,
+        trigger: { always: true }, // Auto-invoked comparators always run
+      };
+
+      const ruleGraph = buildPolicyEvaluationGraph(
+        syntheticRule,
+        ruleFindings,
+        context,
+        evaluationTimeMs
+      );
+
+      autoInvokedRuleGraphs.push(ruleGraph);
+
+      // Collect surfaces from auto-invoked rules too
+      for (const surface of ruleGraph.surfaces) {
+        if (!allSurfaces.find(s => s.surfaceId === surface.surfaceId)) {
+          allSurfaces.push(surface);
+        }
+      }
+    }
+
+    console.log(`[PackEvaluator] Created ${autoInvokedRuleGraphs.length} auto-invoked rule graphs`);
+  }
+
+  // Global decision - include auto-invoked rules in contributing rules
+  const contributingRules = [
+    ...ruleGraphs.map(rg => ({
+      ruleId: rg.ruleId,
+      decision: rg.decision.outcome,
+    })),
+    ...autoInvokedRuleGraphs.map(rg => ({
+      ruleId: rg.ruleId,
+      decision: rg.decision.outcome,
+    })),
+  ];
 
   const globalDecision = {
     outcome: decision,
@@ -1400,6 +1451,7 @@ function buildPackEvaluationGraph(
     inputs,
     allSurfaces,
     ruleGraphs,
+    autoInvokedRuleGraphs: autoInvokedRuleGraphs.length > 0 ? autoInvokedRuleGraphs : undefined,
     globalDecision,
     coverage: {
       totalRules: pack.rules.length,

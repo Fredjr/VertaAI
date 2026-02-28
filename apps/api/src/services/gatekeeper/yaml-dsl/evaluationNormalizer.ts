@@ -221,6 +221,7 @@ function buildNormalizedObligations(
     const graph = packResult.result.evaluationGraph;
     if (!graph) continue;
 
+    // Process regular rule graphs
     for (const ruleGraph of graph.ruleGraphs) {
       for (const obligation of ruleGraph.obligations) {
         // Map obligation to surfaces that triggered it
@@ -268,6 +269,55 @@ function buildNormalizedObligations(
 
         obligations.push(normalized);
       }
+    }
+
+    // TRACK A TASK 2: Process auto-invoked rule graphs
+    // These are comparators that run on every PR, independent of policy pack rules
+    if (graph.autoInvokedRuleGraphs && graph.autoInvokedRuleGraphs.length > 0) {
+      console.log(`[Normalizer] Processing ${graph.autoInvokedRuleGraphs.length} auto-invoked rule graphs`);
+
+      for (const ruleGraph of graph.autoInvokedRuleGraphs) {
+        for (const obligation of ruleGraph.obligations) {
+          const triggeredBy = ruleGraph.surfaces.map(s => s.surfaceId);
+          const kind = inferObligationKind(obligation.evaluator.id);
+
+          const tempObligation = {
+            id: uuidv4(),
+            kind,
+            description: obligation.description,
+            sourceRule: {
+              ruleId: ruleGraph.ruleId,
+              ruleName: ruleGraph.ruleName,
+            },
+            result: obligation.result,
+          };
+          const applicability = resolveObligationApplicability(tempObligation as any, repoClassification);
+
+          const normalized: NormalizedObligation = {
+            id: tempObligation.id,
+            kind,
+            description: obligation.description,
+            triggeredBy,
+            sourceRule: {
+              ruleId: ruleGraph.ruleId,
+              ruleName: ruleGraph.ruleName,
+            },
+            result: obligation.result,
+            evidence: ruleGraph.evidence,
+            decisionOnFail: obligation.decisionOnFail || 'warn',
+            decisionOnUnknown: obligation.decisionOnUnknown,
+            evaluationStatus: obligation.result.status === 'unknown' ? 'not_evaluable' : 'evaluated',
+            notEvaluableReason: obligation.result.status === 'unknown'
+              ? buildNotEvaluableReason(obligation.result.reasonCode, obligation.result.message)
+              : undefined,
+            applicability,
+          };
+
+          obligations.push(normalized);
+        }
+      }
+
+      console.log(`[Normalizer] Added ${graph.autoInvokedRuleGraphs.reduce((sum, rg) => sum + rg.obligations.length, 0)} auto-invoked obligations`);
     }
   }
 

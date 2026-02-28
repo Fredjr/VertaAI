@@ -1025,6 +1025,9 @@ export interface PackEvaluationGraph {
   /** Evaluation graph for each triggered rule */
   ruleGraphs: PolicyEvaluationGraph[];
 
+  /** TRACK A TASK 2: Auto-invoked comparator rule graphs (always run, independent of policy pack) */
+  autoInvokedRuleGraphs?: PolicyEvaluationGraph[];
+
   /** Global decision */
   globalDecision: {
     outcome: 'pass' | 'warn' | 'block';
