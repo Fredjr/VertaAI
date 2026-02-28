@@ -84,12 +84,20 @@
 
 ## 🎯 Invocation Status
 
-### Auto-Invoked Comparators
-✅ **Cross-Artifact Comparators (5)** - Auto-invoked in `PackEvaluator.runCrossArtifactComparators()`
-- Runs on EVERY PR before rule evaluation
-- Independent of policy pack rules
+### Auto-Invoked Comparators (6) ✅ **WIRED**
+These run on EVERY PR before rule evaluation, independent of policy pack rules:
 
-### Rule-Invoked Comparators (10)
+**Cross-Artifact Comparators (5)** - `severity: medium`, `decisionOnFail: warn`
+- ✅ `OPENAPI_CODE_PARITY`
+- ✅ `SCHEMA_MIGRATION_PARITY`
+- ✅ `CONTRACT_IMPLEMENTATION_PARITY`
+- ✅ `DOC_CODE_PARITY`
+- ✅ `TEST_IMPLEMENTATION_PARITY`
+
+**Safety Comparators (1)** - `severity: critical`, `decisionOnFail: block`
+- ✅ `NO_SECRETS_IN_DIFF` ⚠️ **BLOCKS PR if secrets detected**
+
+### Rule-Invoked Comparators (9)
 These comparators are only invoked when referenced by policy pack rules:
 - `ARTIFACT_UPDATED`
 - `ARTIFACT_PRESENT`
@@ -98,7 +106,6 @@ These comparators are only invoked when referenced by policy pack rules:
 - `CHECKRUNS_PASSED`
 - `MIN_APPROVALS`
 - `HUMAN_APPROVAL_PRESENT`
-- `NO_SECRETS_IN_DIFF`
 - `ACTOR_IS_AGENT`
 - `CHANGED_PATH_MATCHES`
 
@@ -106,19 +113,21 @@ These comparators are only invoked when referenced by policy pack rules:
 
 ## 🚀 Recommendations
 
-### 1. Implement High-Priority Missing Comparators
+### 1. ✅ COMPLETE: Auto-Invoke Safety Comparators
+- ✅ `NO_SECRETS_IN_DIFF` - Now auto-invoked with `block` decision (commit `650c23a`)
+
+### 2. Implement Additional Safety Comparators (High Priority)
+These should be implemented AND auto-invoked:
+- `NO_HARDCODED_URLS` - Detect hardcoded URLs in code
+- `NO_COMMENTED_CODE` - Detect commented-out code blocks
+
+### 3. Implement High-Priority Missing Comparators
 Focus on comparators that are likely referenced in policy packs:
 - `ARTIFACT_SECTION_PRESENT`
 - `TESTS_TOUCHED_OR_JUSTIFIED`
 - `ARTIFACT_UPDATED_OR_JUSTIFIED`
 
-### 2. Consider Auto-Invocation for Safety Comparators
-Safety comparators should probably run automatically:
-- `NO_SECRETS_IN_DIFF` - Already implemented, should auto-invoke
-- `NO_HARDCODED_URLS` - Implement and auto-invoke
-- `NO_COMMENTED_CODE` - Implement and auto-invoke
-
-### 3. Implement Schema Validators
+### 4. Implement Schema Validators
 These are commonly needed for validation:
 - `JSON_PARSE_VALID`
 - `YAML_PARSE_VALID`
@@ -128,8 +137,18 @@ These are commonly needed for validation:
 
 ## 📝 Next Steps
 
-1. **Immediate:** Add auto-invocation for `NO_SECRETS_IN_DIFF` (already implemented)
-2. **Short-term:** Implement high-priority missing comparators
-3. **Medium-term:** Implement schema validators
-4. **Long-term:** Complete all 32 comparators for full coverage
+1. **✅ COMPLETE:** Auto-invocation for `NO_SECRETS_IN_DIFF` (commit `650c23a`)
+2. **⏳ Pending:** Wait for Railway deployment and re-trigger PR #35 to validate
+3. **Short-term:** Implement `NO_HARDCODED_URLS` and `NO_COMMENTED_CODE` safety comparators
+4. **Medium-term:** Implement high-priority missing comparators
+5. **Long-term:** Complete all 32 comparators for full coverage
+
+---
+
+## 🎉 Recent Achievements
+
+- **Commit `0188ced`:** Auto-invocation wiring for cross-artifact comparators
+- **Commit `650c23a`:** Added `NO_SECRETS_IN_DIFF` to auto-invoked list with `block` decision
+- **Total Auto-Invoked:** 6 comparators (5 cross-artifact + 1 safety)
+- **Coverage:** 100% of implemented cross-artifact comparators are now auto-invoked
 
