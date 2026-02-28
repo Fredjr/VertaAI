@@ -187,7 +187,8 @@ function detectSignals(prFiles: GitHubFile[], inputFiles: GatekeeperInput['files
 
 /**
  * Build confidence breakdown from repo classification and signals
- * Separates classification confidence from decision confidence
+ * PHASE 6: Vector confidence model - never multiply components
+ * Each component has explicit basis and evidence
  */
 function buildConfidenceBreakdown(
   repoClassification?: RepoClassification,
@@ -214,29 +215,90 @@ function buildConfidenceBreakdown(
     evidence: repoClassification.evidence.filter(e => e.includes('tier') || e.includes('SLO')),
   } : undefined;
 
-  // Decision confidence (evidence quality)
-  // Start with high confidence for deterministic baseline checks
-  const decision = {
-    confidence: 0.95, // High confidence for deterministic checks
-    basis: 'deterministic_baseline' as const,
-    degradationReasons: [] as string[],
+  // Decision confidence (PHASE 6: Vector model with 3 components)
+  // Component 1: Applicability (should policies run for this repo?)
+  const applicabilityScore = repoClassification ? repoClassification.confidence : 0.5;
+  const applicabilityBasis = repoClassification
+    ? (repoClassification.evidence.some(e => e.includes('explicit')) ? 'explicit_signal' as const : 'inferred_signal' as const)
+    : 'default' as const;
+  const applicabilityEvidence = repoClassification?.evidence || ['No repo classification available'];
+
+  const applicability = {
+    score: applicabilityScore,
+    basis: applicabilityBasis,
+    evidence: applicabilityEvidence,
   };
 
-  // Degrade confidence if we're missing key signals
+  // Component 2: Evidence quality (did we find what we looked for?)
+  const hasSignals = signals !== undefined;
+  const hasServiceCatalog = signals?.serviceCatalog || false;
+  const degradationReasons: string[] = [];
+
+  let evidenceScore = 0.95; // Start with high confidence for deterministic checks
+  let evidenceBasis: 'deterministic_baseline' | 'diff_analysis' | 'heuristic' | 'api_call' = 'deterministic_baseline';
+
   if (!repoClassification) {
-    decision.confidence = Math.max(0.7, decision.confidence - 0.1);
-    decision.degradationReasons.push('No repo classification available');
+    evidenceScore = Math.max(0.7, evidenceScore - 0.1);
+    degradationReasons.push('No repo classification available');
   }
 
-  if (!signals?.serviceCatalog && classification.repoType === 'service') {
-    decision.confidence = Math.max(0.7, decision.confidence - 0.05);
-    decision.degradationReasons.push('Service repo without service catalog');
+  if (!hasServiceCatalog && classification.repoType === 'service') {
+    evidenceScore = Math.max(0.7, evidenceScore - 0.05);
+    degradationReasons.push('Service repo without service catalog');
   }
+
+  if (!hasSignals) {
+    evidenceScore = Math.max(0.7, evidenceScore - 0.1);
+    evidenceBasis = 'heuristic';
+    degradationReasons.push('No signals detected');
+  }
+
+  const evidence = {
+    score: evidenceScore,
+    basis: evidenceBasis,
+    degradationReasons,
+  };
+
+  // Component 3: Decision quality (how confident in the overall decision?)
+  const hasClassification = repoClassification !== undefined;
+  const hasHighConfidenceClassification = hasClassification && repoClassification.confidence >= 0.8;
+
+  let decisionQualityScore = 0.95;
+  let decisionQualityBasis: 'all_checks_passed' | 'partial_checks' | 'fallback' = 'all_checks_passed';
+  const reasons: string[] = [];
+
+  if (hasHighConfidenceClassification && hasSignals) {
+    decisionQualityScore = 0.95;
+    decisionQualityBasis = 'all_checks_passed';
+    reasons.push('High-confidence classification with signals detected');
+  } else if (hasClassification) {
+    decisionQualityScore = 0.85;
+    decisionQualityBasis = 'partial_checks';
+    reasons.push('Classification available but confidence degraded');
+  } else {
+    decisionQualityScore = 0.7;
+    decisionQualityBasis = 'fallback';
+    reasons.push('No classification available, using fallback');
+  }
+
+  const decisionQuality = {
+    score: decisionQualityScore,
+    basis: decisionQualityBasis,
+    reasons,
+  };
 
   return {
     classification,
     tier,
-    decision,
+    decision: {
+      applicability,
+      evidence,
+      decisionQuality,
+      // DEPRECATED: Legacy fields for backward compatibility
+      confidence: evidenceScore,
+      basis: evidenceBasis,
+      degradationReasons,
+    },
   };
 }
 

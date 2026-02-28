@@ -130,35 +130,67 @@ function adaptDecisionFromIR(
 
 /**
  * Adapt IR confidence to legacy format
+ * PHASE 6: Use vector confidence model components
  */
 function adaptConfidenceFromIR(
   runContext: RunContext,
   contract: GovernanceOutputContract | undefined
 ): NormalizedEvaluationResult['confidence'] {
-  const decisionConfidence = contract?.confidence.decision ?? runContext.confidence.decision.confidence;
-  const classificationConfidence = contract?.confidence.classification ?? runContext.confidence.classification.confidence;
+  // PHASE 6: Use vector confidence components
+  const applicabilityScore = runContext.confidence.decision.applicability.score;
+  const evidenceScore = runContext.confidence.decision.evidence.score;
+  const decisionQualityScore = runContext.confidence.decision.decisionQuality.score;
+  const classificationConfidence = runContext.confidence.classification.confidence;
+
+  // Decision confidence is the minimum of all three components (never multiply)
+  const decisionConfidence = Math.min(applicabilityScore, evidenceScore, decisionQualityScore);
 
   // Convert to 0-100 scale
   const score = Math.round(decisionConfidence * 100);
-  
+
   // Determine level
-  const level: 'high' | 'medium' | 'low' = 
+  const level: 'high' | 'medium' | 'low' =
     decisionConfidence >= 0.8 ? 'high' :
     decisionConfidence >= 0.5 ? 'medium' : 'low';
+
+  // Build degradation reasons from all components
+  const degradationReasons: string[] = [];
+
+  if (applicabilityScore < 0.9) {
+    degradationReasons.push(`Applicability: ${Math.round(applicabilityScore * 100)}% (${runContext.confidence.decision.applicability.basis})`);
+  }
+
+  if (evidenceScore < 0.9) {
+    degradationReasons.push(`Evidence: ${Math.round(evidenceScore * 100)}% (${runContext.confidence.decision.evidence.basis})`);
+    if (runContext.confidence.decision.evidence.degradationReasons.length > 0) {
+      runContext.confidence.decision.evidence.degradationReasons.forEach(reason => {
+        degradationReasons.push(`  - ${reason}`);
+      });
+    }
+  }
+
+  if (decisionQualityScore < 0.9) {
+    degradationReasons.push(`Decision Quality: ${Math.round(decisionQualityScore * 100)}% (${runContext.confidence.decision.decisionQuality.basis})`);
+    if (runContext.confidence.decision.decisionQuality.reasons.length > 0) {
+      runContext.confidence.decision.decisionQuality.reasons.forEach(reason => {
+        degradationReasons.push(`  - ${reason}`);
+      });
+    }
+  }
 
   return {
     score,
     level,
-    degradationReasons: runContext.confidence.decision.degradationReasons,
+    degradationReasons,
     applicabilityConfidence: {
       score: Math.round(classificationConfidence * 100),
       level: classificationConfidence >= 0.8 ? 'high' : classificationConfidence >= 0.5 ? 'medium' : 'low',
       reason: runContext.confidence.classification.source,
     },
     evidenceConfidence: {
-      score: Math.round(decisionConfidence * 100),
-      level,
-      reason: runContext.confidence.decision.basis,
+      score: Math.round(evidenceScore * 100),
+      level: evidenceScore >= 0.8 ? 'high' : evidenceScore >= 0.5 ? 'medium' : 'low',
+      reason: runContext.confidence.decision.evidence.basis,
     },
   };
 }
