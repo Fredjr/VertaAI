@@ -108,6 +108,13 @@ export class PackEvaluator {
       startTime: Date.now(),
     };
 
+    // TRACK A TASK 2: Run cross-artifact comparators automatically on every PR
+    // These run BEFORE rule evaluation to detect drift between related files
+    console.log('[PackEvaluator] Running cross-artifact comparators...');
+    const crossArtifactFindings = await this.runCrossArtifactComparators(context, usedComparators);
+    findings.push(...crossArtifactFindings);
+    console.log(`[PackEvaluator] Cross-artifact comparators found ${crossArtifactFindings.length} findings`);
+
     // Initialize cache if not already present
     if (!context.cache) {
       context.cache = {
@@ -1408,5 +1415,72 @@ function buildPackEvaluationGraph(
       },
     },
   };
+}
+
+  /**
+   * TRACK A TASK 2: Run cross-artifact comparators automatically
+   *
+   * These comparators detect drift between related files (e.g., OpenAPI spec vs code)
+   * and run on EVERY PR regardless of policy pack rules.
+   *
+   * This ensures cross-artifact consistency checks are always enforced.
+   */
+  private async runCrossArtifactComparators(
+    context: PRContext,
+    usedComparators: Set<ComparatorId>
+  ): Promise<Finding[]> {
+    const findings: Finding[] = [];
+    const comparatorRegistry = getComparatorRegistry();
+
+    // List of cross-artifact comparators to run automatically
+    const crossArtifactComparatorIds: ComparatorId[] = [
+      'OPENAPI_CODE_PARITY',
+      'SCHEMA_MIGRATION_PARITY',
+      'CONTRACT_IMPLEMENTATION_PARITY',
+      'DOC_CODE_PARITY',
+      'TEST_IMPLEMENTATION_PARITY',
+    ];
+
+    for (const comparatorId of crossArtifactComparatorIds) {
+      // Skip if comparator not registered
+      if (!comparatorRegistry.has(comparatorId)) {
+        console.log(`[PackEvaluator] Cross-artifact comparator ${comparatorId} not registered, skipping`);
+        continue;
+      }
+
+      try {
+        // Track comparator usage for fingerprint
+        usedComparators.add(comparatorId);
+
+        // Run comparator with empty params (cross-artifact comparators analyze PR context)
+        const result = await comparatorRegistry.evaluate(comparatorId, context, {});
+
+        // Convert to finding if failed or unknown
+        if (result.status === 'fail' || result.status === 'unknown') {
+          const finding: Finding = {
+            ruleId: `cross-artifact-${comparatorId.toLowerCase()}`,
+            ruleName: `Cross-Artifact Check: ${comparatorId}`,
+            status: result.status,
+            severity: 'medium',
+            message: result.message,
+            reasonCode: result.reasonCode,
+            evidence: result.evidence || [],
+            decisionOnFail: 'warn', // Cross-artifact findings are warnings by default
+            metadata: result.metadata,
+          };
+
+          findings.push(finding);
+          console.log(`[PackEvaluator] Cross-artifact finding: ${comparatorId} - ${result.status}`);
+        } else if (result.status === 'pass') {
+          console.log(`[PackEvaluator] Cross-artifact check passed: ${comparatorId}`);
+        }
+      } catch (error: any) {
+        console.error(`[PackEvaluator] Error running cross-artifact comparator ${comparatorId}:`, error.message);
+        // Continue with other comparators (soft-fail)
+      }
+    }
+
+    return findings;
+  }
 }
 
