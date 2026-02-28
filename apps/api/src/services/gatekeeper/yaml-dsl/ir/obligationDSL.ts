@@ -409,3 +409,101 @@ export function outdatedArtifactRemediation(params: {
   };
 }
 
+/**
+ * Calculate risk score for schema validation obligations
+ */
+export function calculateSchemaRisk(params: {
+  isBlocking: boolean;
+  affectsAPI: boolean;
+  hasBreakingChanges: boolean;
+}): RiskScore {
+  const { isBlocking, affectsAPI, hasBreakingChanges } = params;
+
+  const blastRadius = affectsAPI ? 30 : 10;
+  const criticality = isBlocking ? 25 : 15;
+  const immediacy = hasBreakingChanges ? 25 : 10;
+  const dependency = affectsAPI ? 15 : 5;
+
+  return {
+    total: blastRadius + criticality + immediacy + dependency,
+    breakdown: {
+      blastRadius,
+      criticality,
+      immediacy,
+      dependency,
+    },
+    reasons: {
+      blastRadius: affectsAPI ? 'API schema affects all consumers' : 'Limited blast radius',
+      criticality: isBlocking ? 'Blocking issue prevents merge' : 'Non-blocking warning',
+      immediacy: hasBreakingChanges ? 'Breaking changes require immediate attention' : 'No breaking changes',
+      dependency: affectsAPI ? 'API has downstream dependencies' : 'No known dependencies',
+    },
+  };
+}
+
+/**
+ * Calculate risk score for governance obligations (approvals, etc.)
+ */
+export function calculateGovernanceRisk(params: {
+  isBlocking: boolean;
+  affectsProduction: boolean;
+  requiresAudit: boolean;
+}): RiskScore {
+  const { isBlocking, affectsProduction, requiresAudit } = params;
+
+  const blastRadius = affectsProduction ? 25 : 10;
+  const criticality = isBlocking ? 30 : 15;
+  const immediacy = requiresAudit ? 20 : 10;
+  const dependency = affectsProduction ? 10 : 5;
+
+  return {
+    total: blastRadius + criticality + immediacy + dependency,
+    breakdown: {
+      blastRadius,
+      criticality,
+      immediacy,
+      dependency,
+    },
+    reasons: {
+      blastRadius: affectsProduction ? 'Production changes affect all users' : 'Limited blast radius',
+      criticality: isBlocking ? 'Governance violation prevents merge' : 'Non-blocking warning',
+      immediacy: requiresAudit ? 'Requires audit trail' : 'No immediate audit required',
+      dependency: affectsProduction ? 'Production has dependencies' : 'No known dependencies',
+    },
+  };
+}
+
+/**
+ * Calculate risk score for safety obligations (secrets, etc.)
+ */
+export function calculateSafetyRisk(params: {
+  severityLevel: 'critical' | 'high' | 'medium' | 'low';
+  exposureScope: 'public' | 'internal' | 'private';
+}): RiskScore {
+  const { severityLevel, exposureScope } = params;
+
+  const severityMap = { critical: 40, high: 30, medium: 20, low: 10 };
+  const exposureMap = { public: 30, internal: 20, private: 10 };
+
+  const blastRadius = exposureMap[exposureScope];
+  const criticality = severityMap[severityLevel];
+  const immediacy = severityLevel === 'critical' ? 25 : severityLevel === 'high' ? 20 : 10;
+  const dependency = 5;
+
+  return {
+    total: blastRadius + criticality + immediacy + dependency,
+    breakdown: {
+      blastRadius,
+      criticality,
+      immediacy,
+      dependency,
+    },
+    reasons: {
+      blastRadius: `${exposureScope} exposure scope`,
+      criticality: `${severityLevel} severity level`,
+      immediacy: severityLevel === 'critical' || severityLevel === 'high' ? 'Immediate action required' : 'Can be addressed in normal workflow',
+      dependency: 'Standard dependency risk',
+    },
+  };
+}
+

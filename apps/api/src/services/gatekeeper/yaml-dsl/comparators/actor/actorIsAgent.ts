@@ -1,13 +1,21 @@
 /**
  * ACTOR_IS_AGENT Comparator
  * Migration Plan v5.0 - Sprint 1, Task 1.3
- * 
+ *
  * Detects if PR is authored by an AI agent
  * Uses deterministic heuristics (not ML)
+ *
+ * Phase 4: Migrated to structured IR output
+ * - evaluateStructured(): Returns ObligationResult (NEW)
+ * - evaluate(): Returns ComparatorResult (LEGACY, kept for backward compatibility)
  */
 
 import type { Comparator, ComparatorResult, PRContext } from '../types.js';
 import { ComparatorId, FindingCode } from '../types.js';
+import type { ObligationResult } from '../../ir/types.js';
+import {
+  createObligation,
+} from '../../ir/obligationDSL.js';
 
 const AGENT_AUTHOR_PATTERNS = [
   /copilot/i,
@@ -31,8 +39,84 @@ const LARGE_PR_THRESHOLD = 500;
 
 export const actorIsAgentComparator: Comparator = {
   id: ComparatorId.ACTOR_IS_AGENT,
-  version: '1.0.0',
+  version: '2.0.0', // Phase 4: Bumped to 2.0.0 (structured IR support)
 
+  /**
+   * NEW: Structured evaluation (Phase 4)
+   * Returns fully structured ObligationResult
+   */
+  async evaluateStructured(context: PRContext, params: any): Promise<ObligationResult> {
+    const { title, controlObjective, decisionOnFail = 'pass' } = params;
+
+    // Create obligation builder
+    const obligation = createObligation({
+      id: 'actor-is-agent',
+      title: title || 'AI Agent Detection',
+      controlObjective: controlObjective || 'Detect if PR is authored by an AI agent',
+      scope: 'diff_derived',
+      decisionOnFail: decisionOnFail as 'block' | 'warn' | 'pass',
+    });
+
+    const signals: Array<{ type: string; matched: string; weight: number }> = [];
+
+    // Heuristic 1: Author account patterns
+    for (const pattern of AGENT_AUTHOR_PATTERNS) {
+      if (pattern.test(context.author)) {
+        signals.push({
+          type: 'author_pattern',
+          matched: context.author,
+          weight: 0.50,
+        });
+        break;
+      }
+    }
+
+    // Heuristic 2: Commit message markers
+    for (const commit of context.commits) {
+      for (const marker of COMMIT_MESSAGE_MARKERS) {
+        if (commit.message.includes(marker)) {
+          signals.push({
+            type: 'commit_pattern',
+            matched: marker,
+            weight: 0.40,
+          });
+          break;
+        }
+      }
+    }
+
+    // Heuristic 3: PR size thresholds
+    const totalChanges = context.additions + context.deletions;
+    if (totalChanges > LARGE_PR_THRESHOLD) {
+      signals.push({
+        type: 'pr_size',
+        matched: `${totalChanges} lines changed`,
+        weight: 0.20,
+      });
+    }
+
+    // Calculate confidence
+    const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
+    const confidence = Math.min(1.0, totalWeight);
+    const isAgentAuthored = confidence >= 0.50;
+
+    // Agent detected - PASS (this is a positive detection)
+    if (isAgentAuthored) {
+      return obligation.pass(
+        `Agent-authored PR detected (${(confidence * 100).toFixed(0)}% confidence)`
+      );
+    }
+
+    // Not agent-authored - INFO (not a failure, just informational)
+    return obligation.info(
+      `Not agent-authored (${(confidence * 100).toFixed(0)}% confidence)`
+    );
+  },
+
+  /**
+   * LEGACY: Unstructured evaluation (backward compatibility)
+   * Kept for existing integrations
+   */
   async evaluate(context: PRContext, params: any): Promise<ComparatorResult> {
     const signals: Array<{ type: string; matched: string; weight: number }> = [];
 
