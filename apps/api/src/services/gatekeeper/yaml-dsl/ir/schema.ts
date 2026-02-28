@@ -112,21 +112,22 @@ export const reasonCodeSchema = z.enum([
 /**
  * Evidence Type
  * Strict enum for all evidence types
+ * PHASE 6: Added cross-artifact evidence types
  */
 export const evidenceTypeSchema = z.enum([
+  // Basic evidence types
   'file',
   'content',
   'checkrun',
   'approval',
   'artifact',
   'api_call',
-  // Phase 6: Cross-artifact types (future)
-  // 'file_presence',
-  // 'content_match',
-  // 'schema_diff',
-  // 'endpoint_parity',
-  // 'ownership_map',
-  // 'dashboard_alert_parity',
+  // PHASE 6: Cross-artifact evidence types
+  'dashboard_alert_reference',
+  'openapi_code_reference',
+  'schema_migration_reference',
+  'slo_alert_reference',
+  'runbook_alert_reference',
 ]);
 
 /**
@@ -173,7 +174,36 @@ export const confidenceBasisSchema = z.enum([
 // ============================================================================
 
 /**
+ * Cross-Artifact Reference Schema (PHASE 6)
+ * Enables cross-artifact invariant checks
+ */
+export const crossArtifactReferenceSchema = z.object({
+  // Source artifact
+  source: z.object({
+    type: z.enum(['dashboard', 'openapi', 'schema', 'slo', 'runbook', 'code']),
+    id: z.string(),
+    location: z.string(),
+  }),
+
+  // Target artifact
+  target: z.object({
+    type: z.enum(['alert', 'code', 'migration', 'schema']),
+    id: z.string(),
+    location: z.string().optional(),
+    found: z.boolean(),
+  }),
+
+  // Relationship
+  relationship: z.enum(['references', 'implements', 'matches', 'requires']),
+
+  // Validation
+  valid: z.boolean(),
+  validationDetails: z.string().optional(),
+});
+
+/**
  * Evidence Item Schema
+ * PHASE 6: Added optional cross-artifact reference
  */
 export const evidenceItemSchema = z.object({
   type: evidenceTypeSchema,
@@ -181,6 +211,7 @@ export const evidenceItemSchema = z.object({
   found: z.boolean(),
   details: z.string().optional(),
   metadata: z.record(z.any()).optional(),
+  crossArtifactRef: crossArtifactReferenceSchema.optional(), // PHASE 6
 });
 
 /**
@@ -348,6 +379,7 @@ export const detectedSignalsSchema = z.object({
 
 /**
  * Run Context Schema
+ * PHASE 6: Added stable fingerprints and policy revision
  */
 export const runContextSchema = z.object({
   repo: z.object({
@@ -372,6 +404,10 @@ export const runContextSchema = z.object({
   signals: detectedSignalsSchema,
   confidence: confidenceBreakdownLegacySchema, // TODO: Migrate to vector model
   evaluatedAt: z.string().datetime(),
+
+  // PHASE 6: Stable fingerprints for reproducibility
+  evaluationFingerprint: z.string().optional(), // "sha256:abc123..."
+  policyRevision: z.string().optional(), // "git:abc123" or "bundle:v1.2.3"
 });
 
 // ============================================================================

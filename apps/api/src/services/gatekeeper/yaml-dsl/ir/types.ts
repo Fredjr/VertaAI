@@ -11,6 +11,8 @@
 /**
  * RunContext: Complete context of a single evaluation run
  * Captures repo, PR, detected signals, and confidence breakdown
+ *
+ * PHASE 6: Added stable fingerprints and policy revision tracking
  */
 export interface RunContext {
   // Repository identifiers
@@ -19,7 +21,7 @@ export interface RunContext {
     name: string;
     fullName: string; // "owner/repo"
   };
-  
+
   // PR/Branch context
   pr: {
     number: number;
@@ -31,21 +33,30 @@ export interface RunContext {
     author: string;
     isDraft: boolean;
   };
-  
+
   // Workspace context
   workspace: {
     id: string;
     installationId: number;
   };
-  
+
   // Detected signals (classification/applicability)
   signals: DetectedSignals;
-  
+
   // Confidence breakdown (classification vs decision)
   confidence: ConfidenceBreakdown;
-  
+
   // Timestamp
   evaluatedAt: string; // ISO 8601
+
+  // PHASE 6: Stable fingerprints for reproducibility
+  // Evaluation fingerprint (hash of PolicyPlan + inputs)
+  // Same inputs → same fingerprint → enables caching and change detection
+  evaluationFingerprint?: string; // "sha256:abc123..."
+
+  // Policy revision (git sha or bundle version)
+  // Tracks which version of policy was used
+  policyRevision?: string; // "git:abc123" or "bundle:v1.2.3"
 }
 
 /**
@@ -90,6 +101,11 @@ export interface DetectedSignals {
 /**
  * ConfidenceBreakdown: Separates classification confidence from decision confidence
  * This is critical for the "two-orthogonal-outcome model"
+ *
+ * PHASE 6: Enhanced with vector confidence model (fixes BUG 1)
+ * - Never multiply confidence scores
+ * - Each component has explicit basis
+ * - Display components separately
  */
 export interface ConfidenceBreakdown {
   // Classification confidence (repo type)
@@ -99,7 +115,7 @@ export interface ConfidenceBreakdown {
     source: 'explicit' | 'inferred';
     evidence: string[]; // e.g., ["Found service catalog", "Has API endpoints"]
   };
-  
+
   // Tier confidence (service tier)
   tier?: {
     tier: 'tier-1' | 'tier-2' | 'tier-3' | 'unknown';
@@ -107,12 +123,36 @@ export interface ConfidenceBreakdown {
     source: 'catalog' | 'slo' | 'inferred';
     evidence: string[];
   };
-  
+
   // Decision confidence (evidence quality)
+  // PHASE 6: Vector model - never multiply these components
   decision: {
-    confidence: number; // 0-1
-    basis: 'deterministic_baseline' | 'diff_analysis' | 'heuristic';
-    degradationReasons: string[]; // e.g., ["Missing artifact registry"]
+    // Component 1: Applicability (should this policy run?)
+    applicability: {
+      score: number; // 0-1
+      basis: 'explicit_signal' | 'inferred_signal' | 'default';
+      evidence: string[]; // e.g., ["Found openapi.yaml"]
+    };
+
+    // Component 2: Evidence quality (did we find what we looked for?)
+    evidence: {
+      score: number; // 0-1
+      basis: 'deterministic_baseline' | 'diff_analysis' | 'heuristic' | 'api_call';
+      degradationReasons: string[]; // e.g., ["Missing artifact registry"]
+    };
+
+    // Component 3: Decision quality (how confident in the decision?)
+    decisionQuality: {
+      score: number; // 0-1
+      basis: 'all_checks_passed' | 'partial_checks' | 'fallback';
+      reasons: string[]; // e.g., ["All required checks completed"]
+    };
+
+    // DEPRECATED: Legacy single confidence score (for backward compatibility)
+    // DO NOT USE: Use vector components instead
+    confidence?: number; // 0-1 (deprecated)
+    basis?: 'deterministic_baseline' | 'diff_analysis' | 'heuristic';
+    degradationReasons?: string[];
   };
 }
 
@@ -255,13 +295,73 @@ export enum ReasonCode {
 
 /**
  * EvidenceItem: Typed evidence for obligation evaluation
+ *
+ * PHASE 6: Enhanced with cross-artifact evidence types
+ * Enables sophisticated governance checks (e.g., dashboard↔alert consistency)
  */
 export interface EvidenceItem {
-  type: 'file' | 'content' | 'checkrun' | 'approval' | 'artifact' | 'api_call';
+  type: EvidenceType;
   location: string; // File path, URL, or identifier
   found: boolean;
   details?: string;
   metadata?: Record<string, any>;
+
+  // PHASE 6: Cross-artifact references (optional)
+  crossArtifactRef?: CrossArtifactReference;
+}
+
+/**
+ * EvidenceType: All supported evidence types
+ * PHASE 6: Added cross-artifact types
+ */
+export type EvidenceType =
+  // Basic evidence types
+  | 'file'
+  | 'content'
+  | 'checkrun'
+  | 'approval'
+  | 'artifact'
+  | 'api_call'
+  // PHASE 6: Cross-artifact evidence types
+  | 'dashboard_alert_reference'
+  | 'openapi_code_reference'
+  | 'schema_migration_reference'
+  | 'slo_alert_reference'
+  | 'runbook_alert_reference';
+
+/**
+ * CrossArtifactReference: Typed references between artifacts
+ * PHASE 6: Enables cross-artifact invariant checks
+ *
+ * Examples:
+ * - Dashboard must reference alert
+ * - OpenAPI schema must match code
+ * - Database migration must match schema
+ * - SLO must have corresponding alert
+ * - Runbook must reference alert
+ */
+export interface CrossArtifactReference {
+  // Source artifact (the one being checked)
+  source: {
+    type: 'dashboard' | 'openapi' | 'schema' | 'slo' | 'runbook' | 'code';
+    id: string; // Artifact identifier
+    location: string; // File path or URL
+  };
+
+  // Target artifact (the one being referenced)
+  target: {
+    type: 'alert' | 'code' | 'migration' | 'schema';
+    id: string; // Artifact identifier
+    location?: string; // File path or URL (if found)
+    found: boolean; // Was the target found?
+  };
+
+  // Relationship type
+  relationship: 'references' | 'implements' | 'matches' | 'requires';
+
+  // Validation result
+  valid: boolean; // Does the reference exist and is it valid?
+  validationDetails?: string; // Why is it invalid?
 }
 
 /**
