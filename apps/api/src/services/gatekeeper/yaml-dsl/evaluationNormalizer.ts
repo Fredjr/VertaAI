@@ -38,6 +38,9 @@ import { buildObligationResult } from './ir/obligationResultBuilder.js';
 // NEW: GOC validator (Phase 2)
 import { buildGovernanceOutputContract, validateGovernanceOutputContract } from './ir/contractValidator.js';
 
+// NEW: Semantic validator (Phase 5.5)
+import { validateGovernanceIR, type ValidationOptions } from './ir/semanticValidator.js';
+
 /**
  * Normalize pack evaluation results into canonical model
  *
@@ -127,6 +130,31 @@ export function normalizeEvaluationResults(
         obligationResults,
         contract, // NEW (Phase 2): Validated contract
       };
+
+      // NEW (Phase 5.5): Validate IR with semantic validator
+      // This enforces all 20 invariants including INVARIANT_16 (0% freeform prose)
+      try {
+        const validationOptions: ValidationOptions = {
+          enableExperimental: true, // Enable INVARIANT_16 and other experimental checks
+          throwOnError: false,      // Log violations, don't throw (audit mode)
+        };
+
+        const semanticValidation = validateGovernanceIR(ir, validationOptions);
+
+        if (!semanticValidation.valid) {
+          console.warn('[Semantic Validator] IR validation violations detected:', {
+            violations: semanticValidation.violations,
+            warnings: semanticValidation.warnings,
+            violationCount: semanticValidation.violations.length,
+          });
+          // TODO: Send to monitoring/telemetry
+        } else {
+          console.log('[Semantic Validator] IR validation passed ✓ (all 20 invariants satisfied)');
+        }
+      } catch (validationError) {
+        console.warn('[Semantic Validator] Validation failed:', validationError);
+        // Don't break IR building if validation fails
+      }
     } catch (error) {
       // IR building is optional - don't break existing functionality
       console.warn('[IR Builder] Failed to build IR:', error);

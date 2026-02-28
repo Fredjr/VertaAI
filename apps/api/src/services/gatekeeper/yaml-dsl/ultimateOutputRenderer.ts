@@ -26,6 +26,7 @@
 
 import type { NormalizedEvaluationResult, NormalizedFinding, NotEvaluableItem, NormalizedObligation } from './types.js';
 import { adaptNormalizedFromIR } from './ir/irAdapter.js';
+import { validateGovernanceIR, type ValidationOptions } from './ir/semanticValidator.js';
 
 /**
  * ELITE HELPER: Build context-aware "why it matters" based on repo type + obligation type
@@ -361,6 +362,36 @@ function splitObligationsByApplicability(obligations: NormalizedObligation[]): {
  */
 export function renderUltimateOutput(normalized: NormalizedEvaluationResult): string {
   try {
+    // PHASE 5.5: Validate IR before rendering (if present)
+    if (normalized.ir) {
+      try {
+        const validationOptions: ValidationOptions = {
+          enableExperimental: true, // Enable INVARIANT_16 and other experimental checks
+          throwOnError: false,      // Log violations, don't throw (audit mode)
+        };
+
+        const validationResult = validateGovernanceIR(normalized.ir, validationOptions);
+
+        if (!validationResult.valid) {
+          console.error('[UltimateRenderer] IR validation failed before rendering:', {
+            violations: validationResult.violations,
+            warnings: validationResult.warnings,
+            violationCount: validationResult.violations.length,
+          });
+          // Log each violation for debugging
+          validationResult.violations.forEach((violation, idx) => {
+            console.error(`  [${idx + 1}] ${violation.invariant}: ${violation.message}`);
+          });
+          // TODO: Send to monitoring/telemetry
+        } else {
+          console.log('[UltimateRenderer] IR validation passed ✓ (all 20 invariants satisfied)');
+        }
+      } catch (validationError) {
+        console.error('[UltimateRenderer] IR validation error:', validationError);
+        // Continue rendering even if validation fails
+      }
+    }
+
     // PHASE 3: If IR is present, adapt it to the old format
     // This ensures backward compatibility while enabling IR-driven rendering
     const adapted = normalized.ir
