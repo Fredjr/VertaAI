@@ -26,7 +26,7 @@
 
 import type { NormalizedEvaluationResult, NormalizedFinding, NotEvaluableItem, NormalizedObligation } from './types.js';
 import { adaptNormalizedFromIR } from './ir/irAdapter.js';
-import { validateGovernanceIR, type ValidationOptions } from './ir/semanticValidator.js';
+import { validateSemantics, type SemanticValidationOptions } from './ir/semanticValidator.js';
 
 /**
  * ELITE HELPER: Build context-aware "why it matters" based on repo type + obligation type
@@ -365,12 +365,11 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
     // PHASE 5.5: Validate IR before rendering (if present)
     if (normalized.ir) {
       try {
-        const validationOptions: ValidationOptions = {
-          enableExperimental: true, // Enable INVARIANT_16 and other experimental checks
-          throwOnError: false,      // Log violations, don't throw (audit mode)
+        const validationOptions: SemanticValidationOptions = {
+          mode: 'audit', // Log violations, don't throw
         };
 
-        const validationResult = validateGovernanceIR(normalized.ir, validationOptions);
+        const validationResult = validateSemantics(normalized.ir, validationOptions);
 
         if (!validationResult.valid) {
           console.error('[UltimateRenderer] IR validation failed before rendering:', {
