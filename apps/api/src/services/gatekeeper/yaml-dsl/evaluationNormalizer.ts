@@ -92,17 +92,18 @@ export function normalizeEvaluationResults(
       // Extract signals from detected surfaces
       const signals = extractSignalsFromSurfaces(surfaces);
 
-      // Build RunContext
+      // Build PolicyPlan first (needed for fingerprint calculation)
+      const policyPlan = buildPolicyPlan(packResults, signals);
+
+      // Build RunContext (PHASE 6: now includes fingerprints)
       const runContext = buildRunContext(
         gatekeeperInput,
         prFiles,
         repoClassification,
         undefined, // baseSha - not available yet
-        undefined  // isDraft - not available yet
+        undefined, // isDraft - not available yet
+        policyPlan // PHASE 6: for fingerprint calculation
       );
-
-      // Build PolicyPlan
-      const policyPlan = buildPolicyPlan(packResults, signals);
 
       // Build ObligationResults from findings
       const obligationResults = findings.map(finding => buildObligationResult(finding));

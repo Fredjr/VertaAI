@@ -11,27 +11,32 @@
  * - Backward compatible
  */
 
-import type { RunContext, DetectedSignals, ConfidenceBreakdown } from './types.js';
+import type { RunContext, DetectedSignals, ConfidenceBreakdown, PolicyPlan } from './types.js';
 import type { GatekeeperInput } from '../../index.js';
 import type { GitHubFile } from '../comparators/types.js';
 import type { RepoClassification } from '../types.js';
+import { createHash } from 'crypto';
 
 /**
  * Build RunContext from GatekeeperInput and evaluation data
- * 
+ *
+ * PHASE 6: Now includes stable fingerprints and policy revision
+ *
  * @param input - Original gatekeeper input
  * @param prFiles - PR files (for signal detection)
  * @param repoClassification - Repo classification (if available)
  * @param baseSha - Base SHA (if available)
  * @param isDraft - Whether PR is draft (if available)
- * @returns Complete RunContext
+ * @param policyPlan - PolicyPlan (for fingerprint calculation) - PHASE 6
+ * @returns Complete RunContext with fingerprints
  */
 export function buildRunContext(
   input: GatekeeperInput,
   prFiles?: GitHubFile[],
   repoClassification?: RepoClassification,
   baseSha?: string,
-  isDraft?: boolean
+  isDraft?: boolean,
+  policyPlan?: PolicyPlan
 ): RunContext {
   // Build repo identifiers
   const repo = {
@@ -67,6 +72,10 @@ export function buildRunContext(
   // Timestamp
   const evaluatedAt = new Date().toISOString();
 
+  // PHASE 6: Calculate stable fingerprints
+  const evaluationFingerprint = policyPlan ? calculateEvaluationFingerprint(input, policyPlan) : undefined;
+  const policyRevision = policyPlan ? extractPolicyRevision(policyPlan) : undefined;
+
   return {
     repo,
     pr,
@@ -74,6 +83,9 @@ export function buildRunContext(
     signals,
     confidence,
     evaluatedAt,
+    // PHASE 6: Stable fingerprints for reproducibility
+    evaluationFingerprint,
+    policyRevision,
   };
 }
 
@@ -226,5 +238,56 @@ function buildConfidenceBreakdown(
     tier,
     decision,
   };
+}
+
+/**
+ * Calculate stable evaluation fingerprint (PHASE 6)
+ *
+ * This creates a deterministic hash of the evaluation inputs + policy plan
+ * to enable reproducible evaluations and caching.
+ *
+ * Formula: SHA-256(repo + PR + headSha + policyPlan)
+ */
+function calculateEvaluationFingerprint(
+  input: GatekeeperInput,
+  policyPlan: PolicyPlan
+): string {
+  // Build deterministic input string
+  const fingerprintInput = {
+    repo: `${input.owner}/${input.repo}`,
+    pr: input.prNumber,
+    headSha: input.headSha,
+    // Include policy plan fingerprint (which packs + versions)
+    policyPlan: {
+      basePacks: policyPlan.basePacks.map(p => `${p.packId}@${p.version}`).sort(),
+      overlays: policyPlan.overlays.map(o => `${o.packId}@${o.version}`).sort(),
+    },
+  };
+
+  // Create SHA-256 hash
+  const hash = createHash('sha256')
+    .update(JSON.stringify(fingerprintInput))
+    .digest('hex');
+
+  return `sha256:${hash}`;
+}
+
+/**
+ * Extract policy revision from PolicyPlan (PHASE 6)
+ *
+ * This tracks which version of the policy was used for the evaluation.
+ * Enables audit trail and policy change tracking.
+ */
+function extractPolicyRevision(policyPlan: PolicyPlan): string {
+  // Use the first base pack's version as the policy revision
+  // In the future, this could be a git SHA or bundle version
+  const firstBasePack = policyPlan.basePacks[0];
+
+  if (!firstBasePack) {
+    return 'unknown';
+  }
+
+  // Format: "bundle:packId@version"
+  return `bundle:${firstBasePack.packId}@${firstBasePack.version}`;
 }
 
