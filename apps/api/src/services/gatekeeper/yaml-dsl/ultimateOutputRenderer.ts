@@ -25,6 +25,7 @@
  */
 
 import type { NormalizedEvaluationResult, NormalizedFinding, NotEvaluableItem, NormalizedObligation } from './types.js';
+import { adaptNormalizedFromIR } from './ir/irAdapter.js';
 
 /**
  * ELITE HELPER: Build context-aware "why it matters" based on repo type + obligation type
@@ -352,14 +353,30 @@ function splitObligationsByApplicability(obligations: NormalizedObligation[]): {
 
 /**
  * Render normalized evaluation result as GitHub Check summary (markdown)
+ *
+ * Phase 3: IR-Aware Rendering
+ * - If IR is present, adapt it to the old format
+ * - Ensures backward compatibility
+ * - Enables gradual migration to IR-native rendering
  */
 export function renderUltimateOutput(normalized: NormalizedEvaluationResult): string {
   try {
+    // PHASE 3: If IR is present, adapt it to the old format
+    // This ensures backward compatibility while enabling IR-driven rendering
+    const adapted = normalized.ir
+      ? { ...adaptNormalizedFromIR(normalized.ir), ir: normalized.ir }
+      : normalized;
+
+    // Log IR usage for monitoring
+    if (normalized.ir) {
+      console.log('[UltimateRenderer] Using IR-adapted format ✓');
+    }
+
     const sections: string[] = [];
 
     // FIX #3: Detect simple outcomes (1 enforced finding, artifact-missing baseline)
-    const { enforced } = splitObligationsByApplicability(normalized.obligations);
-    const enforcedFindings = normalized.findings.filter(f => f.decision !== 'pass');
+    const { enforced } = splitObligationsByApplicability(adapted.obligations);
+    const enforcedFindings = adapted.findings.filter(f => f.decision !== 'pass');
     const isSimpleOutcome = enforcedFindings.length === 1 &&
                             enforcedFindings[0].result.code === 'ARTIFACT_MISSING';
 
@@ -370,7 +387,7 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
     });
 
     // A) Executive Summary (always visible)
-    sections.push(renderExecutiveSummary(normalized));
+    sections.push(renderExecutiveSummary(adapted));
 
     // FIX #3: For simple outcomes, collapse "how we think" sections
     if (isSimpleOutcome) {
@@ -378,57 +395,57 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
       // Hide: Policy Activation, Change Surface, Required Contracts
 
       // D) Findings (ranked by risk) - VISIBLE
-      if (normalized.findings && normalized.findings.length > 0) {
-        sections.push(renderFindings(normalized));
+      if (adapted.findings && adapted.findings.length > 0) {
+        sections.push(renderFindings(adapted));
       }
 
       // F) Next Best Actions - VISIBLE
-      sections.push(renderNextActions(normalized));
+      sections.push(renderNextActions(adapted));
 
       // Collapsed sections
       sections.push('<details>');
       sections.push('<summary><b>📊 Policy Evaluation Details</b> (click to expand)</summary>');
       sections.push('');
-      sections.push(renderPolicyActivation(normalized));
+      sections.push(renderPolicyActivation(adapted));
       sections.push('');
-      sections.push(renderChangeSurfaceSummary(normalized));
+      sections.push(renderChangeSurfaceSummary(adapted));
       sections.push('');
-      sections.push(renderRequiredContracts(normalized));
+      sections.push(renderRequiredContracts(adapted));
       sections.push('');
       sections.push('</details>');
     } else {
       // Complex outcome: show all sections
       // B) Policy Activation (CRITICAL - shows signals → overlays → obligations)
-      sections.push(renderPolicyActivation(normalized));
+      sections.push(renderPolicyActivation(adapted));
 
       // C) Change Surface Summary (shows what changed in THIS PR)
-      sections.push(renderChangeSurfaceSummary(normalized));
+      sections.push(renderChangeSurfaceSummary(adapted));
 
       // D) Required Contracts & Obligations
-      sections.push(renderRequiredContracts(normalized));
+      sections.push(renderRequiredContracts(adapted));
 
       // F) Next Best Actions (moved up for visibility)
-      sections.push(renderNextActions(normalized));
+      sections.push(renderNextActions(adapted));
 
       // D) Findings (ranked by risk)
-      if (normalized.findings && normalized.findings.length > 0) {
-        sections.push(renderFindings(normalized));
+      if (adapted.findings && adapted.findings.length > 0) {
+        sections.push(renderFindings(adapted));
       }
     }
 
     // E) Not-Evaluable Section (separate)
-    if (normalized.notEvaluable && normalized.notEvaluable.length > 0) {
-      sections.push(renderNotEvaluable(normalized));
+    if (adapted.notEvaluable && adapted.notEvaluable.length > 0) {
+      sections.push(renderNotEvaluable(adapted));
     }
 
     // Policy Provenance (already collapsed in Elite v3.0)
-    sections.push(renderPolicyProvenance(normalized));
+    sections.push(renderPolicyProvenance(adapted));
 
     // Evidence Trace (already collapsed in Elite v3.0)
-    sections.push(renderEvidenceTrace(normalized));
+    sections.push(renderEvidenceTrace(adapted));
 
     // Metadata (collapsed)
-    sections.push(renderMetadata(normalized));
+    sections.push(renderMetadata(adapted));
 
     return sections.join('\n\n---\n\n');
   } catch (error) {
