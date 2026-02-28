@@ -1461,26 +1461,22 @@ function buildPackEvaluationGraph(
 
         // Convert to finding if failed or unknown
         if (result.status === 'fail' || result.status === 'unknown') {
-          // Determine rule category and severity
+          // Determine rule category and decision
           const isSafety = comparatorId === 'NO_SECRETS_IN_DIFF';
           const ruleCategory = isSafety ? 'safety' : 'cross-artifact';
-          const severity = isSafety ? 'critical' : 'medium';
           const decisionOnFail = isSafety ? 'block' : 'warn';
 
           const finding: Finding = {
             ruleId: `${ruleCategory}-${comparatorId.toLowerCase()}`,
             ruleName: `${isSafety ? 'Safety' : 'Cross-Artifact'} Check: ${comparatorId}`,
-            status: result.status,
-            severity,
-            message: result.message,
-            reasonCode: result.reasonCode,
-            evidence: result.evidence || [],
+            obligationIndex: -1, // Auto-invoked comparators don't have obligation index
+            comparatorResult: result,
             decisionOnFail,
-            metadata: result.metadata,
+            evaluationStatus: 'evaluated',
           };
 
           findings.push(finding);
-          console.log(`[PackEvaluator] Auto-invoked finding: ${comparatorId} - ${result.status} (${severity})`);
+          console.log(`[PackEvaluator] Auto-invoked finding: ${comparatorId} - ${result.status} (${decisionOnFail})`);
         } else if (result.status === 'pass') {
           console.log(`[PackEvaluator] Auto-invoked check passed: ${comparatorId}`);
         }
