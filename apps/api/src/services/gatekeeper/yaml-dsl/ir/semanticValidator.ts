@@ -20,6 +20,7 @@ import type {
   ObligationResult,
   ContractViolation,
 } from './schema.js';
+import { isValidMessageId, MESSAGE_CATALOG } from './messageCatalog.js';
 
 export interface SemanticValidationOptions {
   mode: 'audit' | 'enforce';
@@ -765,13 +766,38 @@ function validateActionableRemediation(ir: GovernanceIR): ContractViolation[] {
 /**
  * INVARIANT 16: No Freeform Prose
  * RULE: All prose comes from message catalog (no hardcoded strings)
- * NOTE: This will be enforced in Phase 5.3 after message catalog is implemented
+ * Phase 5.3: IMPLEMENTED - Checks that reasonHuman matches message catalog templates
  */
 function validateNoFreeformProse(ir: GovernanceIR): ContractViolation[] {
   const violations: ContractViolation[] = [];
 
-  // TODO: Implement after message catalog is added
-  // Check that reasonHuman references message catalog IDs
+  for (const obligation of ir.obligationResults) {
+    const { reasonHuman } = obligation;
+
+    // Check if reasonHuman matches any message template
+    let matchesTemplate = false;
+
+    for (const [messageId, template] of Object.entries(MESSAGE_CATALOG)) {
+      // Check if reasonHuman matches the template pattern
+      // This is a simple check - in production, you'd want more sophisticated matching
+      const templatePattern = template.template.replace(/\{[^}]+\}/g, '.*');
+      const regex = new RegExp(`^${templatePattern}$`);
+
+      if (regex.test(reasonHuman)) {
+        matchesTemplate = true;
+        break;
+      }
+    }
+
+    if (!matchesTemplate) {
+      violations.push({
+        invariantId: 'INVARIANT_16_NO_FREEFORM_PROSE',
+        severity: 'warning',
+        message: `Obligation ${obligation.id} has freeform prose in reasonHuman: "${reasonHuman}"`,
+        details: { obligationId: obligation.id, reasonHuman },
+      });
+    }
+  }
 
   return violations;
 }

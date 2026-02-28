@@ -1,9 +1,10 @@
 /**
  * Obligation DSL - Fluent API for Creating Structured Obligations
- * 
+ *
  * Phase 4: Enable comparators to produce structured IR directly
- * 
- * Usage:
+ * Phase 5.3: Integrated with Message Catalog for 0% freeform prose
+ *
+ * Usage (Phase 5.3 - with message catalog):
  * ```typescript
  * return createObligation({
  *   id: 'artifact-present-openapi',
@@ -12,6 +13,18 @@
  *   scope: 'repo_invariant',
  *   decisionOnFail: 'block'
  * })
+ * .failWithMessage({
+ *   reasonCode: 'ARTIFACT_MISSING',
+ *   messageId: 'fail.artifact.missing',
+ *   messageParams: { artifactType: 'openapi', missingPaths: 'openapi.yaml' },
+ *   evidence: [...],
+ *   remediation: {...},
+ *   risk: {...}
+ * });
+ * ```
+ *
+ * Legacy usage (Phase 4 - backward compatible):
+ * ```typescript
  * .fail({
  *   reasonCode: 'ARTIFACT_MISSING',
  *   reasonHuman: 'OpenAPI specification not found',
@@ -31,6 +44,7 @@ import type {
   ObligationScope,
   ObligationStatus,
 } from './types.js';
+import { formatMessage, validateMessageParams } from './messageCatalog.js';
 
 // ============================================================================
 // Builder Interface
@@ -47,6 +61,20 @@ export interface ObligationParams {
 export interface FailParams {
   reasonCode: ReasonCode;
   reasonHuman: string;
+  evidence: EvidenceItem[];
+  remediation: Remediation;
+  risk: RiskScore;
+  evidenceSearch?: ObligationResult['evidenceSearch'];
+  confidence?: ObligationResult['confidence'];
+}
+
+/**
+ * Phase 5.3: Message-based fail parameters
+ */
+export interface FailWithMessageParams {
+  reasonCode: ReasonCode;
+  messageId: string;
+  messageParams?: Record<string, any>;
   evidence: EvidenceItem[];
   remediation: Remediation;
   risk: RiskScore;
@@ -111,6 +139,7 @@ export class ObligationBuilder {
 
   /**
    * Mark obligation as FAIL with structured details
+   * LEGACY: Use failWithMessage() for Phase 5.3+ (message catalog)
    */
   fail(params: FailParams): ObligationResult {
     return {
@@ -130,6 +159,138 @@ export class ObligationBuilder {
         applicability: 1.0,
         evidence: 1.0,
         overall: 1.0,
+      },
+    };
+  }
+
+  /**
+   * Phase 5.3: Mark obligation as FAIL using message catalog
+   * This is the PREFERRED method for Phase 5.3+
+   */
+  failWithMessage(params: FailWithMessageParams): ObligationResult {
+    // Validate message parameters
+    if (params.messageParams) {
+      validateMessageParams(params.messageId, params.messageParams);
+    }
+
+    // Format message from catalog
+    const reasonHuman = formatMessage(params.messageId, params.messageParams || {});
+
+    return {
+      ...this.base,
+      status: 'FAIL',
+      reasonCode: params.reasonCode,
+      reasonHuman,
+      evidence: params.evidence,
+      evidenceSearch: params.evidenceSearch || {
+        locationsSearched: params.evidence.map(e => e.location),
+        strategy: 'file_presence',
+        confidence: 1.0,
+      },
+      remediation: params.remediation,
+      risk: params.risk,
+      confidence: params.confidence || {
+        applicability: 1.0,
+        evidence: 1.0,
+        overall: 1.0,
+      },
+    };
+  }
+
+  /**
+   * Phase 5.3: Mark obligation as PASS using message catalog
+   */
+  passWithMessage(messageId: string, messageParams: Record<string, any> = {}): ObligationResult {
+    validateMessageParams(messageId, messageParams);
+    const reasonHuman = formatMessage(messageId, messageParams);
+
+    return {
+      ...this.base,
+      status: 'PASS',
+      reasonCode: 'PASS',
+      reasonHuman,
+      evidence: [],
+      evidenceSearch: {
+        locationsSearched: [],
+        strategy: 'not_applicable',
+        confidence: 1.0,
+      },
+      remediation: {
+        minimumToPass: [],
+        patch: null,
+        links: [],
+        owner: null,
+      },
+      risk: {
+        total: 0,
+        breakdown: {
+          blastRadius: 0,
+          criticality: 0,
+          immediacy: 0,
+          dependency: 0,
+        },
+        reasons: {
+          blastRadius: null,
+          criticality: null,
+          immediacy: null,
+          dependency: null,
+        },
+      },
+      confidence: {
+        applicability: 1.0,
+        evidence: 1.0,
+        overall: 1.0,
+      },
+    };
+  }
+
+  /**
+   * Phase 5.3: Mark obligation as NOT_EVALUABLE using message catalog
+   */
+  notEvaluableWithMessage(
+    messageId: string,
+    messageParams: Record<string, any> = {},
+    category: 'policy_misconfig' | 'missing_external_evidence' | 'integration_error' = 'policy_misconfig'
+  ): ObligationResult {
+    validateMessageParams(messageId, messageParams);
+    const reasonHuman = formatMessage(messageId, messageParams);
+
+    return {
+      ...this.base,
+      status: 'NOT_EVALUABLE',
+      reasonCode: 'NOT_EVALUABLE',
+      reasonHuman,
+      evidence: [],
+      evidenceSearch: {
+        locationsSearched: [],
+        strategy: 'not_applicable',
+        confidence: 0.0,
+      },
+      remediation: {
+        minimumToPass: [`Fix policy configuration: ${reasonHuman}`],
+        patch: null,
+        links: [],
+        owner: 'policy-author',
+      },
+      risk: {
+        total: 0,
+        breakdown: {
+          blastRadius: 0,
+          criticality: 0,
+          immediacy: 0,
+          dependency: 0,
+        },
+        reasons: {
+          blastRadius: null,
+          criticality: null,
+          immediacy: null,
+          dependency: null,
+        },
+      },
+      confidence: {
+        applicability: 0.0,
+        evidence: 0.0,
+        overall: 0.0,
       },
     };
   }

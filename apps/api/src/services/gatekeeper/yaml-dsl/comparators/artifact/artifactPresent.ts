@@ -21,6 +21,7 @@ import {
   calculateArtifactRisk,
   missingArtifactRemediation,
 } from '../../ir/obligationDSL.js';
+import { ArtifactMessages, RemediationMessages, formatMessage } from '../../ir/messageCatalog.js';
 
 /**
  * Find closest matches for missing artifacts
@@ -93,8 +94,9 @@ export const artifactPresentComparator: Comparator = {
     const targets = await resolveArtifactTargets(context, artifactType);
 
     if (targets.length === 0) {
-      return obligation.notEvaluable(
-        `No artifact registry configured for type: ${artifactType}`,
+      return obligation.notEvaluableWithMessage(
+        'not_evaluable.no_artifact_registry',
+        { artifactType },
         'policy_misconfig'
       );
     }
@@ -124,8 +126,12 @@ export const artifactPresentComparator: Comparator = {
 
     // All artifacts present - PASS
     if (missingTargets.length === 0) {
-      return obligation.pass(
-        `All ${artifactType} artifacts present: ${presentTargets.map(t => t.path).join(', ')}`
+      return obligation.passWithMessage(
+        'pass.artifact.all_present',
+        {
+          artifactType,
+          paths: presentTargets.map(t => t.path).join(', '),
+        }
       );
     }
 
@@ -134,15 +140,25 @@ export const artifactPresentComparator: Comparator = {
     const searchedPaths = targets.map(t => t.path);
     const matchedPaths = presentTargets.map(t => t.path);
 
-    return obligation.fail({
+    return obligation.failWithMessage({
       reasonCode: 'ARTIFACT_MISSING',
-      reasonHuman: `Missing ${artifactType} artifacts: ${missingTargets.map(t => t.path).join(', ')}`,
+      messageId: 'fail.artifact.missing',
+      messageParams: {
+        artifactType,
+        missingPaths: missingTargets.map(t => t.path).join(', '),
+      },
       evidence: [
         ...missingTargets.map(t => missingFileEvidence(
           t.path,
-          `Missing for service: ${t.service}. Closest matches: ${closestMatches.join(', ')}`
+          formatMessage('evidence.file.missing', {
+            service: t.service,
+            closestMatches: closestMatches.join(', ') || 'none',
+          })
         )),
-        ...presentTargets.map(t => presentFileEvidence(t.path, `Service: ${t.service}`)),
+        ...presentTargets.map(t => presentFileEvidence(
+          t.path,
+          formatMessage('evidence.file.present', { service: t.service })
+        )),
       ],
       evidenceSearch: {
         locationsSearched: searchedPaths,
