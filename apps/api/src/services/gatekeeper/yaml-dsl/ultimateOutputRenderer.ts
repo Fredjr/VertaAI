@@ -643,12 +643,7 @@ function renderExecutiveSummary(normalized: NormalizedEvaluationResult): string 
 
   // FIX 2: Remove "Overall Confidence" - keep only Decision + Classification
   // "Overall Confidence LOW" reintroduces doubt even when decision is deterministic
-  const { enforced } = splitObligationsByApplicability(normalized.obligations);
-  const baselineFailures = enforced.filter(o =>
-    o.result.status === 'fail' &&
-    !o.sourceRule.ruleId.includes('tier') &&
-    !o.sourceRule.ruleId.includes('service-specific')
-  );
+  // Note: baselineFailures already declared above at line 561
 
   // Decision confidence: HIGH if based on baseline invariants, otherwise use overall confidence
   const decisionConfidenceLevel = baselineFailures.length > 0 ? 'high' : confidence.level;

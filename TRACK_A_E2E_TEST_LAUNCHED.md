@@ -1,8 +1,9 @@
 # ✅ TRACK A E2E TEST LAUNCHED
 
-**Date:** 2026-02-28  
-**PR:** https://github.com/Fredjr/VertaAI/pull/32  
-**Branch:** `test/track-a-e2e-complex-scenario`  
+**Date:** 2026-02-28
+**PR:** https://github.com/Fredjr/vertaai-e2e-test/pull/34
+**Repository:** vertaai-e2e-test (test repository)
+**Branch:** `test/track-a-complex-scenario`
 **Status:** 🚀 **LAUNCHED**
 
 ---
@@ -138,9 +139,9 @@ This PR should exercise and display:
 
 ## ✅ Success Criteria
 
-- ✅ PR created: https://github.com/Fredjr/VertaAI/pull/32
+- ✅ PR created: https://github.com/Fredjr/vertaai-e2e-test/pull/34
 - ⏳ PR triggers governance evaluation
-- ⏳ 5 findings detected (3 blocking, 2 warning)
+- ⏳ Findings detected
 - ⏳ Vector confidence model displayed
 - ⏳ Stable fingerprints generated
 - ⏳ All 20 invariants pass
@@ -155,8 +156,8 @@ This PR should exercise and display:
 
 1. **Monitor PR for GitHub Check:**
    - Check should be created: "VertaAI Policy Evaluation"
-   - Status should be: FAILURE (blocking findings)
    - Output should show all Track A features
+   - Monitor at: https://github.com/Fredjr/vertaai-e2e-test/pull/34
 
 2. **Inspect Governance Output:**
    - Verify vector confidence breakdown
