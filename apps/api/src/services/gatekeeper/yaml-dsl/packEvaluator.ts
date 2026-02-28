@@ -19,6 +19,8 @@ import { factCatalog } from './facts/catalog.js';
 // PHASE 2.3: Import condition evaluation
 import { evaluateCondition, evaluateConditions } from './conditions/evaluator.js';
 import type { Condition, ConditionEvaluationResult } from './conditions/types.js';
+// TRACK A TASK 2: Import auto-invoked comparators
+import { runAutoInvokedComparators } from './autoInvokedComparators.js';
 // GAP-1 FIX: ChangeSurface → path-glob expansion
 import { resolveChangeSurfaceGlobs, CHANGE_SURFACE_GLOBS } from './changeSurfaceCatalog.js';
 // PHASE 3: Import Policy Evaluation Graph types
@@ -108,8 +110,12 @@ export class PackEvaluator {
       startTime: Date.now(),
     };
 
-    // TRACK A TASK 2: Auto-invoked comparators removed due to TypeScript compilation bug
-    // TODO: Re-implement with simpler structure
+    // TRACK A TASK 2: Run auto-invoked comparators on every PR
+    // These run BEFORE rule evaluation to detect drift and safety issues
+    console.log('[PackEvaluator] Running auto-invoked comparators (cross-artifact + safety)...');
+    const autoInvokedFindings = await runAutoInvokedComparators(context, usedComparators);
+    findings.push(...autoInvokedFindings);
+    console.log(`[PackEvaluator] Auto-invoked comparators found ${autoInvokedFindings.length} findings`);
 
     // Initialize cache if not already present
     if (!context.cache) {
