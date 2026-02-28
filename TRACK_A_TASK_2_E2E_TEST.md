@@ -118,28 +118,40 @@ Each finding should include specific remediation from the catalog:
 - ✅ No breaking changes to existing functionality
 
 ### Deployment
-- ✅ Code committed: `78b4a0d`
+- ✅ Code committed: `78b4a0d` (comparators)
+- ✅ Code committed: `0188ced` (auto-invocation wiring)
 - ✅ Pushed to `main` branch
 - ✅ Railway deployment triggered
-- ⏳ Waiting for Railway to redeploy
+- ⏳ Waiting for Railway to redeploy with auto-invocation
 
 ---
 
 ## 🚀 Next Steps
 
-1. **Monitor PR #35 Checks**
-   - Wait for governance evaluation to complete
-   - Verify all 5 comparators are triggered
-   - Check that findings appear in output
+1. **✅ WIRING COMPLETE**
+   - Cross-artifact comparators now auto-invoke in `PackEvaluator.runCrossArtifactComparators()`
+   - Runs on EVERY PR before rule evaluation
+   - Independent of policy pack rules
+   - Findings automatically added to pack evaluation results
 
-2. **Validate Output**
+2. **⏳ Monitor Railway Deployment**
+   - Wait for Railway to deploy commit `0188ced`
+   - Verify deployment succeeds
+   - Check logs for "Running cross-artifact comparators..."
+
+3. **⏳ Re-trigger PR #35 Evaluation**
+   - Once Railway deploys, push empty commit to PR #35 to re-trigger
+   - Or close/reopen PR to force re-evaluation
+   - Verify all 5 comparators are triggered
+
+4. **Validate Output**
    - Confirm all messages from catalog (0% freeform prose)
    - Verify confidence scores present
    - Check evidence collection working
    - Validate risk scores calculated
    - Confirm remediation guidance provided
 
-3. **Document Results**
+5. **Document Results**
    - Capture governance output
    - Validate Track A compliance
    - Update completion status
