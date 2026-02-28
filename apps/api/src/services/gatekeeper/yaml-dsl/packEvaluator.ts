@@ -1433,16 +1433,16 @@ function buildPackEvaluationGraph(
     const comparatorRegistry = getComparatorRegistry();
 
     // List of comparators to run automatically on every PR
-    const autoInvokedComparatorIds: ComparatorId[] = [
+    const autoInvokedComparatorIds = [
       // Cross-Artifact Comparators (Track A Task 2)
-      'OPENAPI_CODE_PARITY',
-      'SCHEMA_MIGRATION_PARITY',
-      'CONTRACT_IMPLEMENTATION_PARITY',
-      'DOC_CODE_PARITY',
-      'TEST_IMPLEMENTATION_PARITY',
+      'OPENAPI_CODE_PARITY' as ComparatorId,
+      'SCHEMA_MIGRATION_PARITY' as ComparatorId,
+      'CONTRACT_IMPLEMENTATION_PARITY' as ComparatorId,
+      'DOC_CODE_PARITY' as ComparatorId,
+      'TEST_IMPLEMENTATION_PARITY' as ComparatorId,
 
       // Safety Comparators (always enforce)
-      'NO_SECRETS_IN_DIFF',
+      'NO_SECRETS_IN_DIFF' as ComparatorId,
     ];
 
     for (const comparatorId of autoInvokedComparatorIds) {
