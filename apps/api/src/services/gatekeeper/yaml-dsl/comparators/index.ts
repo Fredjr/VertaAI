@@ -16,6 +16,12 @@ import { minApprovalsComparator } from './governance/minApprovals.js';
 import { actorIsAgentComparator } from './actor/actorIsAgent.js';
 import { changedPathMatchesComparator } from './trigger/changedPathMatches.js';
 import { openapiSchemaValidComparator } from './schema/openapiSchemaValid.js';
+// Track A Task 2: Cross-Artifact Comparators
+import { openapiCodeParityComparator } from './cross-artifact/openapiCodeParity.js';
+import { schemaMigrationParityComparator } from './cross-artifact/schemaMigrationParity.js';
+import { contractImplementationParityComparator } from './cross-artifact/contractImplementationParity.js';
+import { docCodeParityComparator } from './cross-artifact/docCodeParity.js';
+import { testImplementationParityComparator } from './cross-artifact/testImplementationParity.js';
 
 export function initializeComparators(): void {
   console.log('[Comparators] Initializing comparator registry...');
@@ -31,6 +37,13 @@ export function initializeComparators(): void {
   comparatorRegistry.register(actorIsAgentComparator);
   comparatorRegistry.register(changedPathMatchesComparator);
   comparatorRegistry.register(openapiSchemaValidComparator);
+
+  // Register Track A Task 2: Cross-Artifact Comparators
+  comparatorRegistry.register(openapiCodeParityComparator);
+  comparatorRegistry.register(schemaMigrationParityComparator);
+  comparatorRegistry.register(contractImplementationParityComparator);
+  comparatorRegistry.register(docCodeParityComparator);
+  comparatorRegistry.register(testImplementationParityComparator);
 
   console.log(`[Comparators] Registered ${comparatorRegistry.list().length} comparators`);
   console.log(`[Comparators] Available: ${comparatorRegistry.list().join(', ')}`);

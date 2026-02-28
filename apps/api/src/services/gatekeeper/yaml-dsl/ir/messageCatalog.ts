@@ -202,6 +202,114 @@ export const MESSAGE_CATALOG: MessageCatalog = {
   },
 
   // ==========================================================================
+  // FAIL MESSAGES - CROSS-ARTIFACT DOMAIN (Track A Task 2)
+  // ==========================================================================
+
+  'fail.cross_artifact.openapi_code_mismatch': {
+    id: 'fail.cross_artifact.openapi_code_mismatch',
+    template: 'OpenAPI spec changed but implementation not updated: {endpoints}',
+    description: 'OpenAPI spec changes without corresponding code changes',
+    params: ['endpoints'],
+  },
+
+  'fail.cross_artifact.code_openapi_mismatch': {
+    id: 'fail.cross_artifact.code_openapi_mismatch',
+    template: 'Code changed but OpenAPI spec not updated: {files}',
+    description: 'Code changes without corresponding OpenAPI spec updates',
+    params: ['files'],
+  },
+
+  'fail.cross_artifact.schema_migration_missing': {
+    id: 'fail.cross_artifact.schema_migration_missing',
+    template: 'Schema changed but no migration file added: {schemaFiles}',
+    description: 'Schema changes without migration files',
+    params: ['schemaFiles'],
+  },
+
+  'fail.cross_artifact.migration_schema_mismatch': {
+    id: 'fail.cross_artifact.migration_schema_mismatch',
+    template: 'Migration added but schema not changed: {migrationFiles}',
+    description: 'Migration files without schema changes',
+    params: ['migrationFiles'],
+  },
+
+  'fail.cross_artifact.contract_implementation_mismatch': {
+    id: 'fail.cross_artifact.contract_implementation_mismatch',
+    template: 'Contract changed but implementation not updated: {contracts}',
+    description: 'Contract changes without implementation updates',
+    params: ['contracts'],
+  },
+
+  'fail.cross_artifact.implementation_contract_mismatch': {
+    id: 'fail.cross_artifact.implementation_contract_mismatch',
+    template: 'Implementation changed but contract not updated: {implementations}',
+    description: 'Implementation changes without contract updates',
+    params: ['implementations'],
+  },
+
+  'fail.cross_artifact.doc_code_mismatch': {
+    id: 'fail.cross_artifact.doc_code_mismatch',
+    template: 'Code changed in documented areas but docs not updated: {files}',
+    description: 'Code changes without documentation updates',
+    params: ['files'],
+  },
+
+  'fail.cross_artifact.code_doc_outdated': {
+    id: 'fail.cross_artifact.code_doc_outdated',
+    template: 'Documentation references outdated code: {docFiles}',
+    description: 'Documentation references code that has changed',
+    params: ['docFiles'],
+  },
+
+  'fail.cross_artifact.test_implementation_missing': {
+    id: 'fail.cross_artifact.test_implementation_missing',
+    template: 'Implementation changed but tests not updated: {implementations}',
+    description: 'Implementation changes without test updates',
+    params: ['implementations'],
+  },
+
+  'fail.cross_artifact.implementation_test_missing': {
+    id: 'fail.cross_artifact.implementation_test_missing',
+    template: 'New implementation without test coverage: {newFiles}',
+    description: 'New code without corresponding tests',
+    params: ['newFiles'],
+  },
+
+  // ==========================================================================
+  // PASS MESSAGES - CROSS-ARTIFACT DOMAIN (Track A Task 2)
+  // ==========================================================================
+
+  'pass.cross_artifact.openapi_code_consistent': {
+    id: 'pass.cross_artifact.openapi_code_consistent',
+    template: 'OpenAPI spec and implementation are consistent',
+    description: 'OpenAPI and code changes are aligned',
+  },
+
+  'pass.cross_artifact.schema_migration_consistent': {
+    id: 'pass.cross_artifact.schema_migration_consistent',
+    template: 'Schema and migration files are consistent',
+    description: 'Schema and migration changes are aligned',
+  },
+
+  'pass.cross_artifact.contract_implementation_consistent': {
+    id: 'pass.cross_artifact.contract_implementation_consistent',
+    template: 'Contract and implementation are consistent',
+    description: 'Contract and implementation changes are aligned',
+  },
+
+  'pass.cross_artifact.doc_code_consistent': {
+    id: 'pass.cross_artifact.doc_code_consistent',
+    template: 'Documentation and code are consistent',
+    description: 'Documentation and code changes are aligned',
+  },
+
+  'pass.cross_artifact.test_implementation_consistent': {
+    id: 'pass.cross_artifact.test_implementation_consistent',
+    template: 'Tests and implementation are consistent',
+    description: 'Test and implementation changes are aligned',
+  },
+
+  // ==========================================================================
   // FAIL MESSAGES - GOVERNANCE DOMAIN
   // ==========================================================================
 
@@ -472,6 +580,75 @@ export const MESSAGE_CATALOG: MessageCatalog = {
   },
 
   // ==========================================================================
+  // REMEDIATION MESSAGES - CROSS-ARTIFACT DOMAIN (Track A Task 2)
+  // ==========================================================================
+
+  'remediation.cross_artifact.update_openapi_spec': {
+    id: 'remediation.cross_artifact.update_openapi_spec',
+    template: 'Update OpenAPI spec to match code changes in: {files}',
+    description: 'Update OpenAPI spec remediation',
+    params: ['files'],
+  },
+
+  'remediation.cross_artifact.update_code_implementation': {
+    id: 'remediation.cross_artifact.update_code_implementation',
+    template: 'Update code implementation to match OpenAPI spec changes',
+    description: 'Update code implementation remediation',
+  },
+
+  'remediation.cross_artifact.add_migration_file': {
+    id: 'remediation.cross_artifact.add_migration_file',
+    template: 'Add migration file for schema changes in: {schemaFiles}',
+    description: 'Add migration file remediation',
+    params: ['schemaFiles'],
+  },
+
+  'remediation.cross_artifact.update_schema': {
+    id: 'remediation.cross_artifact.update_schema',
+    template: 'Update schema to match migration: {migrationFiles}',
+    description: 'Update schema remediation',
+    params: ['migrationFiles'],
+  },
+
+  'remediation.cross_artifact.update_contract': {
+    id: 'remediation.cross_artifact.update_contract',
+    template: 'Update contract to match implementation changes',
+    description: 'Update contract remediation',
+  },
+
+  'remediation.cross_artifact.update_implementation': {
+    id: 'remediation.cross_artifact.update_implementation',
+    template: 'Update implementation to match contract changes',
+    description: 'Update implementation remediation',
+  },
+
+  'remediation.cross_artifact.update_documentation': {
+    id: 'remediation.cross_artifact.update_documentation',
+    template: 'Update documentation for code changes in: {files}',
+    description: 'Update documentation remediation',
+    params: ['files'],
+  },
+
+  'remediation.cross_artifact.update_code_or_docs': {
+    id: 'remediation.cross_artifact.update_code_or_docs',
+    template: 'Update code to match documentation or update documentation',
+    description: 'Update code or docs remediation',
+  },
+
+  'remediation.cross_artifact.add_tests': {
+    id: 'remediation.cross_artifact.add_tests',
+    template: 'Add tests for implementation changes in: {implementations}',
+    description: 'Add tests remediation',
+    params: ['implementations'],
+  },
+
+  'remediation.cross_artifact.update_tests': {
+    id: 'remediation.cross_artifact.update_tests',
+    template: 'Update tests to match implementation changes',
+    description: 'Update tests remediation',
+  },
+
+  // ==========================================================================
   // EVIDENCE CONTEXT MESSAGES
   // ==========================================================================
 
@@ -655,5 +832,92 @@ export const RemediationMessages = {
     rotateCredentials: () =>
       formatMessage('remediation.secrets.rotate_credentials'),
   },
+
+  crossArtifact: {
+    updateOpenapiSpec: (files: string) =>
+      formatMessage('remediation.cross_artifact.update_openapi_spec', { files }),
+
+    updateCodeImplementation: () =>
+      formatMessage('remediation.cross_artifact.update_code_implementation'),
+
+    addMigrationFile: (schemaFiles: string) =>
+      formatMessage('remediation.cross_artifact.add_migration_file', { schemaFiles }),
+
+    updateSchema: (migrationFiles: string) =>
+      formatMessage('remediation.cross_artifact.update_schema', { migrationFiles }),
+
+    updateContract: () =>
+      formatMessage('remediation.cross_artifact.update_contract'),
+
+    updateImplementation: () =>
+      formatMessage('remediation.cross_artifact.update_implementation'),
+
+    updateDocumentation: (files: string) =>
+      formatMessage('remediation.cross_artifact.update_documentation', { files }),
+
+    updateCodeOrDocs: () =>
+      formatMessage('remediation.cross_artifact.update_code_or_docs'),
+
+    addTests: (implementations: string) =>
+      formatMessage('remediation.cross_artifact.add_tests', { implementations }),
+
+    updateTests: () =>
+      formatMessage('remediation.cross_artifact.update_tests'),
+  },
+};
+
+/**
+ * Format cross-artifact messages (Track A Task 2)
+ */
+export const CrossArtifactMessages = {
+  // OpenAPI ↔ Code
+  openapiCodeMismatch: (endpoints: string) =>
+    formatMessage('fail.cross_artifact.openapi_code_mismatch', { endpoints }),
+
+  codeOpenapiMismatch: (files: string) =>
+    formatMessage('fail.cross_artifact.code_openapi_mismatch', { files }),
+
+  openapiCodeConsistent: () =>
+    formatMessage('pass.cross_artifact.openapi_code_consistent'),
+
+  // Schema ↔ Migration
+  schemaMigrationMissing: (schemaFiles: string) =>
+    formatMessage('fail.cross_artifact.schema_migration_missing', { schemaFiles }),
+
+  migrationSchemaMismatch: (migrationFiles: string) =>
+    formatMessage('fail.cross_artifact.migration_schema_mismatch', { migrationFiles }),
+
+  schemaMigrationConsistent: () =>
+    formatMessage('pass.cross_artifact.schema_migration_consistent'),
+
+  // Contract ↔ Implementation
+  contractImplementationMismatch: (contracts: string) =>
+    formatMessage('fail.cross_artifact.contract_implementation_mismatch', { contracts }),
+
+  implementationContractMismatch: (implementations: string) =>
+    formatMessage('fail.cross_artifact.implementation_contract_mismatch', { implementations }),
+
+  contractImplementationConsistent: () =>
+    formatMessage('pass.cross_artifact.contract_implementation_consistent'),
+
+  // Documentation ↔ Code
+  docCodeMismatch: (files: string) =>
+    formatMessage('fail.cross_artifact.doc_code_mismatch', { files }),
+
+  codeDocOutdated: (docFiles: string) =>
+    formatMessage('fail.cross_artifact.code_doc_outdated', { docFiles }),
+
+  docCodeConsistent: () =>
+    formatMessage('pass.cross_artifact.doc_code_consistent'),
+
+  // Test ↔ Implementation
+  testImplementationMissing: (implementations: string) =>
+    formatMessage('fail.cross_artifact.test_implementation_missing', { implementations }),
+
+  implementationTestMissing: (newFiles: string) =>
+    formatMessage('fail.cross_artifact.implementation_test_missing', { newFiles }),
+
+  testImplementationConsistent: () =>
+    formatMessage('pass.cross_artifact.test_implementation_consistent'),
 };
 
