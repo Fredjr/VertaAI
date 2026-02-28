@@ -35,6 +35,9 @@ import { buildRunContext } from './ir/runContextBuilder.js';
 import { buildPolicyPlan } from './ir/policyPlanBuilder.js';
 import { buildObligationResult } from './ir/obligationResultBuilder.js';
 
+// NEW: GOC validator (Phase 2)
+import { buildGovernanceOutputContract, validateGovernanceOutputContract } from './ir/contractValidator.js';
+
 /**
  * Normalize pack evaluation results into canonical model
  *
@@ -101,12 +104,28 @@ export function normalizeEvaluationResults(
       // Build ObligationResults from findings
       const obligationResults = findings.map(finding => buildObligationResult(finding));
 
-      // Assemble IR (contract validation will come in Phase 2)
+      // NEW (Phase 2): Build and validate GOC
+      const contract = buildGovernanceOutputContract(runContext, policyPlan, obligationResults);
+
+      // Validate contract in audit mode (log violations, don't throw)
+      const validationResult = validateGovernanceOutputContract(contract, { mode: 'audit' });
+
+      if (!validationResult.valid) {
+        console.warn('[GOC Validator] Contract violations detected:', {
+          violations: validationResult.violations,
+          warnings: validationResult.warnings,
+        });
+        // TODO: Send to monitoring/telemetry
+      } else {
+        console.log('[GOC Validator] Contract validation passed ✓');
+      }
+
+      // Assemble IR with validated contract
       ir = {
         runContext,
         policyPlan,
         obligationResults,
-        // contract: undefined, // Phase 2: GOC validation
+        contract, // NEW (Phase 2): Validated contract
       };
     } catch (error) {
       // IR building is optional - don't break existing functionality
