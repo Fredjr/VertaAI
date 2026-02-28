@@ -1,8 +1,8 @@
 # TypeScript Compilation Bug Resolution
 
-**Date:** 2026-02-28  
-**Status:** ✅ **RESOLVED**  
-**Final Commit:** `3185c87`
+**Date:** 2026-02-28
+**Status:** 🔴 **UNRESOLVED - FEATURE REVERTED**
+**Revert Commit:** `389a7db`
 
 ---
 
@@ -81,10 +81,15 @@ TypeScript still infers the return type as `Promise<Finding[]>`, but now generat
 **Change:** Updated docs  
 **Result:** FAILED - Not a code fix
 
-### Attempt 4: Commit `3185c87` ✅
-**Hypothesis:** TypeScript compiler bug with explicit generic return types  
-**Change:** Removed `: Promise<Finding[]>` return type annotation  
-**Result:** **SUCCESS** - Should resolve compilation error
+### Attempt 4: Commit `3185c87` ❌
+**Hypothesis:** TypeScript compiler bug with explicit generic return types
+**Change:** Removed `: Promise<Finding[]>` return type annotation
+**Result:** FAILED - New error: "Illegal return statement" at line 1212
+
+### Attempt 5: Commit `389a7db` ⚠️ **EMERGENCY REVERT**
+**Hypothesis:** TypeScript compiler is catastrophically broken for this method structure
+**Change:** Completely removed `runCrossArtifactComparators()` method and all auto-invocation code
+**Result:** **REVERTED TO STABLE STATE** - Feature removed, deployment should succeed
 
 ---
 
@@ -98,13 +103,13 @@ This is likely a **TypeScript compiler bug** or **tsconfig.json misconfiguration
 
 ---
 
-## 🚀 **Expected Outcome**
+## 🚀 **Current Status**
 
 Railway deployment should now:
-1. ✅ Compile TypeScript without errors
+1. ✅ Compile TypeScript without errors (auto-invocation code removed)
 2. ✅ Generate valid JavaScript
 3. ✅ Start the application successfully
-4. ✅ Execute auto-invoked comparators on every PR
+4. ❌ Auto-invoked comparators NOT running (feature reverted)
 
 ---
 
@@ -119,13 +124,33 @@ Railway deployment should now:
 
 ## 🔮 **Next Steps**
 
-1. **⏳ Monitor Railway deployment** for commit `3185c87`
-2. **✅ Verify compilation succeeds** (no syntax errors in logs)
-3. **✅ Verify application starts** (no crash on module load)
-4. **✅ Re-trigger PR #35** to test auto-invoked comparators
-5. **✅ Validate governance output** shows 6 auto-invoked findings
+### Immediate:
+1. **⏳ Monitor Railway deployment** for commit `389a7db` (revert)
+2. **✅ Verify compilation succeeds** (should work now)
+3. **✅ Verify application starts** (should work now)
+
+### Future Re-Implementation:
+The auto-invocation feature needs to be re-implemented using a different approach:
+
+**Option 1: Inline Logic**
+- Move auto-invocation logic directly into `evaluate()` method
+- Avoid separate method that triggers compiler bug
+
+**Option 2: Separate Module**
+- Create `autoInvokedComparators.ts` in a separate file
+- Import and call from `evaluate()`
+
+**Option 3: TypeScript Configuration**
+- Investigate `tsconfig.json` settings
+- Try different `target`, `module`, or `moduleResolution` settings
+- Consider upgrading/downgrading TypeScript version
+
+**Option 4: Different Syntax**
+- Use generator functions instead of async/await
+- Use callbacks instead of promises
+- Restructure to avoid generic array return types
 
 ---
 
-**This should be the final fix!** 🎉
+**The feature has been reverted to restore stability. Railway should now deploy successfully.** ⚠️
 
