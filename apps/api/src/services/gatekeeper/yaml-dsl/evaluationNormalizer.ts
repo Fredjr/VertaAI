@@ -39,7 +39,7 @@ import { buildObligationResult } from './ir/obligationResultBuilder.js';
 import { buildGovernanceOutputContract, validateGovernanceOutputContract } from './ir/contractValidator.js';
 
 // NEW: Semantic validator (Phase 5.5)
-import { validateGovernanceIR, type ValidationOptions } from './ir/semanticValidator.js';
+import { validateSemantics, type SemanticValidationOptions } from './ir/semanticValidator.js';
 
 /**
  * Normalize pack evaluation results into canonical model
@@ -135,12 +135,11 @@ export function normalizeEvaluationResults(
       // NEW (Phase 5.5): Validate IR with semantic validator
       // This enforces all 20 invariants including INVARIANT_16 (0% freeform prose)
       try {
-        const validationOptions: ValidationOptions = {
-          enableExperimental: true, // Enable INVARIANT_16 and other experimental checks
-          throwOnError: false,      // Log violations, don't throw (audit mode)
+        const validationOptions: SemanticValidationOptions = {
+          mode: 'audit', // Log violations, don't throw
         };
 
-        const semanticValidation = validateGovernanceIR(ir, validationOptions);
+        const semanticValidation = validateSemantics(ir, validationOptions);
 
         if (!semanticValidation.valid) {
           console.warn('[Semantic Validator] IR validation violations detected:', {
