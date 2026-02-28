@@ -1376,7 +1376,9 @@ function buildPackEvaluationGraph(
   const autoInvokedFindings = findings.filter(f => f.ruleId.startsWith('auto-invoked-'));
   const autoInvokedRuleGraphs: PolicyEvaluationGraph[] = [];
 
+  console.log(`[PackEvaluator] Total findings: ${findings.length}, Auto-invoked: ${autoInvokedFindings.length}`);
   if (autoInvokedFindings.length > 0) {
+    console.log(`[PackEvaluator] Auto-invoked finding ruleIds:`, autoInvokedFindings.map(f => f.ruleId));
     console.log(`[PackEvaluator] Building ${autoInvokedFindings.length} auto-invoked rule graphs for evaluation graph`);
 
     // Group auto-invoked findings by ruleId

@@ -110,7 +110,7 @@ export async function runAutoInvokedComparators(
       // Create finding if failed or unknown
       if (result.status === 'fail' || result.status === 'unknown') {
         const finding: AutoInvokedFinding = {
-          ruleId: `${category}-${id.toLowerCase()}`,
+          ruleId: `auto-invoked-${id.toLowerCase()}`,  // CRITICAL: Must start with 'auto-invoked-' for graph builder
           ruleName: `${category === 'safety' ? 'Safety' : 'Cross-Artifact'} Check: ${id}`,
           obligationIndex: -1,
           comparatorResult: result,
