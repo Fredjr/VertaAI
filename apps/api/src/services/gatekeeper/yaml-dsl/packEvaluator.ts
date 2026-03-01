@@ -21,6 +21,8 @@ import { evaluateCondition, evaluateConditions } from './conditions/evaluator.js
 import type { Condition, ConditionEvaluationResult } from './conditions/types.js';
 // TRACK A TASK 2: Import auto-invoked comparators
 import { runAutoInvokedComparators } from './autoInvokedComparators.js';
+// 11.1: Import artifact graph builder
+import { buildArtifactGraph } from './artifactGraphBuilder.js';
 // GAP-1 FIX: ChangeSurface → path-glob expansion
 import { resolveChangeSurfaceGlobs, CHANGE_SURFACE_GLOBS } from './changeSurfaceCatalog.js';
 // PHASE 3: Import Policy Evaluation Graph types
@@ -116,6 +118,11 @@ export class PackEvaluator {
     const autoInvokedFindings = await runAutoInvokedComparators(context, usedComparators);
     findings.push(...autoInvokedFindings);
     console.log(`[PackEvaluator] Auto-invoked comparators found ${autoInvokedFindings.length} findings`);
+
+    // 11.1: Build artifact graph from auto-invoked comparator results
+    console.log('[PackEvaluator] Building artifact graph...');
+    const artifactGraph = buildArtifactGraph(context, autoInvokedFindings);
+    console.log(`[PackEvaluator] Artifact graph: ${artifactGraph.nodes.length} nodes, ${artifactGraph.edges.length} edges, ${artifactGraph.driftEdges.length} drift(s)`);
 
     // Initialize cache if not already present
     if (!context.cache) {
@@ -1467,6 +1474,7 @@ function buildPackEvaluationGraph(
     allSurfaces,
     ruleGraphs,
     autoInvokedRuleGraphs: autoInvokedRuleGraphs.length > 0 ? autoInvokedRuleGraphs : undefined,
+    artifactGraph,  // 11.1: Cross-artifact integrity graph
     globalDecision,
     coverage: {
       totalRules: pack.rules.length,

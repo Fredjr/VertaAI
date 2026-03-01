@@ -23,6 +23,7 @@ import type {
   RepoClassification,
   RiskScore,
   ObligationApplicability,
+  ArtifactGraph,
 } from './types.js';
 import { ObligationKind } from './types.js'; // Import as value (enum)
 import { v4 as uuidv4 } from 'uuid';
@@ -82,6 +83,9 @@ export function normalizeEvaluationResults(
 
   // Step 8: Build metadata
   const metadata = buildMetadata(packResults);
+
+  // Step 8.5 (NEW - 11.1): Extract artifact graph from pack results
+  const artifactGraph = extractArtifactGraph(packResults);
 
   // Step 9 (NEW - Phase 1.3): Build IR in parallel (additive, optional)
   // This runs alongside existing normalization to ensure zero regressions
@@ -172,6 +176,7 @@ export function normalizeEvaluationResults(
     nextActions,
     metadata,
     repoClassification,
+    artifactGraph, // NEW (11.1): Cross-artifact integrity graph
     ir, // NEW: Optional IR
   };
 }
@@ -1233,5 +1238,20 @@ function buildMetadata(packResults: PackResult[]): {
     evaluationTimeMs: totalTime,
     timestamp: new Date().toISOString(),
   };
+}
+
+/**
+ * Extract artifact graph from pack results (11.1)
+ */
+function extractArtifactGraph(packResults: PackResult[]): ArtifactGraph | undefined {
+  // Find the first pack result that has an artifact graph
+  for (const packResult of packResults) {
+    const graph = packResult.result.evaluationGraph;
+    if (graph?.artifactGraph) {
+      return graph.artifactGraph;
+    }
+  }
+
+  return undefined;
 }
 

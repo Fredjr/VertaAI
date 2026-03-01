@@ -1028,6 +1028,9 @@ export interface PackEvaluationGraph {
   /** TRACK A TASK 2: Auto-invoked comparator rule graphs (always run, independent of policy pack) */
   autoInvokedRuleGraphs?: PolicyEvaluationGraph[];
 
+  /** 11.1: Cross-artifact integrity graph */
+  artifactGraph?: ArtifactGraph;
+
   /** Global decision */
   globalDecision: {
     outcome: 'pass' | 'warn' | 'block';
@@ -1296,6 +1299,12 @@ export interface NormalizedEvaluationResult {
   repoClassification?: RepoClassification;
 
   /**
+   * NEW (11.1): Cross-Artifact Integrity Graph
+   * Explicit representation of artifact relationships and drift detection
+   */
+  artifactGraph?: ArtifactGraph;
+
+  /**
    * NEW: Governance IR (Intermediate Representation)
    * This is the canonical IR that will eventually replace the above fields.
    * For now, it's built in parallel to ensure zero regressions.
@@ -1389,4 +1398,76 @@ export interface RiskScore {
     immediacyReason: string;
     dependencyReason: string;
   };
+}
+
+// ============================================================================
+// ARTIFACT GRAPH (11.1 Acceptance Criteria)
+// ============================================================================
+
+/**
+ * Artifact types in the governance graph
+ */
+export type ArtifactType =
+  | 'spec'           // OpenAPI, Protobuf, GraphQL schema
+  | 'implementation' // Code files
+  | 'documentation'  // Markdown, runbooks
+  | 'test'           // Test files
+  | 'config'         // Dashboards, alerts, SLOs
+  | 'data'           // Database schema, migrations
+  | 'ownership';     // CODEOWNERS, PagerDuty
+
+/**
+ * Edge relationship types
+ */
+export type EdgeRelationship =
+  | 'defines'        // OpenAPI defines routes
+  | 'implements'     // Routes implement OpenAPI
+  | 'documents'      // Docs document code
+  | 'tests'          // Tests test implementation
+  | 'monitors'       // Dashboards monitor service
+  | 'owns'           // CODEOWNERS owns service
+  | 'constrains';    // SLO constrains service behavior
+
+/**
+ * Artifact node in the graph
+ */
+export interface ArtifactNode {
+  id: string;              // e.g., "openapi", "schema", "migrations"
+  type: ArtifactType;
+  paths: string[];         // File paths that constitute this artifact
+  lastModified?: Date;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Edge between artifacts (represents a parity invariant)
+ */
+export interface ArtifactEdge {
+  id: string;              // e.g., "openapi-to-routes"
+  from: string;            // Source artifact ID
+  to: string;              // Target artifact ID
+  relationship: EdgeRelationship;
+  invariant: string;       // Human-readable invariant description
+  comparatorId: string;    // Which comparator enforces this edge
+  bidirectional: boolean;  // If true, both directions must stay in sync
+}
+
+/**
+ * Drift detected on an edge
+ */
+export interface DriftEdge {
+  edgeId: string;
+  severity: number;        // 0-100
+  evidence: EvidenceItem[];
+  detectedAt: Date;
+  message: string;         // Human-readable drift description
+}
+
+/**
+ * Complete artifact graph with drift detection
+ */
+export interface ArtifactGraph {
+  nodes: ArtifactNode[];
+  edges: ArtifactEdge[];
+  driftEdges: DriftEdge[];
 }
