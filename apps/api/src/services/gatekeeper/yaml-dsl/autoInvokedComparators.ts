@@ -63,6 +63,23 @@ const AUTO_INVOKED_COMPARATORS = [
     decisionOnFail: 'warn' as const,
   },
 
+  // 11.1: Additional Cross-Artifact Comparators (Full Acceptance Criteria)
+  {
+    id: 'DASHBOARD_SERVICE_PARITY' as ComparatorId,
+    category: 'cross-artifact',
+    decisionOnFail: 'warn' as const,
+  },
+  {
+    id: 'RUNBOOK_OWNERSHIP_PARITY' as ComparatorId,
+    category: 'cross-artifact',
+    decisionOnFail: 'warn' as const,
+  },
+  {
+    id: 'SLO_THRESHOLD_PARITY' as ComparatorId,
+    category: 'cross-artifact',
+    decisionOnFail: 'warn' as const,
+  },
+
   // Safety Comparators
   // These enforce critical security/quality checks
   {

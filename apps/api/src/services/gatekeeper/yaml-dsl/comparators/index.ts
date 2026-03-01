@@ -22,6 +22,10 @@ import { schemaMigrationParityComparator } from './cross-artifact/schemaMigratio
 import { contractImplementationParityComparator } from './cross-artifact/contractImplementationParity.js';
 import { docCodeParityComparator } from './cross-artifact/docCodeParity.js';
 import { testImplementationParityComparator } from './cross-artifact/testImplementationParity.js';
+// 11.1: Additional Cross-Artifact Comparators (Full Acceptance Criteria)
+import { dashboardServiceParityComparator } from './cross-artifact/dashboardServiceParity.js';
+import { runbookOwnershipParityComparator } from './cross-artifact/runbookOwnershipParity.js';
+import { sloThresholdParityComparator } from './cross-artifact/sloThresholdParity.js';
 
 export function initializeComparators(): void {
   console.log('[Comparators] Initializing comparator registry...');
@@ -44,6 +48,11 @@ export function initializeComparators(): void {
   comparatorRegistry.register(contractImplementationParityComparator);
   comparatorRegistry.register(docCodeParityComparator);
   comparatorRegistry.register(testImplementationParityComparator);
+
+  // Register 11.1: Additional Cross-Artifact Comparators
+  comparatorRegistry.register(dashboardServiceParityComparator);
+  comparatorRegistry.register(runbookOwnershipParityComparator);
+  comparatorRegistry.register(sloThresholdParityComparator);
 
   console.log(`[Comparators] Registered ${comparatorRegistry.list().length} comparators`);
   console.log(`[Comparators] Available: ${comparatorRegistry.list().join(', ')}`);

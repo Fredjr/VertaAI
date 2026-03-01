@@ -166,6 +166,70 @@ function getArtifactDefinitions(context: PRContext): ArtifactNode[] {
     });
   }
 
+  // 11.1: Additional artifact types for full acceptance criteria
+
+  // Dashboards
+  const dashboardFiles = files.filter(f =>
+    f.filename.includes('/grafana/') ||
+    f.filename.includes('/datadog/') ||
+    f.filename.includes('/cloudwatch/') ||
+    f.filename.includes('/dashboards/') ||
+    f.filename.endsWith('.dashboard.json') ||
+    f.filename.endsWith('.dashboard.yaml') ||
+    f.filename.endsWith('.dashboard.yml')
+  );
+  if (dashboardFiles.length > 0) {
+    nodes.push({
+      id: 'dashboards',
+      type: 'config',
+      paths: dashboardFiles.map(f => f.filename),
+    });
+  }
+
+  // Ownership/Runbooks
+  const ownershipFiles = files.filter(f =>
+    f.filename === 'CODEOWNERS' ||
+    f.filename === '.github/CODEOWNERS' ||
+    f.filename === 'docs/OWNERS' ||
+    f.filename.endsWith('/CODEOWNERS') ||
+    f.filename.includes('OWNERS') ||
+    f.filename.includes('/runbooks/') ||
+    f.filename.includes('/runbook/') ||
+    f.filename.endsWith('.runbook.md') ||
+    f.filename === 'RUNBOOK.md' ||
+    f.filename.endsWith('/RUNBOOK.md')
+  );
+  if (ownershipFiles.length > 0) {
+    nodes.push({
+      id: 'ownership',
+      type: 'ownership',
+      paths: ownershipFiles.map(f => f.filename),
+    });
+  }
+
+  // SLOs
+  const sloFiles = files.filter(f =>
+    f.filename.includes('/slo/') ||
+    f.filename.includes('/slos/') ||
+    f.filename.includes('/service-level-objectives/') ||
+    f.filename.endsWith('.slo.yaml') ||
+    f.filename.endsWith('.slo.yml') ||
+    f.filename.endsWith('.slo.json') ||
+    f.filename.includes('/alerts/') ||
+    f.filename.includes('/alerting/') ||
+    f.filename.includes('/thresholds/') ||
+    f.filename.endsWith('.alert.yaml') ||
+    f.filename.endsWith('.alert.yml') ||
+    f.filename.endsWith('.alert.json')
+  );
+  if (sloFiles.length > 0) {
+    nodes.push({
+      id: 'slos',
+      type: 'config',
+      paths: sloFiles.map(f => f.filename),
+    });
+  }
+
   return nodes;
 }
 
@@ -228,6 +292,41 @@ function getEdgeDefinitions(): ArtifactEdge[] {
       comparatorId: 'TEST_IMPLEMENTATION_PARITY',
       bidirectional: true,
     },
+
+    // 11.1: Additional edges for full acceptance criteria
+
+    // Service ↔ Dashboards
+    {
+      id: 'service-dashboards',
+      from: 'routes',
+      to: 'dashboards',
+      relationship: 'monitors',
+      invariant: 'Service changes should update monitoring dashboards',
+      comparatorId: 'DASHBOARD_SERVICE_PARITY',
+      bidirectional: true,
+    },
+
+    // Service ↔ Ownership/Runbooks
+    {
+      id: 'service-ownership',
+      from: 'routes',
+      to: 'ownership',
+      relationship: 'owns',
+      invariant: 'Service ownership must be declared and documented',
+      comparatorId: 'RUNBOOK_OWNERSHIP_PARITY',
+      bidirectional: true,
+    },
+
+    // Service ↔ SLOs
+    {
+      id: 'service-slos',
+      from: 'routes',
+      to: 'slos',
+      relationship: 'constrains',
+      invariant: 'SLO changes should update alert thresholds',
+      comparatorId: 'SLO_THRESHOLD_PARITY',
+      bidirectional: true,
+    },
   ];
 }
 
@@ -249,6 +348,10 @@ function extractDriftFromFinding(finding: any): DriftEdge | null {
     'auto-invoked-contract_implementation_parity': 'contracts-generated',
     'auto-invoked-doc_code_parity': 'docs-code',
     'auto-invoked-test_implementation_parity': 'code-tests',
+    // 11.1: Additional comparators
+    'auto-invoked-dashboard_service_parity': 'service-dashboards',
+    'auto-invoked-runbook_ownership_parity': 'service-ownership',
+    'auto-invoked-slo_threshold_parity': 'service-slos',
   };
 
   const edgeId = edgeMap[ruleId];
@@ -292,6 +395,10 @@ export function renderArtifactGraphMermaid(graph: ArtifactGraph): string {
     'generated': 'Generated[Generated Code]',
     'docs': 'Docs[Documentation]',
     'tests': 'Tests[Test Files]',
+    // 11.1: Additional node types
+    'dashboards': 'Dashboards[Monitoring Dashboards]',
+    'ownership': 'Ownership[CODEOWNERS/Runbooks]',
+    'slos': 'SLOs[SLOs/Alert Thresholds]',
   };
 
   // Add edges

@@ -30,6 +30,7 @@
 import type { NormalizedEvaluationResult, NormalizedFinding, NotEvaluableItem, NormalizedObligation } from './types.js';
 import { adaptNormalizedFromIR } from './ir/irAdapter.js';
 import { validateSemantics, type SemanticValidationOptions } from './ir/semanticValidator.js';
+import { renderArtifactGraphMermaid, renderDriftSummary } from './artifactGraphBuilder.js';
 
 /**
  * ============================================================================
@@ -971,6 +972,20 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
           sections.push(renderDeveloperFriendlyIssueCard(finding, adapted, idx));
           sections.push('');
         });
+      }
+
+      // 11.1: Render artifact graph visualization (if available)
+      if (adapted.artifactGraph && adapted.artifactGraph.nodes.length > 0) {
+        sections.push('');
+        sections.push('<details>');
+        sections.push(`<summary><strong>🔗 Cross-Artifact Integrity Graph</strong> (${adapted.artifactGraph.nodes.length} artifacts, ${adapted.artifactGraph.driftEdges.length} drift${adapted.artifactGraph.driftEdges.length !== 1 ? 's' : ''} detected)</summary>`);
+        sections.push('');
+        sections.push(renderDriftSummary(adapted.artifactGraph));
+        sections.push('');
+        sections.push(renderArtifactGraphMermaid(adapted.artifactGraph));
+        sections.push('');
+        sections.push('</details>');
+        sections.push('');
       }
 
       // Render policy pack findings
