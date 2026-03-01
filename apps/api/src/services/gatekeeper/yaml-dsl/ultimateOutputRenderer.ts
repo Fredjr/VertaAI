@@ -173,10 +173,10 @@ function renderDeveloperFriendlyIssueCard(
   const obligation = normalized.obligations.find(o => o.id === finding.obligationId);
   const repoType = normalized.metadata?.repoClassification?.repoType || 'unknown';
 
-  // Card header with severity emoji
-  const severityEmoji = finding.severity === 'critical' ? '🔴' :
-                        finding.severity === 'high' ? '🟠' :
-                        finding.severity === 'medium' ? '🟡' : '🔵';
+  // Card header with severity emoji - P1 FIX: Use numeric severity (0-100)
+  const severityScore = finding.severity || 50;
+  const severityEmoji = severityScore >= 70 ? '🔴' :
+                        severityScore >= 40 ? '🟡' : '🔵';
 
   lines.push(`### ${severityEmoji} Issue ${index + 1}: ${getHumanFriendlyTitle(finding, obligation)}`);
   lines.push('');
@@ -185,10 +185,17 @@ function renderDeveloperFriendlyIssueCard(
   lines.push(`**What:** ${getHumanFriendlyDescription(finding, obligation)}`);
   lines.push('');
 
-  // File/Location
+  // File/Location - P0 FIX: Parse evidence objects properly
   const fileEvidence = finding.evidence.find(e => e.type === 'file_reference' || e.type === 'file');
   if (fileEvidence) {
-    lines.push(`**File:** \`${fileEvidence.value}\``);
+    let filePath = 'unknown file';
+    if (typeof fileEvidence.value === 'string') {
+      filePath = fileEvidence.value;
+    } else if (typeof fileEvidence.value === 'object' && fileEvidence.value !== null) {
+      // Extract path from evidence object
+      filePath = (fileEvidence.value as any).path || (fileEvidence.value as any).file || 'unknown file';
+    }
+    lines.push(`**File:** \`${filePath}\``);
   } else if (finding.evidence.length > 0) {
     lines.push(`**Location:** ${finding.evidence[0].value}`);
   }
@@ -273,7 +280,24 @@ function getHumanFriendlyDescription(finding: NormalizedFinding, obligation: Nor
     return 'No CODEOWNERS file found in repository - PRs won\'t auto-request reviews from the right team';
   }
   if (desc.includes('schema') && desc.includes('migration')) {
-    const schemaFile = finding.evidence.find(e => e.value.includes('schema'))?.value || 'schema file';
+    // P0 FIX: Extract file path from evidence object properly
+    const schemaEvidence = finding.evidence.find(e => {
+      if (typeof e.value === 'string') return e.value.includes('schema');
+      if (typeof e.value === 'object' && e.value !== null) {
+        return (e.value as any).path?.includes('schema') || (e.value as any).snippet?.includes('schema');
+      }
+      return false;
+    });
+
+    let schemaFile = 'schema file';
+    if (schemaEvidence) {
+      if (typeof schemaEvidence.value === 'string') {
+        schemaFile = schemaEvidence.value;
+      } else if (typeof schemaEvidence.value === 'object' && schemaEvidence.value !== null) {
+        schemaFile = (schemaEvidence.value as any).path || 'schema file';
+      }
+    }
+
     return `Database schema changed (${schemaFile}) but no migration file was added`;
   }
   if (desc.includes('service owner') || desc.includes('service catalog')) {
@@ -321,19 +345,37 @@ function getBusinessImpact(finding: NormalizedFinding, obligation: NormalizedObl
 }
 
 /**
- * Get risk explanation in human terms
+ * Get risk explanation in human terms - P1/P2 FIX: Add PR-specific context from evidence
  */
 function getRiskExplanation(finding: NormalizedFinding, obligation: NormalizedObligation | undefined): string {
   const desc = obligation?.description.toLowerCase() || finding.what.toLowerCase();
 
+  // Extract file context from evidence
+  let fileContext = '';
+  const fileEvidence = finding.evidence.find(e => e.type === 'file_reference' || e.type === 'file');
+  if (fileEvidence) {
+    if (typeof fileEvidence.value === 'string') {
+      fileContext = fileEvidence.value;
+    } else if (typeof fileEvidence.value === 'object' && fileEvidence.value !== null) {
+      fileContext = (fileEvidence.value as any).path || '';
+    }
+  }
+
   if (desc.includes('schema') && desc.includes('migration')) {
-    return 'Could cause downtime during deployment';
+    return fileContext
+      ? `Schema changes in ${fileContext} will fail deployment without migration`
+      : 'Could cause downtime during deployment';
   }
   if (desc.includes('codeowners')) {
-    return 'Changes may merge without proper review';
+    const evidenceCount = finding.evidence.length;
+    return evidenceCount > 0
+      ? `This PR modifies ${evidenceCount} file(s) without ownership routing`
+      : 'Changes may merge without proper review';
   }
   if (desc.includes('service owner') || desc.includes('service catalog')) {
-    return 'Delays during incidents';
+    return fileContext
+      ? `New service code in ${fileContext} added without on-call contact`
+      : 'Delays during incidents';
   }
   if (desc.includes('runbook')) {
     return 'Longer incident resolution time';
@@ -697,14 +739,17 @@ function renderQuickSummary(normalized: NormalizedEvaluationResult, enforcedFind
   lines.push(`## ${decisionEmoji} ${issueCount} Issue${issueCount > 1 ? 's' : ''} Found`);
   lines.push('');
 
-  // Quick action list (top 3 issues)
-  lines.push('**🚨 Action Required:**');
+  // Quick action list (top 3 issues) - P1 FIX: Use severity-based emojis
+  const maxSeverity = Math.max(...enforcedFindings.map(f => f.severity || 50));
+  const actionEmoji = maxSeverity >= 70 ? '🔴' : maxSeverity >= 40 ? '🟡' : '🔵';
+  lines.push(`**${actionEmoji} Action Required:**`);
   const topIssues = enforcedFindings.slice(0, 3);
   topIssues.forEach((finding, idx) => {
     const obligation = normalized.obligations.find(o => o.id === finding.obligationId);
     const title = getHumanFriendlyTitle(finding, obligation);
     const shortDesc = getShortDescription(finding, obligation);
-    lines.push(`${idx + 1}. **${title}** - ${shortDesc}`);
+    const emoji = (finding.severity || 50) >= 70 ? '🔴' : (finding.severity || 50) >= 40 ? '🟡' : '🔵';
+    lines.push(`${idx + 1}. ${emoji} **${title}** - ${shortDesc}`);
   });
   if (issueCount > 3) {
     lines.push(`*...and ${issueCount - 3} more issue${issueCount - 3 > 1 ? 's' : ''}*`);
@@ -895,8 +940,10 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
     // A) Quick Summary (always visible)
     sections.push(renderQuickSummary(adapted, enforcedFindings));
 
-    // B) Issue Cards (scannable, action-oriented)
+    // B) Issue Cards (scannable, action-oriented) - LAYOUT FIX: Better visual hierarchy
     if (enforcedFindings.length > 0) {
+      sections.push('---');
+      sections.push('');
       sections.push('## 📋 Issues to Fix');
       sections.push('');
 
@@ -919,40 +966,59 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
         sections.push('');
         autoInvokedFindings.forEach((finding, idx) => {
           sections.push(renderDeveloperFriendlyIssueCard(finding, adapted, idx));
+          sections.push('');
         });
       }
 
       // Render policy pack findings
       if (policyPackFindings.length > 0) {
         if (autoInvokedFindings.length > 0) {
-          sections.push('### 📜 Policy Requirements');
-          sections.push('');
-          sections.push('*These checks enforce repository governance policies.*');
+          sections.push('---');
           sections.push('');
         }
+        sections.push('### 📜 Policy Requirements');
+        sections.push('');
+        sections.push('*These checks enforce repository governance policies.*');
+        sections.push('');
         policyPackFindings.forEach((finding, idx) => {
           sections.push(renderDeveloperFriendlyIssueCard(finding, adapted, autoInvokedFindings.length + idx));
+          sections.push('');
         });
       }
     }
 
-    // C) Not-Evaluable Issues (if any)
+    // C) Not-Evaluable Issues (if any) - P0 FIX: Use correct field names + LAYOUT FIX
     if (adapted.notEvaluable && adapted.notEvaluable.length > 0) {
+      sections.push('---');
+      sections.push('');
       sections.push('## ⚠️ Checks That Couldn\'t Run');
       sections.push('');
-      sections.push('These checks couldn\'t be evaluated due to configuration or integration issues:');
+      sections.push('*These checks couldn\'t be evaluated due to configuration or integration issues.*');
       sections.push('');
       adapted.notEvaluable.forEach((item, idx) => {
-        sections.push(`${idx + 1}. **${item.what}**`);
-        sections.push(`   - Reason: ${item.reason}`);
-        if (item.remediation) {
-          sections.push(`   - Fix: ${item.remediation}`);
+        sections.push(`### ${idx + 1}. ${item.description}`);
+        sections.push('');
+        sections.push(`**Reason:** ${item.message}`);
+        sections.push('');
+        sections.push(`**Impact:** ${item.confidenceImpact.toUpperCase()} confidence impact`);
+        sections.push('');
+        if (item.remediation && item.remediation.steps && item.remediation.steps.length > 0) {
+          sections.push(`**How to fix:**`);
+          item.remediation.steps.forEach((step, stepIdx) => {
+            sections.push(`${stepIdx + 1}. ${step}`);
+          });
+          sections.push('');
+        }
+        if (idx < adapted.notEvaluable.length - 1) {
+          sections.push('---');
         }
         sections.push('');
       });
     }
 
-    // D) Advanced Details (collapsed - all the v3.0 governance output)
+    // D) Advanced Details (collapsed - all the v3.0 governance output) - LAYOUT FIX
+    sections.push('---');
+    sections.push('');
     sections.push('<details>');
     sections.push('<summary><b>📊 Advanced Details</b> (for auditors and power users)</summary>');
     sections.push('');
