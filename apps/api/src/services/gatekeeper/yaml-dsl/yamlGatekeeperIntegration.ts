@@ -113,6 +113,7 @@ export async function runYAMLGatekeeper(
       github: {
         rest: {
           pulls: {
+            get: budgetedGitHub.rest.pulls.get.bind(budgetedGitHub.rest.pulls),
             listReviews: budgetedGitHub.rest.pulls.listReviews.bind(budgetedGitHub.rest.pulls),
             listFiles: budgetedGitHub.rest.pulls.listFiles.bind(budgetedGitHub.rest.pulls),
           },

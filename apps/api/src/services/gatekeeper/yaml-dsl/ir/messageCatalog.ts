@@ -143,10 +143,22 @@ export const MESSAGE_CATALOG: MessageCatalog = {
     description: 'No secrets found in the diff',
   },
 
+  'pass.safety.no_secrets': {
+    id: 'pass.safety.no_secrets',
+    template: 'No secrets detected in diff',
+    description: 'No secrets found in the diff (safety check)',
+  },
+
   'pass.checkruns.all_passed': {
     id: 'pass.checkruns.all_passed',
     template: 'All required check runs passed',
     description: 'All check runs passed',
+  },
+
+  'pass.evidence.checkruns_passed': {
+    id: 'pass.evidence.checkruns_passed',
+    template: 'All required check runs passed',
+    description: 'All check runs passed (evidence check)',
   },
 
   'pass.pr_template.field_present': {
@@ -797,6 +809,22 @@ export const SecretMessages = {
 
   noneDetected: () =>
     formatMessage('pass.secrets.none_detected'),
+};
+
+/**
+ * Format safety-related messages
+ */
+export const SafetyMessages = {
+  noSecrets: () =>
+    formatMessage('pass.safety.no_secrets'),
+};
+
+/**
+ * Format evidence-related messages
+ */
+export const EvidenceMessages = {
+  checkrunsPassed: () =>
+    formatMessage('pass.evidence.checkruns_passed'),
 };
 
 /**

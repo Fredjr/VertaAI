@@ -92,6 +92,7 @@ export interface PRContext {
   github: {
     rest: {
       pulls: {
+        get(params: { owner: string; repo: string; pull_number: number }): Promise<{ data: any }>;
         listReviews(params: { owner: string; repo: string; pull_number: number }): Promise<{ data: any[] }>;
         listFiles(params: { owner: string; repo: string; pull_number: number }): Promise<{ data: any[] }>;
       };
