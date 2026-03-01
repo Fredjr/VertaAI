@@ -230,7 +230,7 @@ evaluation:
   budgets:
     maxTotalMs: 60000
     perComparatorTimeoutMs: 15000
-    maxGitHubApiCalls: 30
+    maxGitHubApiCalls: 500  # Increased from 30 to 500 to handle OpenAPI comparator
   maxFindings: 30
   maxEvidenceSnippetsPerFinding: 3
 
