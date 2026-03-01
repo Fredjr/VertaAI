@@ -32,7 +32,8 @@ import type {
   DetectedSurface,
   EvaluatedObligation,
   EvidenceItem,
-  EvaluatedInvariant
+  EvaluatedInvariant,
+  ArtifactGraph  // 11.1: Cross-artifact integrity graph
 } from './types.js';
 import { ChangeSurfaceId } from './types.js';
 
@@ -385,7 +386,8 @@ export class PackEvaluator {
       decision,
       evaluationTimeMs,
       engineFingerprint,
-      coverage
+      coverage,
+      artifactGraph  // 11.1: Pass artifact graph
     );
 
     return {
@@ -1345,7 +1347,8 @@ function buildPackEvaluationGraph(
   decision: 'pass' | 'warn' | 'block',
   evaluationTimeMs: number,
   engineFingerprint: EngineFingerprint,
-  coverage: { evaluable: number; total: number; notEvaluable: number }
+  coverage: { evaluable: number; total: number; notEvaluable: number },
+  artifactGraph?: ArtifactGraph  // 11.1: Cross-artifact integrity graph
 ): PackEvaluationGraph {
   // Global inputs
   const inputs = {
