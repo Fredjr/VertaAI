@@ -1126,13 +1126,20 @@ function extractEvidence(findings: Finding[]): EvidenceItem[] {
 
 /**
  * Convert comparator evidence to EvidenceItem format
+ * P0 FIX: Handle file_reference type from cross-artifact comparators
  */
 function convertToEvidenceItem(ev: any): EvidenceItem {
-  if (ev.type === 'file') {
+  if (ev.type === 'file' || ev.type === 'file_reference') {
+    // P0 FIX: Extract path from file_reference evidence objects
+    // Cross-artifact comparators create evidence with { type, path, snippet, confidence }
     return {
       type: 'file',
-      value: ev.value || ev.path || '',
-      context: { path: ev.path || ev.value },
+      value: ev.path || ev.value || '',
+      context: {
+        path: ev.path || ev.value,
+        snippet: ev.snippet,
+      },
+      confidence: ev.confidence,
       source: 'local',
     };
   } else if (ev.type === 'approval') {

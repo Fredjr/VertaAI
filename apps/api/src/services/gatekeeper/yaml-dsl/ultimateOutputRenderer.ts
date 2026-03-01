@@ -197,7 +197,15 @@ function renderDeveloperFriendlyIssueCard(
     }
     lines.push(`**File:** \`${filePath}\``);
   } else if (finding.evidence.length > 0) {
-    lines.push(`**Location:** ${finding.evidence[0].value}`);
+    // P0 FIX: Parse first evidence item properly
+    let displayValue = 'unknown location';
+    if (typeof finding.evidence[0].value === 'string') {
+      displayValue = finding.evidence[0].value;
+    } else if (typeof finding.evidence[0].value === 'object' && finding.evidence[0].value !== null) {
+      const evObj = finding.evidence[0].value as any;
+      displayValue = evObj.path || evObj.file || evObj.snippet || 'unknown location';
+    }
+    lines.push(`**Location:** \`${displayValue}\``);
   }
   lines.push('');
 
@@ -245,8 +253,6 @@ function renderDeveloperFriendlyIssueCard(
   lines.push(`- **Evidence:** ${finding.evidence.length} item(s)`);
   lines.push('');
   lines.push('</details>');
-  lines.push('');
-  lines.push('---');
   lines.push('');
 
   return lines.join('\n');
@@ -773,8 +779,6 @@ function renderQuickSummary(normalized: NormalizedEvaluationResult, enforcedFind
     lines.push('⚠️ **Review required** - Fix these issues before merging');
   }
   lines.push('');
-  lines.push('---');
-  lines.push('');
 
   return lines.join('\n');
 }
@@ -940,9 +944,8 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
     // A) Quick Summary (always visible)
     sections.push(renderQuickSummary(adapted, enforcedFindings));
 
-    // B) Issue Cards (scannable, action-oriented) - LAYOUT FIX: Better visual hierarchy
+    // B) Issue Cards (scannable, action-oriented)
     if (enforcedFindings.length > 0) {
-      sections.push('---');
       sections.push('');
       sections.push('## 📋 Issues to Fix');
       sections.push('');
@@ -973,7 +976,6 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
       // Render policy pack findings
       if (policyPackFindings.length > 0) {
         if (autoInvokedFindings.length > 0) {
-          sections.push('---');
           sections.push('');
         }
         sections.push('### 📜 Policy Requirements');
@@ -987,9 +989,8 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
       }
     }
 
-    // C) Not-Evaluable Issues (if any) - P0 FIX: Use correct field names + LAYOUT FIX
+    // C) Not-Evaluable Issues (if any) - P0 FIX: Use correct field names
     if (adapted.notEvaluable && adapted.notEvaluable.length > 0) {
-      sections.push('---');
       sections.push('');
       sections.push('## ⚠️ Checks That Couldn\'t Run');
       sections.push('');
@@ -1009,15 +1010,11 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
           });
           sections.push('');
         }
-        if (idx < adapted.notEvaluable.length - 1) {
-          sections.push('---');
-        }
         sections.push('');
       });
     }
 
-    // D) Advanced Details (collapsed - all the v3.0 governance output) - LAYOUT FIX
-    sections.push('---');
+    // D) Advanced Details (collapsed - all the v3.0 governance output)
     sections.push('');
     sections.push('<details>');
     sections.push('<summary><b>📊 Advanced Details</b> (for auditors and power users)</summary>');
@@ -1055,7 +1052,7 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
     // Metadata (collapsed)
     sections.push(renderMetadata(adapted));
 
-    return sections.join('\n\n---\n\n');
+    return sections.join('\n');
   } catch (error) {
     console.error('CRITICAL ERROR in renderUltimateOutput:', error);
     // Return minimal fallback output to prevent complete failure
