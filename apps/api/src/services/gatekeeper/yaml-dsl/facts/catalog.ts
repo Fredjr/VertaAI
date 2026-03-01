@@ -493,39 +493,40 @@ function findOpenApiFiles(context: PRContext): string[] {
 
 /**
  * Helper function to fetch file content from GitHub
+ * CRITICAL FIX: Throw error instead of returning null so caller can handle it
  */
 async function fetchFileContent(
   context: PRContext,
   path: string,
   ref: 'base' | 'head'
-): Promise<string | null> {
-  try {
-    const sha = ref === 'base' ? context.baseBranch : context.headSha;
-    const response = await context.github.rest.repos.getContent({
-      owner: context.owner,
-      repo: context.repo,
-      path,
-      ref: sha,
-    });
+): Promise<string> {
+  const sha = ref === 'base' ? context.baseBranch : context.headSha;
+  const response = await context.github.rest.repos.getContent({
+    owner: context.owner,
+    repo: context.repo,
+    path,
+    ref: sha,
+  });
 
-    // Decode base64 content
-    if ('content' in response.data && response.data.content) {
-      return Buffer.from(response.data.content, 'base64').toString('utf-8');
-    }
-    return null;
-  } catch (error) {
-    console.error(`[OpenAPIFacts] Failed to fetch ${path} at ${ref}:`, error);
-    return null;
+  // Decode base64 content
+  if ('content' in response.data && response.data.content) {
+    return Buffer.from(response.data.content, 'base64').toString('utf-8');
   }
+
+  throw new Error(`File ${path} has no content at ${ref}`);
 }
 
 /**
  * Helper function to get OpenAPI diff data (cached in context)
+ * CRITICAL FIX: Properly handle errors and cache failures
  */
 async function getOpenApiDiffData(context: PRContext): Promise<any> {
-  // Check if already cached
-  if (context.cache && (context.cache as any).openApiDiff) {
+  // Check if already cached (including cached errors)
+  if (context.cache && (context.cache as any).openApiDiff !== undefined) {
     return (context.cache as any).openApiDiff;
+  }
+  if (context.cache && (context.cache as any).openApiDiffError) {
+    return null; // Return null if we previously failed
   }
 
   // Find OpenAPI files
@@ -534,26 +535,37 @@ async function getOpenApiDiffData(context: PRContext): Promise<any> {
     return null;
   }
 
-  // For now, analyze the first OpenAPI file found
-  const file = openapiFiles[0];
+  try {
+    // For now, analyze the first OpenAPI file found
+    const file = openapiFiles[0];
 
-  // Import OpenAPI parser (dynamic import to avoid circular dependencies)
-  const { diffOpenApiSpecs } = await import('../../../signals/openApiParser.js');
+    // Import OpenAPI parser (dynamic import to avoid circular dependencies)
+    const { diffOpenApiSpecs } = await import('../../../signals/openApiParser.js');
 
-  // Fetch old and new content
-  const oldContent = await fetchFileContent(context, file, 'base');
-  const newContent = await fetchFileContent(context, file, 'head');
+    // Fetch old and new content
+    const oldContent = await fetchFileContent(context, file, 'base');
+    const newContent = await fetchFileContent(context, file, 'head');
 
-  // Compute diff
-  const diff = diffOpenApiSpecs(oldContent, newContent);
+    // Compute diff
+    const diff = diffOpenApiSpecs(oldContent, newContent);
 
-  // Cache the result
-  if (!context.cache) {
-    (context as any).cache = {};
+    // Cache the result
+    if (!context.cache) {
+      (context as any).cache = {};
+    }
+    (context.cache as any).openApiDiff = diff;
+
+    return diff;
+  } catch (error: any) {
+    // Cache the error so we don't retry
+    if (!context.cache) {
+      (context as any).cache = {};
+    }
+    (context.cache as any).openApiDiffError = error.message;
+
+    console.error(`[OpenAPIFacts] Failed to get OpenAPI diff:`, error);
+    return null;
   }
-  (context.cache as any).openApiDiff = diff;
-
-  return diff;
 }
 
 registerFact({

@@ -86,7 +86,7 @@ export async function runYAMLGatekeeper(
     const budgets = {
       maxTotalMs: selectedPack.pack.evaluation?.budgets?.maxTotalMs || 30000,
       perComparatorTimeoutMs: selectedPack.pack.evaluation?.budgets?.perComparatorTimeoutMs || 5000,
-      maxGitHubApiCalls: selectedPack.pack.evaluation?.budgets?.maxGitHubApiCalls || 50,
+      maxGitHubApiCalls: selectedPack.pack.evaluation?.budgets?.maxGitHubApiCalls || 100, // Increased from 50 to 100
       currentApiCalls: 0,
       startTime: Date.now(),
     };
