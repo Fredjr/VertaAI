@@ -1,32 +1,355 @@
 /**
- * Ultimate Track A Output Renderer (v3.0 - Elite Governance Layer Output)
+ * Ultimate Track A Output Renderer (v4.0 - Developer-Friendly Output)
  *
- * Renders the canonical NormalizedEvaluationResult into "Top-Tier Decision-Grade" format:
+ * Renders the canonical NormalizedEvaluationResult into "Developer-First" format:
  *
- * ELITE UPGRADES (v3.0):
- * - Context-aware "why it matters" (repo-type + obligation-type specific)
- * - Patch previews (copy-pasteable, correct-by-construction templates)
- * - Fixed risk score color coding (0-30 green, 31-60 yellow, 61-100 red)
- * - Deduplicated remediation (consolidated in Findings only)
- * - Concise-first rendering (executive card + collapsible details)
- * - Drift framing (Repo Invariant vs Diff-Derived Expectation)
- * - Contract graph reasoning (artifact relationships + control objectives)
- * - Strict terminology (applicable vs evaluated vs suppressed)
+ * DEVELOPER-FRIENDLY UPGRADES (v4.0):
+ * - Concise top-level summary (issue count, quick actions, impact, time to fix)
+ * - Scannable issue cards (What/File/Impact/Risk/Fix/Why structure)
+ * - Copy-paste fix templates (executable commands for each issue type)
+ * - Progressive disclosure (technical details collapsed by default)
+ * - Human-friendly language ("Schema drift" not "SCHEMA_MIGRATION_PARITY violation")
+ * - Action-oriented format (developers see what to do, not what failed)
  *
- * STRUCTURE:
- * A) Executive Summary - Tight decision card + confidence
- * B) Policy Activation - Signals + overlays + suppressed obligations
- * C) Change Surface Summary - What changed + what contracts triggered
- * D) Required Contracts & Obligations - Status per surface
- * E) Next Best Actions - Prioritized, actionable steps
- * F) Findings - Ranked by risk with context-aware guidance
- * G) Policy Provenance - Auditability (collapsed)
- * H) Evidence Trace - Transparency (collapsed)
+ * STRUCTURE (NEW):
+ * A) Quick Summary - Issue count, actions, impact, time estimate (always visible)
+ * B) Issue Cards - Self-contained cards with What/File/Impact/Risk/Fix/Why (scannable)
+ * C) Advanced Details - All technical details collapsed (for auditors/power users)
+ *
+ * LEGACY STRUCTURE (v3.0 - now in collapsed section):
+ * - Executive Summary - Tight decision card + confidence
+ * - Policy Activation - Signals + overlays + suppressed obligations
+ * - Change Surface Summary - What changed + what contracts triggered
+ * - Required Contracts & Obligations - Status per surface
+ * - Next Best Actions - Prioritized, actionable steps
+ * - Findings - Ranked by risk with context-aware guidance
+ * - Policy Provenance - Auditability (collapsed)
+ * - Evidence Trace - Transparency (collapsed)
  */
 
 import type { NormalizedEvaluationResult, NormalizedFinding, NotEvaluableItem, NormalizedObligation } from './types.js';
 import { adaptNormalizedFromIR } from './ir/irAdapter.js';
 import { validateSemantics, type SemanticValidationOptions } from './ir/semanticValidator.js';
+
+/**
+ * ============================================================================
+ * DEVELOPER-FRIENDLY RENDERING FUNCTIONS (v4.0)
+ * ============================================================================
+ */
+
+/**
+ * Generate copy-paste fix template for a specific issue type
+ */
+function generateFixTemplate(finding: NormalizedFinding, obligation: NormalizedObligation | undefined): string {
+  const desc = obligation?.description.toLowerCase() || finding.what.toLowerCase();
+  const lines: string[] = [];
+
+  // CODEOWNERS fix
+  if (desc.includes('codeowners')) {
+    lines.push('```bash');
+    lines.push('# Create CODEOWNERS file');
+    lines.push('cat > .github/CODEOWNERS << \'EOF\'');
+    lines.push('# Default owners for everything');
+    lines.push('* @your-team-name');
+    lines.push('');
+    lines.push('# Specific paths (customize as needed)');
+    lines.push('# /src/api/ @backend-team');
+    lines.push('# /prisma/ @database-team');
+    lines.push('EOF');
+    lines.push('');
+    lines.push('git add .github/CODEOWNERS');
+    lines.push('git commit -m "Add CODEOWNERS for review routing"');
+    lines.push('```');
+    return lines.join('\n');
+  }
+
+  // Schema migration parity fix
+  if (desc.includes('schema') && desc.includes('migration')) {
+    const schemaFile = finding.evidence.find(e => e.type === 'file_reference' && e.value.includes('schema'))?.value || 'schema.prisma';
+    lines.push('```bash');
+    lines.push('# Generate migration for your schema changes');
+    lines.push('npx prisma migrate dev --name add_schema_changes');
+    lines.push('git add prisma/migrations/');
+    lines.push('git commit -m "Add migration for schema changes"');
+    lines.push('```');
+    return lines.join('\n');
+  }
+
+  // Service catalog/owner fix
+  if (desc.includes('service owner') || desc.includes('service catalog') || desc.includes('catalog')) {
+    lines.push('```bash');
+    lines.push('# Create service catalog entry');
+    lines.push('cat > catalog-info.yaml << \'EOF\'');
+    lines.push('apiVersion: backstage.io/v1alpha1');
+    lines.push('kind: Component');
+    lines.push('metadata:');
+    lines.push('  name: your-service-name');
+    lines.push('  description: Your service description');
+    lines.push('spec:');
+    lines.push('  type: service');
+    lines.push('  owner: your-team-name');
+    lines.push('  lifecycle: production');
+    lines.push('EOF');
+    lines.push('');
+    lines.push('git add catalog-info.yaml');
+    lines.push('git commit -m "Add service catalog entry"');
+    lines.push('```');
+    return lines.join('\n');
+  }
+
+  // Runbook fix
+  if (desc.includes('runbook')) {
+    lines.push('```bash');
+    lines.push('# Create runbook');
+    lines.push('cat > RUNBOOK.md << \'EOF\'');
+    lines.push('# Service Runbook');
+    lines.push('');
+    lines.push('## Service Overview');
+    lines.push('[Brief description of what this service does]');
+    lines.push('');
+    lines.push('## Common Issues');
+    lines.push('### Issue 1: [Description]');
+    lines.push('**Symptoms:** [What you see]');
+    lines.push('**Resolution:** [How to fix]');
+    lines.push('');
+    lines.push('## Escalation');
+    lines.push('- Primary: @team-name');
+    lines.push('- Secondary: @backup-team');
+    lines.push('EOF');
+    lines.push('');
+    lines.push('git add RUNBOOK.md');
+    lines.push('git commit -m "Add service runbook"');
+    lines.push('```');
+    return lines.join('\n');
+  }
+
+  // OpenAPI code parity fix
+  if (desc.includes('openapi') && desc.includes('code')) {
+    lines.push('```bash');
+    lines.push('# Sync OpenAPI spec with code implementation');
+    lines.push('# Option 1: Update spec to match code');
+    lines.push('# - Review the new endpoints/methods in your code');
+    lines.push('# - Add corresponding paths to openapi.yaml');
+    lines.push('');
+    lines.push('# Option 2: Implement missing endpoints from spec');
+    lines.push('# - Review openapi.yaml for documented endpoints');
+    lines.push('# - Implement missing routes in your code');
+    lines.push('```');
+    return lines.join('\n');
+  }
+
+  // Test implementation parity fix
+  if (desc.includes('test') && desc.includes('implementation')) {
+    lines.push('```bash');
+    lines.push('# Add tests for new code');
+    lines.push('# Create test file matching your implementation');
+    lines.push('# Example: src/userService.ts → src/userService.test.ts');
+    lines.push('');
+    lines.push('# Run tests to verify');
+    lines.push('npm test');
+    lines.push('```');
+    return lines.join('\n');
+  }
+
+  // Generic fix template
+  lines.push('```bash');
+  lines.push('# Review the issue details above');
+  lines.push('# Make necessary changes to resolve the violation');
+  lines.push('git add <files>');
+  lines.push('git commit -m "Fix: <description>"');
+  lines.push('```');
+  return lines.join('\n');
+}
+
+/**
+ * Render a single issue card in developer-friendly format
+ */
+function renderDeveloperFriendlyIssueCard(
+  finding: NormalizedFinding,
+  normalized: NormalizedEvaluationResult,
+  index: number
+): string {
+  const lines: string[] = [];
+  const obligation = normalized.obligations.find(o => o.id === finding.obligationId);
+  const repoType = normalized.metadata?.repoClassification?.repoType || 'unknown';
+
+  // Card header with severity emoji
+  const severityEmoji = finding.severity === 'critical' ? '🔴' :
+                        finding.severity === 'high' ? '🟠' :
+                        finding.severity === 'medium' ? '🟡' : '🔵';
+
+  lines.push(`### ${severityEmoji} Issue ${index + 1}: ${getHumanFriendlyTitle(finding, obligation)}`);
+  lines.push('');
+
+  // What (plain English)
+  lines.push(`**What:** ${getHumanFriendlyDescription(finding, obligation)}`);
+  lines.push('');
+
+  // File/Location
+  const fileEvidence = finding.evidence.find(e => e.type === 'file_reference' || e.type === 'file');
+  if (fileEvidence) {
+    lines.push(`**File:** \`${fileEvidence.value}\``);
+  } else if (finding.evidence.length > 0) {
+    lines.push(`**Location:** ${finding.evidence[0].value}`);
+  }
+  lines.push('');
+
+  // Impact (business/operational consequence)
+  const impact = getBusinessImpact(finding, obligation, repoType);
+  lines.push(`**Impact:** ${impact}`);
+  lines.push('');
+
+  // Risk (severity in human terms)
+  const riskLevel = finding.riskScore
+    ? finding.riskScore.score >= 61 ? 'High' :
+      finding.riskScore.score >= 31 ? 'Medium' : 'Low'
+    : finding.severity === 'critical' || finding.severity === 'high' ? 'High' :
+      finding.severity === 'medium' ? 'Medium' : 'Low';
+  lines.push(`**Risk:** ${riskLevel} - ${getRiskExplanation(finding, obligation)}`);
+  lines.push('');
+
+  // Fix this (copy-paste solution)
+  lines.push(`**Fix this:**`);
+  lines.push('');
+  lines.push(generateFixTemplate(finding, obligation));
+  lines.push('');
+
+  // Why this matters (context)
+  const why = obligation
+    ? buildContextAwareWhyItMatters(finding, repoType, obligation.description)
+    : finding.why || 'This issue may impact system reliability, security, or compliance.';
+  lines.push(`**Why this matters:** ${why}`);
+  lines.push('');
+
+  // Technical details (collapsed)
+  lines.push('<details>');
+  lines.push('<summary>🔍 Technical details</summary>');
+  lines.push('');
+  lines.push(`- **Check:** ${obligation?.sourceRule.ruleName || finding.what}`);
+  if (finding.result.code) {
+    lines.push(`- **Code:** ${finding.result.code}`);
+  }
+  if (finding.riskScore) {
+    lines.push(`- **Risk Score:** ${finding.riskScore.score}/100`);
+  }
+  if (obligation) {
+    lines.push(`- **Rule ID:** ${obligation.sourceRule.ruleId}`);
+  }
+  lines.push(`- **Evidence:** ${finding.evidence.length} item(s)`);
+  lines.push('');
+  lines.push('</details>');
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Get human-friendly title for an issue
+ */
+function getHumanFriendlyTitle(finding: NormalizedFinding, obligation: NormalizedObligation | undefined): string {
+  const desc = obligation?.description.toLowerCase() || finding.what.toLowerCase();
+
+  if (desc.includes('codeowners')) return 'Missing CODEOWNERS File';
+  if (desc.includes('schema') && desc.includes('migration')) return 'Schema Drift Detected';
+  if (desc.includes('service owner') || desc.includes('service catalog')) return 'Service Owner Not Declared';
+  if (desc.includes('runbook')) return 'Missing Runbook';
+  if (desc.includes('openapi') && desc.includes('code')) return 'API Spec Doesn\'t Match Code';
+  if (desc.includes('test') && desc.includes('implementation')) return 'Missing Tests for New Code';
+  if (desc.includes('secret')) return 'Potential Secrets in Code';
+
+  // Fallback to finding.what
+  return finding.what;
+}
+
+/**
+ * Get human-friendly description
+ */
+function getHumanFriendlyDescription(finding: NormalizedFinding, obligation: NormalizedObligation | undefined): string {
+  const desc = obligation?.description.toLowerCase() || finding.what.toLowerCase();
+
+  if (desc.includes('codeowners')) {
+    return 'No CODEOWNERS file found in repository - PRs won\'t auto-request reviews from the right team';
+  }
+  if (desc.includes('schema') && desc.includes('migration')) {
+    const schemaFile = finding.evidence.find(e => e.value.includes('schema'))?.value || 'schema file';
+    return `Database schema changed (${schemaFile}) but no migration file was added`;
+  }
+  if (desc.includes('service owner') || desc.includes('service catalog')) {
+    return 'No service catalog entry found - incident routing won\'t know who to page';
+  }
+  if (desc.includes('runbook')) {
+    return 'No runbook documentation found - on-call engineers won\'t know how to respond to incidents';
+  }
+  if (desc.includes('openapi') && desc.includes('code')) {
+    return 'OpenAPI specification doesn\'t match the actual code implementation';
+  }
+  if (desc.includes('test') && desc.includes('implementation')) {
+    return 'New code added without corresponding tests';
+  }
+
+  return finding.result.reason || finding.what;
+}
+
+/**
+ * Get business impact explanation
+ */
+function getBusinessImpact(finding: NormalizedFinding, obligation: NormalizedObligation | undefined, repoType: string): string {
+  const desc = obligation?.description.toLowerCase() || finding.what.toLowerCase();
+
+  if (desc.includes('codeowners')) {
+    return 'Reviews may not reach the right team, increasing risk of changes merging without proper approval';
+  }
+  if (desc.includes('schema') && desc.includes('migration')) {
+    return 'Production deployments will fail when schema doesn\'t match migrations, potentially causing downtime';
+  }
+  if (desc.includes('service owner') || desc.includes('service catalog')) {
+    return 'Incident routing will fail, delaying response during outages';
+  }
+  if (desc.includes('runbook')) {
+    return 'Increased MTTR during incidents, potential for cascading failures';
+  }
+  if (desc.includes('openapi') && desc.includes('code')) {
+    return 'API consumers will experience integration failures, documentation will be incorrect';
+  }
+  if (desc.includes('test') && desc.includes('implementation')) {
+    return 'Increased risk of bugs reaching production, harder to maintain code quality';
+  }
+
+  return 'May impact system reliability, security, or compliance';
+}
+
+/**
+ * Get risk explanation in human terms
+ */
+function getRiskExplanation(finding: NormalizedFinding, obligation: NormalizedObligation | undefined): string {
+  const desc = obligation?.description.toLowerCase() || finding.what.toLowerCase();
+
+  if (desc.includes('schema') && desc.includes('migration')) {
+    return 'Could cause downtime during deployment';
+  }
+  if (desc.includes('codeowners')) {
+    return 'Changes may merge without proper review';
+  }
+  if (desc.includes('service owner') || desc.includes('service catalog')) {
+    return 'Delays during incidents';
+  }
+  if (desc.includes('runbook')) {
+    return 'Longer incident resolution time';
+  }
+  if (desc.includes('secret')) {
+    return 'Security vulnerability - credentials may be exposed';
+  }
+
+  return 'May impact operations or compliance';
+}
+
+/**
+ * ============================================================================
+ * LEGACY HELPER FUNCTIONS (v3.0 - still used in collapsed sections)
+ * ============================================================================
+ */
 
 /**
  * ELITE HELPER: Build context-aware "why it matters" based on repo type + obligation type
@@ -353,7 +676,161 @@ function splitObligationsByApplicability(obligations: NormalizedObligation[]): {
 }
 
 /**
+ * V4.0: Render quick summary (top-level, always visible)
+ */
+function renderQuickSummary(normalized: NormalizedEvaluationResult, enforcedFindings: NormalizedFinding[]): string {
+  const lines: string[] = [];
+  const issueCount = enforcedFindings.length;
+  const decision = normalized.decision;
+
+  // Header with decision
+  const decisionEmoji = decision.outcome === 'pass' ? '✅' : decision.outcome === 'warn' ? '⚠️' : '🚫';
+
+  if (issueCount === 0) {
+    lines.push(`## ${decisionEmoji} All Checks Passed!`);
+    lines.push('');
+    lines.push('No issues found. This PR meets all governance requirements.');
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  lines.push(`## ${decisionEmoji} ${issueCount} Issue${issueCount > 1 ? 's' : ''} Found`);
+  lines.push('');
+
+  // Quick action list (top 3 issues)
+  lines.push('**🚨 Action Required:**');
+  const topIssues = enforcedFindings.slice(0, 3);
+  topIssues.forEach((finding, idx) => {
+    const obligation = normalized.obligations.find(o => o.id === finding.obligationId);
+    const title = getHumanFriendlyTitle(finding, obligation);
+    const shortDesc = getShortDescription(finding, obligation);
+    lines.push(`${idx + 1}. **${title}** - ${shortDesc}`);
+  });
+  if (issueCount > 3) {
+    lines.push(`*...and ${issueCount - 3} more issue${issueCount - 3 > 1 ? 's' : ''}*`);
+  }
+  lines.push('');
+
+  // Impact summary
+  const impact = getOverallImpact(enforcedFindings, normalized);
+  lines.push(`**Impact:** ${impact}`);
+  lines.push('');
+
+  // Time to fix estimate
+  const timeEstimate = estimateTimeToFix(enforcedFindings);
+  lines.push(`**Time to fix:** ~${timeEstimate}`);
+  lines.push('');
+
+  // Merge recommendation
+  if (decision.outcome === 'block') {
+    lines.push('🚫 **Do not merge** - Blocking issues must be resolved first');
+  } else if (decision.outcome === 'warn') {
+    lines.push('⚠️ **Review required** - Fix these issues before merging');
+  }
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Get short description for quick summary
+ */
+function getShortDescription(finding: NormalizedFinding, obligation: NormalizedObligation | undefined): string {
+  const desc = obligation?.description.toLowerCase() || finding.what.toLowerCase();
+
+  if (desc.includes('codeowners')) return 'No code ownership defined';
+  if (desc.includes('schema') && desc.includes('migration')) return 'Database schema changed without migration';
+  if (desc.includes('service owner') || desc.includes('service catalog')) return 'Service catalog entry needed';
+  if (desc.includes('runbook')) return 'Missing operational documentation';
+  if (desc.includes('openapi') && desc.includes('code')) return 'API spec doesn\'t match code';
+  if (desc.includes('test') && desc.includes('implementation')) return 'New code missing tests';
+  if (desc.includes('secret')) return 'Potential secrets detected';
+
+  return finding.result.reason || 'Policy violation detected';
+}
+
+/**
+ * Get overall impact summary
+ */
+function getOverallImpact(findings: NormalizedFinding[], normalized: NormalizedEvaluationResult): string {
+  const impacts: string[] = [];
+
+  findings.forEach(finding => {
+    const obligation = normalized.obligations.find(o => o.id === finding.obligationId);
+    const desc = obligation?.description.toLowerCase() || finding.what.toLowerCase();
+
+    if (desc.includes('codeowners') && !impacts.includes('review routing')) {
+      impacts.push('review routing');
+    }
+    if (desc.includes('schema') && desc.includes('migration') && !impacts.includes('deployment failures')) {
+      impacts.push('deployment failures');
+    }
+    if (desc.includes('service owner') && !impacts.includes('incident response')) {
+      impacts.push('incident response');
+    }
+    if (desc.includes('runbook') && !impacts.includes('operational readiness')) {
+      impacts.push('operational readiness');
+    }
+    if (desc.includes('secret') && !impacts.includes('security')) {
+      impacts.push('security');
+    }
+  });
+
+  if (impacts.length === 0) {
+    return 'May impact system reliability or compliance';
+  }
+
+  return impacts.join(', ');
+}
+
+/**
+ * Estimate time to fix all issues
+ */
+function estimateTimeToFix(findings: NormalizedFinding[]): string {
+  let totalMinutes = 0;
+
+  findings.forEach(finding => {
+    const desc = finding.what.toLowerCase();
+
+    // Simple file creation: 5 minutes
+    if (desc.includes('codeowners') || desc.includes('catalog')) {
+      totalMinutes += 5;
+    }
+    // Schema migration: 10 minutes
+    else if (desc.includes('schema') && desc.includes('migration')) {
+      totalMinutes += 10;
+    }
+    // Runbook: 15 minutes
+    else if (desc.includes('runbook')) {
+      totalMinutes += 15;
+    }
+    // Code changes: 20 minutes
+    else if (desc.includes('openapi') || desc.includes('test')) {
+      totalMinutes += 20;
+    }
+    // Default: 10 minutes
+    else {
+      totalMinutes += 10;
+    }
+  });
+
+  if (totalMinutes < 10) return '5 minutes';
+  if (totalMinutes < 20) return '10-15 minutes';
+  if (totalMinutes < 40) return '20-30 minutes';
+  if (totalMinutes < 60) return '30-45 minutes';
+  return '1 hour';
+}
+
+/**
  * Render normalized evaluation result as GitHub Check summary (markdown)
+ *
+ * Phase 4: Developer-Friendly Rendering (v4.0)
+ * - Concise summary + issue cards first
+ * - All technical details collapsed
+ * - Copy-paste fixes for each issue
+ * - Human-friendly language
  *
  * Phase 3: IR-Aware Rendering
  * - If IR is present, adapt it to the old format
@@ -404,74 +881,109 @@ export function renderUltimateOutput(normalized: NormalizedEvaluationResult): st
 
     const sections: string[] = [];
 
-    // FIX #3: Detect simple outcomes (1 enforced finding, artifact-missing baseline)
-    const { enforced } = splitObligationsByApplicability(adapted.obligations);
-    const enforcedFindings = adapted.findings.filter(f => f.decision !== 'pass');
-    const isSimpleOutcome = enforcedFindings.length === 1 &&
-                            enforcedFindings[0].result.code === 'ARTIFACT_MISSING';
+    // V4.0: DEVELOPER-FRIENDLY FORMAT
+    // Render concise summary + issue cards first, collapse all technical details
 
-    console.log('[UltimateRenderer] Simple outcome detection:', {
-      enforcedFindingsCount: enforcedFindings.length,
-      firstFindingCode: enforcedFindings[0]?.result?.code,
-      isSimpleOutcome
+    const enforcedFindings = adapted.findings.filter(f => f.decision !== 'pass');
+    const issueCount = enforcedFindings.length;
+
+    console.log('[UltimateRenderer] Rendering developer-friendly format (v4.0):', {
+      issueCount,
+      hasNotEvaluable: (adapted.notEvaluable?.length || 0) > 0
     });
 
-    // A) Executive Summary (always visible)
-    sections.push(renderExecutiveSummary(adapted));
+    // A) Quick Summary (always visible)
+    sections.push(renderQuickSummary(adapted, enforcedFindings));
 
-    // FIX #3: For simple outcomes, collapse "how we think" sections
-    if (isSimpleOutcome) {
-      // Show only: Findings + Evidence Trace (compact)
-      // Hide: Policy Activation, Change Surface, Required Contracts
+    // B) Issue Cards (scannable, action-oriented)
+    if (enforcedFindings.length > 0) {
+      sections.push('## 📋 Issues to Fix');
+      sections.push('');
 
-      // D) Findings (ranked by risk) - VISIBLE
-      if (adapted.findings && adapted.findings.length > 0) {
-        sections.push(renderFindings(adapted));
+      // Separate auto-invoked from policy pack findings
+      const autoInvokedFindings = enforcedFindings.filter(f => {
+        const obligation = adapted.obligations.find(o => o.id === f.obligationId);
+        return obligation?.sourceRule.ruleId.startsWith('auto-invoked-');
+      });
+
+      const policyPackFindings = enforcedFindings.filter(f => {
+        const obligation = adapted.obligations.find(o => o.id === f.obligationId);
+        return !obligation?.sourceRule.ruleId.startsWith('auto-invoked-');
+      });
+
+      // Render auto-invoked findings first (cross-artifact + safety)
+      if (autoInvokedFindings.length > 0) {
+        sections.push('### 🔍 Cross-Artifact & Safety Checks');
+        sections.push('');
+        sections.push('*These checks run automatically on every PR to detect drift and safety issues.*');
+        sections.push('');
+        autoInvokedFindings.forEach((finding, idx) => {
+          sections.push(renderDeveloperFriendlyIssueCard(finding, adapted, idx));
+        });
       }
 
-      // F) Next Best Actions - VISIBLE
-      sections.push(renderNextActions(adapted));
-
-      // Collapsed sections
-      sections.push('<details>');
-      sections.push('<summary><b>📊 Policy Evaluation Details</b> (click to expand)</summary>');
-      sections.push('');
-      sections.push(renderPolicyActivation(adapted));
-      sections.push('');
-      sections.push(renderChangeSurfaceSummary(adapted));
-      sections.push('');
-      sections.push(renderRequiredContracts(adapted));
-      sections.push('');
-      sections.push('</details>');
-    } else {
-      // Complex outcome: show all sections
-      // B) Policy Activation (CRITICAL - shows signals → overlays → obligations)
-      sections.push(renderPolicyActivation(adapted));
-
-      // C) Change Surface Summary (shows what changed in THIS PR)
-      sections.push(renderChangeSurfaceSummary(adapted));
-
-      // D) Required Contracts & Obligations
-      sections.push(renderRequiredContracts(adapted));
-
-      // F) Next Best Actions (moved up for visibility)
-      sections.push(renderNextActions(adapted));
-
-      // D) Findings (ranked by risk)
-      if (adapted.findings && adapted.findings.length > 0) {
-        sections.push(renderFindings(adapted));
+      // Render policy pack findings
+      if (policyPackFindings.length > 0) {
+        if (autoInvokedFindings.length > 0) {
+          sections.push('### 📜 Policy Requirements');
+          sections.push('');
+          sections.push('*These checks enforce repository governance policies.*');
+          sections.push('');
+        }
+        policyPackFindings.forEach((finding, idx) => {
+          sections.push(renderDeveloperFriendlyIssueCard(finding, adapted, autoInvokedFindings.length + idx));
+        });
       }
     }
 
-    // E) Not-Evaluable Section (separate)
+    // C) Not-Evaluable Issues (if any)
+    if (adapted.notEvaluable && adapted.notEvaluable.length > 0) {
+      sections.push('## ⚠️ Checks That Couldn\'t Run');
+      sections.push('');
+      sections.push('These checks couldn\'t be evaluated due to configuration or integration issues:');
+      sections.push('');
+      adapted.notEvaluable.forEach((item, idx) => {
+        sections.push(`${idx + 1}. **${item.what}**`);
+        sections.push(`   - Reason: ${item.reason}`);
+        if (item.remediation) {
+          sections.push(`   - Fix: ${item.remediation}`);
+        }
+        sections.push('');
+      });
+    }
+
+    // D) Advanced Details (collapsed - all the v3.0 governance output)
+    sections.push('<details>');
+    sections.push('<summary><b>📊 Advanced Details</b> (for auditors and power users)</summary>');
+    sections.push('');
+    sections.push('');
+
+    // Include all the detailed governance output
+    sections.push(renderExecutiveSummary(adapted));
+    sections.push('');
+    sections.push(renderPolicyActivation(adapted));
+    sections.push('');
+    sections.push(renderChangeSurfaceSummary(adapted));
+    sections.push('');
+    sections.push(renderRequiredContracts(adapted));
+    sections.push('');
+    sections.push(renderNextActions(adapted));
+    sections.push('');
+
+    // Legacy findings format (for comparison/audit)
+    if (adapted.findings && adapted.findings.length > 0) {
+      sections.push(renderFindings(adapted));
+      sections.push('');
+    }
+
+    // Not-evaluable (detailed version)
     if (adapted.notEvaluable && adapted.notEvaluable.length > 0) {
       sections.push(renderNotEvaluable(adapted));
+      sections.push('');
     }
 
-    // Policy Provenance (already collapsed in Elite v3.0)
     sections.push(renderPolicyProvenance(adapted));
-
-    // Evidence Trace (already collapsed in Elite v3.0)
+    sections.push('');
     sections.push(renderEvidenceTrace(adapted));
 
     // Metadata (collapsed)

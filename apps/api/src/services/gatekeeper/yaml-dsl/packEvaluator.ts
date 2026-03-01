@@ -1445,6 +1445,12 @@ function buildPackEvaluationGraph(
     ? coverage.evaluable / coverage.total
     : 1.0;
 
+  // TRACK A TASK 2: Log evaluation graph summary
+  console.log(`[PackEvaluator] Evaluation graph summary: ${ruleGraphs.length} policy rules, ${autoInvokedRuleGraphs.length} auto-invoked rules`);
+  if (autoInvokedRuleGraphs.length > 0) {
+    console.log(`[PackEvaluator] Auto-invoked rule IDs:`, autoInvokedRuleGraphs.map(rg => rg.ruleId));
+  }
+
   return {
     packId: pack.metadata.id || 'unknown',
     packName: pack.metadata.name,
