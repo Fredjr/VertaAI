@@ -1856,18 +1856,30 @@ function renderFinding(finding: NormalizedFinding, normalized: NormalizedEvaluat
   lines.push(`**Why it matters:** ${contextAwareWhy}`);
   lines.push('');
 
-  // Evidence
+  // Evidence - P0 FIX: Parse evidence objects properly (same as v4.0 fix)
   if (finding.evidence.length > 0) {
     lines.push('**Evidence:**');
     finding.evidence.slice(0, 3).forEach(ev => {
-      if (ev.type === 'file') {
-        lines.push(`- 📄 \`${ev.value}\``);
-      } else if (ev.type === 'approval') {
-        lines.push(`- ✅ ${ev.value}`);
-      } else if (ev.type === 'checkrun') {
-        lines.push(`- 🔍 ${ev.value}`);
+      // Extract display value from evidence
+      let displayValue = '';
+      if (typeof ev.value === 'string') {
+        displayValue = ev.value;
+      } else if (typeof ev.value === 'object' && ev.value !== null) {
+        // Parse evidence object to extract meaningful fields
+        const evObj = ev.value as any;
+        displayValue = evObj.path || evObj.file || evObj.snippet || JSON.stringify(ev.value);
       } else {
-        lines.push(`- ${ev.value}`);
+        displayValue = String(ev.value);
+      }
+
+      if (ev.type === 'file' || ev.type === 'file_reference') {
+        lines.push(`- 📄 \`${displayValue}\``);
+      } else if (ev.type === 'approval') {
+        lines.push(`- ✅ ${displayValue}`);
+      } else if (ev.type === 'checkrun') {
+        lines.push(`- 🔍 ${displayValue}`);
+      } else {
+        lines.push(`- ${displayValue}`);
       }
     });
     if (finding.evidence.length > 3) {
