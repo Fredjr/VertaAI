@@ -117,10 +117,6 @@ async function detectDriftForService(
       affectedServices: {
         has: service,
       },
-      // Only consider merged PRs (not open PRs)
-      prNumber: {
-        not: null,
-      },
     },
     orderBy: {
       createdAt: 'desc',
@@ -132,8 +128,18 @@ async function detectDriftForService(
     return null;
   }
 
-  // Step 2: Extract declared capabilities
-  const declaredCapabilities: Capability[] = intentArtifact.declaredCapabilities as any || [];
+  // Step 2: Extract declared capabilities from requestedCapabilities (stored as string[] in DB)
+  // The DB stores requestedCapabilities as a string[] like ["db_read", "db_write", ...]
+  // We convert each string to a Capability-like object with wildcard target ('*')
+  // so that comparisons match any observed target for that capability type.
+  const rawRequested: any[] = (intentArtifact.requestedCapabilities as any) || [];
+  const declaredCapabilities: Capability[] = rawRequested.map((cap: any) => {
+    if (typeof cap === 'string') {
+      return { type: cap, target: '*' } as unknown as Capability;
+    }
+    // Already a Capability object (type + resource or target)
+    return { type: cap.type, target: cap.target ?? cap.resource ?? '*' } as unknown as Capability;
+  });
 
   if (declaredCapabilities.length === 0) {
     console.log(`[RuntimeDriftMonitor] No declared capabilities for service ${service}`);
@@ -191,7 +197,7 @@ function calculateDriftSeverity(drifts: any[]): 'critical' | 'high' | 'medium' |
 
   // Critical: Undeclared usage of critical capabilities
   const criticalDrifts = undeclaredUsage.filter(d =>
-    criticalCapabilities.includes(d.capability.type)
+    criticalCapabilities.includes(d.capabilityType)
   );
 
   if (criticalDrifts.length > 0) {
@@ -213,7 +219,7 @@ function calculateDriftSeverity(drifts: any[]): 'critical' | 'high' | 'medium' |
 }
 
 /**
- * Create DriftPlan for runtime drift
+ * Create DriftCluster for runtime drift
  */
 async function createDriftPlanForRuntimeDrift(
   workspaceId: string,
@@ -222,62 +228,63 @@ async function createDriftPlanForRuntimeDrift(
   drifts: any[]
 ): Promise<boolean> {
   try {
-    // Check if DriftPlan already exists for this service
-    const existingPlan = await prisma.driftPlan.findFirst({
+    // Check if a pending DriftCluster already exists for this service's runtime drift
+    const existingCluster = await prisma.driftCluster.findFirst({
       where: {
         workspaceId,
-        status: { in: ['pending', 'in_progress'] },
-        metadata: {
-          path: ['service'],
-          equals: service,
-        },
+        service,
+        driftType: 'runtime_capability_drift',
+        status: 'pending',
       },
     });
 
-    if (existingPlan) {
-      console.log(`[RuntimeDriftMonitor] DriftPlan already exists for service ${service}`);
+    if (existingCluster) {
+      console.log(`[RuntimeDriftMonitor] DriftCluster already exists for service ${service}`);
       return false;
     }
 
-    // Create new DriftPlan
     const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
     const unusedDeclarations = drifts.filter(d => d.driftType === 'unused_declaration');
+    const severity = calculateDriftSeverity(drifts);
 
-    const plan = await prisma.driftPlan.create({
+    const cluster = await prisma.driftCluster.create({
       data: {
         workspaceId,
+        service,
         driftType: 'runtime_capability_drift',
-        severity: calculateDriftSeverity(drifts),
+        fingerprintPattern: `runtime:${service}:capability_drift`,
         status: 'pending',
-        metadata: {
-          service,
+        driftCount: drifts.length,
+        clusterSummary: JSON.stringify({
           intentArtifactId: intentArtifact.id,
+          severity,
           driftsDetected: drifts.length,
           undeclaredUsage: undeclaredUsage.map(d => ({
-            capability: d.capability.type,
-            target: d.capability.target,
-            observationCount: d.observationCount,
+            capability: d.capabilityType,
+            target: d.capabilityTarget,
+            observationCount: d.evidence?.[0]?.metadata?.count ?? 1,
           })),
           unusedDeclarations: unusedDeclarations.map(d => ({
-            capability: d.capability.type,
-            target: d.capability.target,
+            capability: d.capabilityType,
+            target: d.capabilityTarget,
           })),
-        },
-        proposedChanges: {
-          type: 'update_intent_artifact',
-          description: `Update intent artifact to match runtime observations for service ${service}`,
-          changes: undeclaredUsage.map(d => ({
-            action: 'add_capability',
-            capability: d.capability,
-          })),
-        },
+          proposedChanges: {
+            type: 'update_intent_artifact',
+            description: `Update intent artifact to match runtime observations for service ${service}`,
+            changes: undeclaredUsage.map(d => ({
+              action: 'add_capability',
+              capability: { type: d.capabilityType, target: d.capabilityTarget },
+            })),
+          },
+        }),
+        driftIds: drifts.map((d, i) => `runtime-drift-${service}-${i}`),
       },
     });
 
-    console.log(`[RuntimeDriftMonitor] Created DriftPlan ${plan.id} for service ${service}`);
+    console.log(`[RuntimeDriftMonitor] Created DriftCluster ${cluster.id} for service ${service}`);
     return true;
   } catch (error: any) {
-    console.error(`[RuntimeDriftMonitor] Error creating DriftPlan:`, error.message);
+    console.error(`[RuntimeDriftMonitor] Error creating DriftCluster:`, error.message);
     return false;
   }
 }

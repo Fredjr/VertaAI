@@ -109,23 +109,48 @@ export async function detectCapabilityDrift(
   const usage = await getServiceCapabilityUsage(workspaceId, service, windowDays);
   const drifts: CapabilityDrift[] = [];
   
-  // Build declared capability map
-  const declaredMap = new Map<string, Capability>();
+  // Build declared capability map.
+  // Supports wildcard target '*' (e.g. requestedCapabilities string array converted to Capability-like objects).
+  // Key is `type:target`; a key of `type:*` acts as a type-level wildcard.
+  const declaredMap = new Map<string, { type: CapabilityType; target: string }>();
   for (const cap of declaredCapabilities) {
-    const key = `${cap.type}:${cap.target}`;
-    declaredMap.set(key, cap);
+    const capAny = cap as any;
+    const target: string = capAny.target ?? capAny.resource ?? '*';
+    const key = `${cap.type}:${target}`;
+    declaredMap.set(key, { type: cap.type, target });
   }
-  
+
   // Build observed capability map
   const observedMap = new Map<string, typeof usage.capabilities[0]>();
   for (const cap of usage.capabilities) {
     const key = `${cap.type}:${cap.target}`;
     observedMap.set(key, cap);
   }
-  
-  // Detect undeclared usage (observed but not declared)
-  for (const [key, observed] of observedMap) {
-    if (!declaredMap.has(key)) {
+
+  /**
+   * Helper: check whether an observed key is covered by a declared entry.
+   * - Exact match: `db_read:production.users` declared
+   * - Wildcard match: `db_read:*` declared (covers all targets for that type)
+   */
+  function isDeclared(observedType: CapabilityType, observedTarget: string): boolean {
+    if (declaredMap.has(`${observedType}:${observedTarget}`)) return true;
+    if (declaredMap.has(`${observedType}:*`)) return true;
+    return false;
+  }
+
+  /**
+   * Helper: check whether a declared entry has at least one matching observation.
+   * - Exact: look for `type:target` key in observedMap
+   * - Wildcard (`target === '*'`): look for any observed key starting with `type:`
+   */
+  function isObserved(declaredType: CapabilityType, declaredTarget: string): boolean {
+    if (declaredTarget !== '*') return observedMap.has(`${declaredType}:${declaredTarget}`);
+    return Array.from(observedMap.keys()).some(k => k.startsWith(`${declaredType}:`));
+  }
+
+  // Detect undeclared usage (observed but not covered by any declared capability)
+  for (const [, observed] of observedMap) {
+    if (!isDeclared(observed.type, observed.target)) {
       drifts.push({
         service,
         driftType: 'undeclared_usage',
@@ -141,10 +166,10 @@ export async function detectCapabilityDrift(
       });
     }
   }
-  
-  // Detect unused declarations (declared but not observed)
-  for (const [key, declared] of declaredMap) {
-    if (!observedMap.has(key)) {
+
+  // Detect unused declarations (declared but not observed at runtime)
+  for (const [, declared] of declaredMap) {
+    if (!isObserved(declared.type, declared.target)) {
       drifts.push({
         service,
         driftType: 'unused_declaration',
@@ -155,7 +180,7 @@ export async function detectCapabilityDrift(
       });
     }
   }
-  
+
   return drifts;
 }
 
