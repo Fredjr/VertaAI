@@ -70,6 +70,8 @@ model Workspace {
   contractPacks         ContractPack[] // NEW: Contract Integrity & Readiness
   contractPolicies      ContractPolicy[] // NEW: Contract Integrity Gate policies
   policyPacks           WorkspacePolicyPack[] // NEW: P2 Unified Policy Packs
+  intentArtifacts       IntentArtifact[] // NEW: Agent Governance - Intent artifacts
+  agentActionTraces     AgentActionTrace[] // NEW: Agent Governance - Agent action traces
 
   @@map("workspaces")
 }
@@ -1281,8 +1283,91 @@ model AuditTrail {
 }
 
 // ======================================================================
+// AGENT GOVERNANCE (Phase 0: Foundation)
+// Spec–Build–Run Triangle Verification
+// ======================================================================
+
+// Intent Artifact - First-class artifact for agent governance
+// Represents the "Spec" in Spec→Build→Run triangle
+model IntentArtifact {
+  id           String @id @default(uuid())
+  workspaceId  String @map("workspace_id")
+  prNumber     Int    @map("pr_number")
+  repoFullName String @map("repo_full_name")
+
+  // Author metadata
+  author        String
+  authorType    AuthorType @map("author_type") // human | agent | unknown
+  agentIdentity String?    @map("agent_identity") // e.g., "cursor:v1.2.3", "copilot:workspace"
+
+  // Structured claims (not free-form CoT)
+  requestedCapabilities Json     @map("requested_capabilities") // Capability[] - structured permissions/actions
+  constraints           Json     @default("{}") // Constraint[] - read_only, no_new_infra, least_privilege, etc.
+  affectedServices      String[] @default([]) @map("affected_services") // Service IDs
+  expectedSideEffects   Json     @default("{}") @map("expected_side_effects") // creates_table, modifies_schema, etc.
+  riskAcknowledgements  Json     @default("[]") @map("risk_acknowledgements") // Explicit risk approvals
+
+  // Links to external artifacts
+  links Json? // { ticket, design_doc, prd, runbook }
+
+  // Signature/approval metadata (audit-grade)
+  signature Json? // { signed_by, signed_at, approval_tier, approval_method }
+
+  // Metadata
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([repoFullName, prNumber])
+  @@index([authorType])
+  @@index([workspaceId, authorType, createdAt(sort: Desc)])
+  @@map("intent_artifacts")
+}
+
+// Agent Action Trace - Detailed trace of agent actions
+// Captures tool calls, file changes, and external actions for governance
+model AgentActionTrace {
+  id           String @id @default(uuid())
+  workspaceId  String @map("workspace_id")
+  prNumber     Int    @map("pr_number")
+  repoFullName String @map("repo_full_name")
+
+  // Agent identity
+  agentId      String @map("agent_id") // e.g., "cursor", "copilot", "replit-agent"
+  agentVersion String @map("agent_version") // e.g., "v1.2.3"
+
+  // Action traces (structured, not CoT)
+  toolCalls       Json @default("[]") @map("tool_calls") // ToolCall[] - { tool, args, result, timestamp }
+  filesModified   Json @default("[]") @map("files_modified") // FileChange[] - { path, changeType, linesAdded, linesDeleted }
+  externalActions Json @default("[]") @map("external_actions") // ExternalAction[] - API calls, DB queries, etc.
+  runtimeEffects  Json @default("{}") @map("runtime_effects") // RuntimeEffect[] - observed side effects
+
+  // Metadata
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([repoFullName, prNumber])
+  @@index([agentId])
+  @@index([workspaceId, agentId, createdAt(sort: Desc)])
+  @@map("agent_action_traces")
+}
+
+// ======================================================================
 // ENUMS
 // ======================================================================
+
+// Author Type - Distinguishes human vs agent authorship
+enum AuthorType {
+  HUMAN
+  AGENT
+  UNKNOWN
+}
 
 // PHASE 1.2: Pack status enum
 enum PackStatus {
