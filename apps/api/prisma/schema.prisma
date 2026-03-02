@@ -69,9 +69,10 @@ model Workspace {
   auditTrails           AuditTrail[] // NEW: Phase 4 Week 8 comprehensive audit trail
   contractPacks         ContractPack[] // NEW: Contract Integrity & Readiness
   contractPolicies      ContractPolicy[] // NEW: Contract Integrity Gate policies
-  policyPacks           WorkspacePolicyPack[] // NEW: P2 Unified Policy Packs
-  intentArtifacts       IntentArtifact[] // NEW: Agent Governance - Intent artifacts
-  agentActionTraces     AgentActionTrace[] // NEW: Agent Governance - Agent action traces
+  policyPacks                    WorkspacePolicyPack[] // NEW: P2 Unified Policy Packs
+  intentArtifacts                IntentArtifact[] // NEW: Agent Governance - Intent artifacts
+  agentActionTraces              AgentActionTrace[] // NEW: Agent Governance - Agent action traces
+  runtimeCapabilityObservations  RuntimeCapabilityObservation[] // NEW: Agent Governance - Runtime capability observations
 
   @@map("workspaces")
 }
@@ -1356,6 +1357,36 @@ model AgentActionTrace {
   @@index([agentId])
   @@index([workspaceId, agentId, createdAt(sort: Desc)])
   @@map("agent_action_traces")
+}
+
+// Runtime Capability Observation (Agent Governance - Phase 2)
+// Records actual capability usage in production for Spec→Run verification
+model RuntimeCapabilityObservation {
+  workspaceId String @map("workspace_id")
+  id          String @default(uuid())
+
+  // Service and capability
+  service          String
+  capabilityType   String       @map("capability_type") // db_read, db_write, api_create, etc.
+  capabilityTarget String       @map("capability_target") // e.g., "users_table", "GET:/api/users"
+  observedAt       DateTime     @map("observed_at")
+
+  // Source tracking
+  source        String  @map("source") // aws_cloudtrail, gcp_audit_log, database_query_log, etc.
+  sourceEventId String? @map("source_event_id") // CloudTrail event ID, GCP log entry ID, etc.
+  metadata      Json    @default("{}") // Source-specific metadata
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([workspaceId, id])
+  @@index([workspaceId, service, capabilityType, observedAt(sort: Desc)])
+  @@index([workspaceId, observedAt(sort: Desc)])
+  @@index([workspaceId, service, observedAt(sort: Desc)])
+  @@map("runtime_capability_observations")
 }
 
 // ======================================================================
