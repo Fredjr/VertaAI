@@ -22,7 +22,7 @@ export const intentCapabilityParityComparator: Comparator = {
   version: '1.0.0',
 
   async evaluate(context: PRContext, params: IntentCapabilityParityParams): Promise<any> {
-    const { owner, repo, prNumber, files, workspaceId } = context;
+    const { owner, repo, prNumber, files, workspaceId, prAction } = context;
     const repoFullName = `${owner}/${repo}`;
 
     // Step 1: Fetch intent artifact from database
@@ -59,11 +59,13 @@ export const intentCapabilityParityComparator: Comparator = {
     const constraints = (intentArtifact.constraints as unknown as Constraints) || {};
 
     // Step 3: Infer actual capabilities from file changes
+    // P0-B FIX: pass patch so inferCapabilitiesFromFileChanges can detect IAM wildcards in diff content
     const fileChanges: FileChange[] = files.map(f => ({
       path: f.filename,
       changeType: (f.status === 'added' ? 'created' : f.status === 'removed' ? 'deleted' : 'modified') as FileChange['changeType'],
       linesAdded: f.additions ?? 0,
       linesDeleted: f.deletions ?? 0,
+      patch: f.patch ?? undefined,
     }));
 
     const actualCapabilities = inferCapabilitiesFromFileChanges(fileChanges);
@@ -72,8 +74,10 @@ export const intentCapabilityParityComparator: Comparator = {
     const violations = compareCapabilities(declaredCapabilities, actualCapabilities, constraints);
 
     // Step 5: Persist findings to IntentArtifact.specBuildFindings (governance page reads this)
+    // P0-A FIX: mark isFinalSnapshot:true when the PR was just merged (closed event)
     const specBuildFindings = {
       checkedAt: new Date().toISOString(),
+      isFinalSnapshot: prAction === 'closed', // true only at actual merge time
       declaredCapabilities: declaredCapabilities.map(c => c.type),
       actualCapabilities: actualCapabilities.map(c => c.type),
       violations: violations.map(v => ({

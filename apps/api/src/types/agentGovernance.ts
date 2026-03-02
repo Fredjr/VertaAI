@@ -62,6 +62,43 @@ export interface Constraints {
   no_public_endpoints?: boolean;
   require_tests?: boolean;
   require_docs?: boolean;
+  // Operational integrity constraints (architect-grade)
+  no_public_exposure?: boolean;    // No new public network exposure (security groups, ingress, CDN)
+  no_new_pii_flows?: boolean;      // No new data flows involving PII fields or tables
+}
+
+// ======================================================================
+// REQUIRED EVIDENCE (operational integrity gate)
+// ======================================================================
+
+export interface RequiredEvidence {
+  runbook_updated?: boolean;        // Runbook URL present in links.runbook
+  rollback_documented?: boolean;    // rollback_expectations must be non-empty
+  dashboards_updated?: boolean;     // Monitoring dashboards declared or linked
+  alerts_updated?: boolean;         // Alert rules declared or linked
+  owner_declared?: boolean;         // CODEOWNERS or service catalog entry present
+}
+
+// ======================================================================
+// ROLLBACK EXPECTATIONS
+// ======================================================================
+
+export interface RollbackExpectation {
+  strategy: 'revert_commit' | 'feature_flag' | 'db_migration_down' | 'blue_green' | 'manual';
+  steps?: string[];            // Ordered rollback steps
+  estimated_minutes?: number;  // Expected rollback time
+  requires_downtime?: boolean;
+}
+
+// ======================================================================
+// VALIDATION STEPS
+// ======================================================================
+
+export interface ValidationStep {
+  description: string;            // What to validate
+  automated?: boolean;            // Is this automated or manual?
+  command?: string;               // Test command or script
+  expected_outcome?: string;      // What a passing outcome looks like
 }
 
 // ======================================================================
@@ -173,6 +210,7 @@ export interface FileChange {
   hunks?: number; // Number of change hunks
   language?: string; // Programming language
   complexity_delta?: number; // Change in cyclomatic complexity
+  patch?: string; // Raw unified diff patch content from GitHub API (P0-B: enables IAM wildcard detection)
 }
 
 export type ExternalActionType =

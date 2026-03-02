@@ -16,7 +16,82 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
+import crypto from 'crypto';
+import https from 'https';
 import { ingestCloudTrailEvent } from '../../services/runtime/observationIngestion.js';
+
+// Certificate cache — avoids re-fetching the PEM on every webhook request
+const certCache = new Map<string, string>();
+
+/**
+ * Fetch SNS signing certificate from AWS with SSRF guard + in-process cache.
+ * Only hosts ending in `.amazonaws.com` are allowed.
+ */
+async function fetchCert(certUrl: string): Promise<string> {
+  const parsed = new URL(certUrl);
+  if (!parsed.hostname.endsWith('.amazonaws.com')) {
+    throw new Error(`Rejected SNS SigningCertURL with non-Amazon host: ${parsed.hostname}`);
+  }
+
+  const cached = certCache.get(certUrl);
+  if (cached) return cached;
+
+  return new Promise((resolve, reject) => {
+    https.get(certUrl, (res) => {
+      let pem = '';
+      res.on('data', (chunk: string) => { pem += chunk; });
+      res.on('end', () => {
+        certCache.set(certUrl, pem);
+        resolve(pem);
+      });
+      res.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+/**
+ * Verify AWS SNS Notification message signature.
+ *
+ * Algorithm per AWS docs:
+ * https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html
+ *
+ * For a Notification message the string-to-sign is built from these fields
+ * (alphabetical order, each field followed by \n):
+ *   Message, MessageId, Subject (only if present), Timestamp, TopicArn, Type
+ */
+async function verifySNSSignature(notification: {
+  Type: string;
+  Message: string;
+  MessageId: string;
+  Subject?: string;
+  Timestamp: string;
+  TopicArn: string;
+  Signature: string;
+  SigningCertURL: string;
+}): Promise<boolean> {
+  try {
+    const { Type, Message, MessageId, Subject, Timestamp, TopicArn, Signature, SigningCertURL } = notification;
+
+    const cert = await fetchCert(SigningCertURL);
+
+    let stringToSign = '';
+    stringToSign += `Message\n${Message}\n`;
+    stringToSign += `MessageId\n${MessageId}\n`;
+    if (Subject) {
+      stringToSign += `Subject\n${Subject}\n`;
+    }
+    stringToSign += `Timestamp\n${Timestamp}\n`;
+    stringToSign += `TopicArn\n${TopicArn}\n`;
+    stringToSign += `Type\n${Type}\n`;
+
+    const verifier = crypto.createVerify('sha1WithRSAEncryption');
+    verifier.update(stringToSign);
+    return verifier.verify(cert, Buffer.from(Signature, 'base64'));
+  } catch (error: any) {
+    console.error('[CloudTrail Webhook] SNS signature verification error:', error.message);
+    return false;
+  }
+}
 
 const router = Router();
 
@@ -46,6 +121,26 @@ router.post('/', async (req, res) => {
 
     // Parse SNS notification
     const notification = CloudTrailSNSNotificationSchema.parse(req.body);
+
+    // Verify AWS SNS signature before trusting the payload
+    // Explicit spread satisfies the required-field signature (Zod already validated all fields)
+    const signatureValid = await verifySNSSignature({
+      Type: notification.Type,
+      Message: notification.Message,
+      MessageId: notification.MessageId,
+      Subject: notification.Subject,
+      Timestamp: notification.Timestamp,
+      TopicArn: notification.TopicArn,
+      Signature: notification.Signature,
+      SigningCertURL: notification.SigningCertURL,
+    });
+    if (!signatureValid) {
+      console.warn('[CloudTrail Webhook] SNS signature verification failed — rejecting request');
+      return res.status(403).json({
+        success: false,
+        error: 'SNS signature verification failed',
+      });
+    }
 
     // Parse CloudTrail event from message
     const cloudTrailEvent = JSON.parse(notification.Message);

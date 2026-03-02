@@ -573,12 +573,14 @@ async function handlePullRequestEventV2(payload: any, workspaceId: string, res: 
 
     // =========================================================================
     // AGENT PR GATEKEEPER (Phase 1)
-    // Run gatekeeper for opened and synchronize events (not for merged PRs)
+    // Run gatekeeper for opened, synchronize, AND closed+merged events.
+    // P0-A FIX: also fires at actual merge time so that specBuildFindings gets a final
+    // isFinalSnapshot:true snapshot written to the DB — the governance UI needs this.
     // Creates GitHub Check with risk tier and evidence requirements
     // NOTE: Run this BEFORE checking for duplicate signals so that we can
     // re-run the gatekeeper if needed (e.g., after a deployment)
     // =========================================================================
-    if (isFeatureEnabled('ENABLE_AGENT_PR_GATEKEEPER', workspaceId) && !prInfo.merged) {
+    if (isFeatureEnabled('ENABLE_AGENT_PR_GATEKEEPER', workspaceId)) {
       if (shouldRunGatekeeper({ author: prInfo.authorLogin, labels })) {
         console.log(`[Webhook] [V2] Running Agent PR Gatekeeper for PR #${prInfo.prNumber}`);
 

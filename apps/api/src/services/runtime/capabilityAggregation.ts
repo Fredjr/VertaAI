@@ -21,16 +21,45 @@ import type { CapabilityType, Capability } from '../../types/agentGovernance.js'
 import type { ServiceCapabilityUsage, CapabilityDrift, ObservationSource } from '../../types/runtimeObservation.js';
 
 /**
+ * Capability types covered by at least one runtime data source.
+ * P2-A: schema_modify is the only type with NO source coverage (no mapper emits it).
+ * All other 17 types have ≥1 source (CloudTrail, GCP Audit, DB Log, Cost Explorer).
+ */
+const SOURCE_COVERED_CAPABILITIES = new Set<CapabilityType>([
+  'db_read', 'db_write', 'db_admin',
+  's3_read', 's3_write', 's3_delete',
+  'api_endpoint', 'iam_modify',
+  'infra_create', 'infra_modify', 'infra_delete',
+  'secret_read', 'secret_write',
+  'network_public', 'network_private',
+  'cost_increase', 'deployment_modify',
+]);
+
+/**
  * Get aggregated capability usage for a service
+ * P1-A: accepts optional mergedAt to anchor the observation window at merge time
+ * rather than using a flat rolling window (which conflates pre-merge staging noise
+ * with post-merge production drift).
  */
 export async function getServiceCapabilityUsage(
   workspaceId: string,
   service: string,
-  windowDays: number = 7
+  windowDays: number = 7,
+  mergedAt?: Date
 ): Promise<ServiceCapabilityUsage> {
   const endDate = new Date();
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - windowDays);
+  let startDate: Date;
+  if (mergedAt) {
+    // Start 1 hour before merge to include any last-minute pre-merge observations,
+    // but cap the lookback at windowDays to avoid unbounded queries.
+    const mergeAnchor = new Date(mergedAt.getTime() - 60 * 60 * 1000);
+    const maxLookback = new Date();
+    maxLookback.setDate(maxLookback.getDate() - windowDays);
+    startDate = mergeAnchor > maxLookback ? mergeAnchor : maxLookback;
+  } else {
+    startDate = new Date();
+    startDate.setDate(startDate.getDate() - windowDays);
+  }
   
   // Fetch all observations in time window
   const observations = await prisma.runtimeCapabilityObservation.findMany({
@@ -98,15 +127,19 @@ export async function getServiceCapabilityUsage(
 }
 
 /**
- * Detect capability drift between declared and observed capabilities
+ * Detect capability drift between declared and observed capabilities.
+ * P1-A: optional mergedAt anchors the observation window to post-merge production.
+ * P2-A: unused declarations include observationReason to distinguish "not seen"
+ *        from "data source can't see this capability type at all".
  */
 export async function detectCapabilityDrift(
   workspaceId: string,
   service: string,
   declaredCapabilities: Capability[],
-  windowDays: number = 7
+  windowDays: number = 7,
+  mergedAt?: Date
 ): Promise<CapabilityDrift[]> {
-  const usage = await getServiceCapabilityUsage(workspaceId, service, windowDays);
+  const usage = await getServiceCapabilityUsage(workspaceId, service, windowDays, mergedAt);
   const drifts: CapabilityDrift[] = [];
   
   // Build declared capability map.
@@ -168,6 +201,7 @@ export async function detectCapabilityDrift(
   }
 
   // Detect unused declarations (declared but not observed at runtime)
+  // P2-A: tag observationReason to distinguish a data-coverage gap from a genuine "not seen"
   for (const [, declared] of declaredMap) {
     if (!isObserved(declared.type, declared.target)) {
       drifts.push({
@@ -177,6 +211,9 @@ export async function detectCapabilityDrift(
         capabilityTarget: declared.target,
         severity: 'low', // Unused declarations are low severity
         evidence: [],
+        observationReason: SOURCE_COVERED_CAPABILITIES.has(declared.type)
+          ? 'not_observed_in_window'
+          : 'source_coverage_gap',
       });
     }
   }

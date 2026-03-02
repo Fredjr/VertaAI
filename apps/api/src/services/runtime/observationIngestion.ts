@@ -22,8 +22,9 @@
  */
 
 import { prisma } from '../../lib/db.js';
-import { mapCloudTrailEvent, mapGCPAuditLog, mapDatabaseQuery } from './capabilityMapper.js';
+import { mapCloudTrailEvent, mapGCPAuditLog, mapDatabaseQuery, mapCostExplorerEvent } from './capabilityMapper.js';
 import type { CloudTrailEvent, GCPAuditLogEntry, DatabaseQueryLog } from '../../types/runtimeObservation.js';
+import type { CostExplorerEvent } from './capabilityMapper.js';
 
 /**
  * Ingest AWS CloudTrail event
@@ -148,7 +149,52 @@ export async function ingestDatabaseQuery(
       metadata: mapping.metadata,
     },
   });
-  
+
   return observation.id;
 }
 
+/**
+ * Ingest AWS Cost Explorer / Budget Alert event as a cost_increase observation.
+ * Deduplicated by eventId.
+ */
+export async function ingestCostExplorerEvent(
+  workspaceId: string,
+  service: string,
+  event: CostExplorerEvent
+): Promise<string | null> {
+  const mapping = mapCostExplorerEvent(event);
+
+  if (!mapping) {
+    console.log(`[RuntimeObservation] Skipping unmapped Cost Explorer event: ${event.eventId}`);
+    return null;
+  }
+
+  // Check for duplicate
+  const existing = await prisma.runtimeCapabilityObservation.findFirst({
+    where: {
+      workspaceId,
+      sourceEventId: event.eventId,
+    },
+  });
+
+  if (existing) {
+    console.log(`[RuntimeObservation] Skipping duplicate Cost Explorer event: ${event.eventId}`);
+    return existing.id;
+  }
+
+  const observation = await prisma.runtimeCapabilityObservation.create({
+    data: {
+      workspaceId,
+      service,
+      capabilityType: mapping.capabilityType,
+      capabilityTarget: mapping.capabilityTarget,
+      observedAt: new Date(event.timestamp),
+      source: 'cost_explorer',
+      sourceEventId: event.eventId,
+      metadata: mapping.metadata,
+    },
+  });
+
+  console.log(`[RuntimeObservation] Ingested Cost Explorer event: ${event.eventId} → cost_increase`);
+  return observation.id;
+}

@@ -140,6 +140,9 @@ export interface PRContext {
   workspaceId: string;
   installationId: number;
 
+  // P0-A: PR action that triggered this evaluation (used to tag isFinalSnapshot in specBuildFindings)
+  prAction?: 'opened' | 'synchronize' | 'labeled' | 'closed';
+
   // Workspace defaults (loaded separately)
   defaults?: WorkspaceDefaults;
 

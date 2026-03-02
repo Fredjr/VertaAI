@@ -128,6 +128,7 @@ export async function runYAMLGatekeeper(
       abortController,
       workspaceId: input.workspaceId,
       installationId: input.installationId,
+      prAction,  // P0-A: carry action through so comparators can tag isFinalSnapshot
       defaults,
       budgets,
       cache: {

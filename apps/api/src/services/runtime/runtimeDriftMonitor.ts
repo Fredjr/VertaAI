@@ -24,6 +24,8 @@
 
 import { prisma } from '../../lib/db.js';
 import { detectCapabilityDrift } from './capabilityAggregation.js';
+import { getGitHubClient } from '../github-client.js';
+import { sendSlackMessage } from '../slack-client.js';
 import type { Capability } from '../../types/agentGovernance.js';
 
 /**
@@ -38,6 +40,8 @@ export interface RuntimeDriftResult {
   severity: 'critical' | 'high' | 'medium' | 'low';
   driftPlanCreated: boolean;
   pagerdutyAlertSent: boolean;
+  githubCheckPosted: boolean;
+  slackAlertSent: boolean;
 }
 
 /**
@@ -146,8 +150,14 @@ async function detectDriftForService(
     return null;
   }
 
-  // Step 3: Detect drift (last 7 days)
-  const drifts = await detectCapabilityDrift(workspaceId, service, declaredCapabilities, 7);
+  // Step 3: Detect drift anchored to merge time (P1-A)
+  // Use intentArtifact.createdAt as a proxy for the merge timestamp.
+  // This anchors the observation window to post-merge production traffic
+  // instead of a flat rolling 7-day window that conflates pre-merge staging noise.
+  const mergedAt = intentArtifact.createdAt instanceof Date
+    ? intentArtifact.createdAt
+    : new Date(intentArtifact.createdAt);
+  const drifts = await detectCapabilityDrift(workspaceId, service, declaredCapabilities, 7, mergedAt);
 
   if (drifts.length === 0) {
     console.log(`[RuntimeDriftMonitor] No drift detected for service ${service}`);
@@ -176,6 +186,16 @@ async function detectDriftForService(
     ? await sendPagerDutyAlert(workspaceId, service, drifts)
     : false;
 
+  // Step 8: Post GitHub check-run on the originating PR
+  const githubCheckPosted = await sendGitHubDriftCheck(
+    workspaceId, service, intentArtifact, drifts, severity
+  );
+
+  // Step 9: Send Slack alert for critical or high severity drift
+  const slackAlertSent = (severity === 'critical' || severity === 'high')
+    ? await sendSlackDriftAlert(workspaceId, service, drifts, severity)
+    : false;
+
   return {
     workspaceId,
     service,
@@ -185,6 +205,8 @@ async function detectDriftForService(
     severity,
     driftPlanCreated,
     pagerdutyAlertSent,
+    githubCheckPosted,
+    slackAlertSent,
   };
 }
 
@@ -281,16 +303,41 @@ async function createDriftPlanForRuntimeDrift(
       })
     );
 
+    // P1-B: Cross-reference specBuildFindings to establish chain-of-custody.
+    // If the Spec→Build gate already flagged a capability, runtime drift of
+    // the same type is a regression confirmation, not a surprise.
+    const specBuildFindings = intentArtifact.specBuildFindings
+      ? JSON.parse(intentArtifact.specBuildFindings as string)
+      : null;
+    const gateFlaggedTypes = new Set<string>(
+      (specBuildFindings?.violations ?? []).map((v: any) => String(v.capability ?? v.type ?? ''))
+    );
+    const specBuildViolated = gateFlaggedTypes.size > 0;
+    const mergedAtIso = intentArtifact.createdAt instanceof Date
+      ? intentArtifact.createdAt.toISOString()
+      : new Date(intentArtifact.createdAt).toISOString();
+
     // Build the summary object (used for both create and update)
     const summaryPayload = {
       intentArtifactId: intentArtifact.id,
+      // P1-A: expose merge anchor for UI display
+      mergedAt: mergedAtIso,
+      // P1-B: chain-of-custody — was the Spec→Build gate already aware of these violations?
+      specBuildViolated,
+      gatePredictedCount: gateFlaggedTypes.size,
       severity,
       severityRationale,
       driftsDetected: drifts.length,
-      undeclaredUsage: undeclaredUsageEnriched,
+      undeclaredUsage: undeclaredUsageEnriched.map((d: any) => ({
+        ...d,
+        // P1-B: flag whether the gate predicted this undeclared capability
+        gatePredicted: gateFlaggedTypes.has(d.capability),
+      })),
       unusedDeclarations: unusedDeclarations.map((d: any) => ({
         capability: d.capabilityType,
         target: d.capabilityTarget,
+        // P2-A: why wasn't this observed?
+        observationReason: d.observationReason ?? 'not_observed_in_window',
       })),
       remediationOptions: [
         {
@@ -359,6 +406,143 @@ async function createDriftPlanForRuntimeDrift(
     return true;
   } catch (error: any) {
     console.error(`[RuntimeDriftMonitor] Error creating DriftCluster:`, error.message);
+    return false;
+  }
+}
+
+/**
+ * Post a GitHub check-run on the PR that introduced the service's latest intent artifact.
+ * Conclusion is 'failure' for critical/high, 'action_required' for medium, 'neutral' for low.
+ */
+async function sendGitHubDriftCheck(
+  workspaceId: string,
+  service: string,
+  intentArtifact: any,
+  drifts: any[],
+  severity: string
+): Promise<boolean> {
+  try {
+    const octokit = await getGitHubClient(workspaceId);
+    if (!octokit) {
+      console.log(`[RuntimeDriftMonitor] No GitHub client for workspace ${workspaceId} — skipping check-run`);
+      return false;
+    }
+
+    const repoFullName: string | undefined = intentArtifact.repoFullName;
+    const prNumber: number | undefined = intentArtifact.prNumber;
+    if (!repoFullName || !prNumber) return false;
+
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo) return false;
+
+    // Fetch the PR to get the merge/head SHA
+    const { data: pr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    const headSha: string = pr.merge_commit_sha || pr.head.sha;
+
+    const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
+    const conclusion = (severity === 'critical' || severity === 'high')
+      ? 'failure'
+      : severity === 'medium'
+        ? 'action_required'
+        : 'neutral';
+
+    const capList = undeclaredUsage.map(d =>
+      `- **${d.capabilityType}** on \`${d.capabilityTarget}\` (undeclared at spec time)`
+    ).join('\n');
+
+    await octokit.rest.checks.create({
+      owner,
+      repo,
+      name: 'VertaAI Runtime Drift Monitor',
+      head_sha: headSha,
+      status: 'completed',
+      conclusion,
+      output: {
+        title: `Runtime Drift — ${severity.toUpperCase()} severity on ${service}`,
+        summary: `**${service}** has **${undeclaredUsage.length}** undeclared runtime capability usage(s) detected since merge.\n\n${capList}`,
+        text: `Total drifts: ${drifts.length}. Review the VertaAI governance dashboard for remediation options (A/B/C).`,
+      },
+    });
+
+    console.log(`[RuntimeDriftMonitor] GitHub check-run posted for ${repoFullName}#${prNumber} (${conclusion})`);
+    return true;
+  } catch (error: any) {
+    console.error(`[RuntimeDriftMonitor] Error posting GitHub check:`, error.message);
+    return false;
+  }
+}
+
+/**
+ * Send Slack drift alert for critical/high severity using the workspace's Slack integration.
+ */
+async function sendSlackDriftAlert(
+  workspaceId: string,
+  service: string,
+  drifts: any[],
+  severity: string
+): Promise<boolean> {
+  try {
+    const integration = await prisma.integration.findFirst({
+      where: { workspaceId, type: 'slack', status: 'connected' },
+    });
+
+    if (!integration) {
+      console.log(`[RuntimeDriftMonitor] No Slack integration for workspace ${workspaceId}`);
+      return false;
+    }
+
+    const config = integration.config as any;
+    const channel: string = config?.defaultChannel || config?.channel || '#security-alerts';
+
+    const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
+    const severityEmoji = severity === 'critical' ? '🚨' : '⚠️';
+
+    const blocks = [
+      {
+        type: 'header',
+        text: { type: 'plain_text', text: `${severityEmoji} Runtime Drift Detected: ${service}`, emoji: true },
+      },
+      {
+        type: 'section',
+        fields: [
+          { type: 'mrkdwn', text: `*Severity:*\n${severity.toUpperCase()}` },
+          { type: 'mrkdwn', text: `*Service:*\n${service}` },
+          { type: 'mrkdwn', text: `*Undeclared Capabilities:*\n${undeclaredUsage.length}` },
+          { type: 'mrkdwn', text: `*Workspace:*\n${workspaceId}` },
+        ],
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Undeclared capability usage:*\n${undeclaredUsage.map(d => `• \`${d.capabilityType}\` on \`${d.capabilityTarget}\``).join('\n')}`,
+        },
+      },
+      { type: 'divider' },
+      {
+        type: 'context',
+        elements: [
+          { type: 'mrkdwn', text: `VertaAI Runtime Drift Monitor • ${new Date().toISOString()}` },
+        ],
+      },
+    ];
+
+    const result = await sendSlackMessage(
+      workspaceId,
+      channel,
+      `${severityEmoji} Runtime drift detected in *${service}*: ${undeclaredUsage.length} undeclared capability(ies) — ${severity.toUpperCase()} severity`,
+      blocks
+    );
+
+    if (!result.ok) {
+      console.error(`[RuntimeDriftMonitor] Slack alert failed: ${result.error}`);
+      return false;
+    }
+
+    console.log(`[RuntimeDriftMonitor] Slack alert sent for service ${service} → ${channel}`);
+    return true;
+  } catch (error: any) {
+    console.error(`[RuntimeDriftMonitor] Error sending Slack alert:`, error.message);
     return false;
   }
 }

@@ -119,12 +119,16 @@ export class PackEvaluator {
     // AGENT GOVERNANCE: Ingest intent artifact from PR (if present)
     // This runs BEFORE comparators so they can access the intent artifact
     console.log('[PackEvaluator] Ingesting intent artifact (if present)...');
+    // P2-B FIX: capture ingestion failure so it surfaces as a visible warn finding
+    // instead of silently producing status:'unknown' → "Gate Not Run" with no explanation.
+    let artifactIngestionWarning: string | undefined;
     try {
       const fileChanges: FileChange[] = context.files.map(f => ({
         path: f.filename,
         changeType: f.status === 'added' ? 'created' : f.status === 'removed' ? 'deleted' : 'modified',
         additions: f.additions,
         deletions: f.deletions,
+        patch: (f as any).patch ?? undefined,
       }));
 
       const prData = {
@@ -154,9 +158,12 @@ export class PackEvaluator {
       } else {
         console.log(`[PackEvaluator] No intent artifact found or validation failed`);
       }
-    } catch (error) {
+    } catch (error: any) {
+      artifactIngestionWarning = error?.message || 'Intent artifact ingestion failed (unknown error)';
       console.error('[PackEvaluator] Intent artifact ingestion failed:', error);
-      // Continue evaluation even if ingestion fails (non-blocking)
+      // Store on context so downstream comparators/UI can display it
+      (context as any).artifactIngestionWarning = artifactIngestionWarning;
+      // Non-blocking — continue evaluation
     }
 
     // TRACK A TASK 2: Run auto-invoked comparators on every PR
@@ -164,6 +171,21 @@ export class PackEvaluator {
     console.log('[PackEvaluator] Running auto-invoked comparators (cross-artifact + safety)...');
     const autoInvokedFindings = await runAutoInvokedComparators(context, usedComparators);
     findings.push(...autoInvokedFindings);
+
+    // P2-B: Surface ingestion failure as an explicit warn finding (not silent unknown)
+    if (artifactIngestionWarning) {
+      findings.push({
+        ruleId: 'auto-invoked-intent-artifact-ingestion',
+        ruleName: 'Intent Artifact Ingestion',
+        obligationIndex: -1,
+        comparatorResult: {
+          status: 'warn',
+          message: `Intent artifact ingestion failed: ${artifactIngestionWarning}`,
+        },
+        decisionOnFail: 'warn',
+        evaluationStatus: 'evaluated',
+      } as Finding);
+    }
     console.log(`[PackEvaluator] Auto-invoked comparators found ${autoInvokedFindings.length} findings`);
 
     // 11.1: Build artifact graph from auto-invoked comparator results

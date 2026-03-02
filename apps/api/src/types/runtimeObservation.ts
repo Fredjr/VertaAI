@@ -85,6 +85,12 @@ export interface CapabilityDrift {
     timestamp: Date;
     metadata: Record<string, any>;
   }[];
+  /**
+   * P2-A: Why was this unused_declaration not observed?
+   * - 'not_observed_in_window': data source covers this cap type but no observation found
+   * - 'source_coverage_gap': no data source covers this cap type (e.g. schema_modify)
+   */
+  observationReason?: 'not_observed_in_window' | 'source_coverage_gap';
 }
 
 /**

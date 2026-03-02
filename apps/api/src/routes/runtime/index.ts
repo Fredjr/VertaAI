@@ -17,6 +17,7 @@ import gcpAuditRouter from './gcpAudit.js';
 import databaseQueryLogRouter from './databaseQueryLog.js';
 import driftMonitorRouter from './driftMonitor.js';
 import setupRouter from './setup.js';
+import costExplorerRouter from './costExplorer.js';
 
 const router = Router();
 
@@ -31,6 +32,9 @@ router.use('/drift-monitor', driftMonitorRouter);
 // Mount setup endpoints (infrastructure-as-code generation)
 router.use('/setup', setupRouter);
 
+// Mount Cost Explorer / Budget Alert webhook
+router.use('/cost-explorer', costExplorerRouter);
+
 // Health check for all runtime webhooks
 router.get('/health', (req, res) => {
   res.status(200).json({
@@ -41,6 +45,7 @@ router.get('/health', (req, res) => {
       gcpAudit: '/api/runtime/gcp-audit',
       databaseQueryLog: '/api/runtime/database-query-log',
       driftMonitor: '/api/runtime/drift-monitor',
+      costExplorer: '/api/runtime/cost-explorer',
       setup: {
         testConnection: '/api/runtime/setup/test-connection',
         status: '/api/runtime/setup/status/:workspaceId',

@@ -169,6 +169,22 @@ export function inferCapabilitiesFromFileChanges(files: FileChange[]): Capabilit
     ) {
       capabilities.push({ type: 'deployment_modify', resource: file.path, scope: 'deployment-change' });
     }
+
+    // P0-B FIX: Patch content analysis — detects dangerous patterns even when filename is generic
+    if (file.patch) {
+      // IAM wildcard action — "Action": "*" or "Action": ["*"] in any JSON/YAML policy diff
+      const hasWildcardAction = /"Action"\s*:\s*["\[]\s*\*/.test(file.patch);
+      if (hasWildcardAction && !capabilities.some(c => c.type === 'iam_modify' && c.resource === file.path)) {
+        capabilities.push({ type: 'iam_modify', resource: file.path, scope: 'wildcard-policy-detected' });
+      }
+
+      // Public CIDR in security-group / firewall / ingress rule diff → network_public
+      const hasPublicCIDR = /0\.0\.0\.0\/0|:\/0/.test(file.patch) &&
+        /ingress|security.?group|firewall|allow/.test(file.patch.toLowerCase());
+      if (hasPublicCIDR && !capabilities.some(c => c.type === 'network_public' && c.resource === file.path)) {
+        capabilities.push({ type: 'network_public', resource: file.path, scope: 'public-cidr-detected' });
+      }
+    }
   }
 
   return capabilities;

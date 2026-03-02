@@ -32,20 +32,34 @@ interface CapabilityItem {
   sources?: string[];
   severity?: string;
   evidence?: EvidenceItem[];
+  /** P1-B: true if the Spec→Build gate predicted this undeclared capability */
+  gatePredicted?: boolean;
+  /** P2-A: why this unused_declaration was not observed at runtime */
+  observationReason?: 'not_observed_in_window' | 'source_coverage_gap';
 }
 
 interface ClusterSummary {
   intentArtifactId?: string;
+  /** P1-A: ISO timestamp proxied from intent artifact creation (merge anchor) */
+  mergedAt?: string;
+  /** P1-B: true if specBuildFindings contained any violations for this service */
+  specBuildViolated?: boolean;
+  /** P1-B: number of capabilities the gate predicted before runtime drift was observed */
+  gatePredictedCount?: number;
   severity?: string;
   severityRationale?: string;
   driftsDetected?: number;
   undeclaredUsage?: CapabilityItem[];
   unusedDeclarations?: CapabilityItem[];
   remediationOptions?: RemediationOption[];
+  /** P2-B: non-null when intent artifact ingestion failed during the PR gate run */
+  artifactIngestionWarning?: string;
 }
 
 interface SpecBuildFindings {
   checkedAt: string;
+  /** P0-A: true when snapshot was written at actual merge time (closed event) */
+  isFinalSnapshot?: boolean;
   declaredCapabilities: string[];
   actualCapabilities: string[];
   violations: {
@@ -286,8 +300,23 @@ function GovernanceContent() {
 
                       {/* 🔍 SPEC→BUILD — Capability parity findings at PR merge time */}
                       <div className="px-5 py-4">
-                        <div className="text-xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-2">🔍 Spec→Build — PR Gate</div>
+                        <div className="text-xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-2 flex items-center gap-1.5 flex-wrap">
+                          🔍 Spec→Build — PR Gate
+                          {/* P0-A: Final snapshot badge — only shown when gate ran at actual merge time */}
+                          {specBuildFindings?.isFinalSnapshot && (
+                            <span className="px-1.5 py-0.5 text-xs bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 rounded font-normal border border-violet-200 dark:border-violet-700">
+                              ✓ Final snapshot (merged)
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">Capability parity check at merge time</div>
+                        {/* P2-B: Surface ingestion failures as a visible warning banner */}
+                        {summary?.artifactIngestionWarning && (
+                          <div className="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 p-2 mb-3">
+                            <div className="text-xs font-bold text-amber-700 dark:text-amber-400">⚠️ Ingestion Warning</div>
+                            <div className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">{summary.artifactIngestionWarning}</div>
+                          </div>
+                        )}
                         {specBuildFindings ? (
                           <>
                             <div className={`text-xs font-semibold mb-2 ${specBuildFindings.summary === 'pass' ? 'text-green-600' : 'text-red-600 dark:text-red-400'}`}>
@@ -307,6 +336,10 @@ function GovernanceContent() {
                             )}
                             <div className="text-xs text-gray-400 mt-2">
                               Checked: {new Date(specBuildFindings.checkedAt).toLocaleDateString()}
+                              {/* P1-A: Show merge anchor date when available */}
+                              {summary?.mergedAt && (
+                                <span className="ml-2">· Merged: {new Date(summary.mergedAt).toLocaleDateString()}</span>
+                              )}
                             </div>
                           </>
                         ) : (
@@ -333,11 +366,19 @@ function GovernanceContent() {
                                 const isOpen = expandedEvidence === evidenceKey;
                                 return (
                                   <div key={i}>
-                                    <button onClick={() => setExpandedEvidence(isOpen ? null : evidenceKey)}
-                                      className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-mono rounded-full bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors cursor-pointer">
-                                      {item.capability}{item.target && item.target !== '*' ? `:${item.target}` : ''}
-                                      <span className="text-red-400">{isOpen ? '▲' : '▼'}</span>
-                                    </button>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <button onClick={() => setExpandedEvidence(isOpen ? null : evidenceKey)}
+                                        className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-mono rounded-full bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors cursor-pointer">
+                                        {item.capability}{item.target && item.target !== '*' ? `:${item.target}` : ''}
+                                        <span className="text-red-400">{isOpen ? '▲' : '▼'}</span>
+                                      </button>
+                                      {/* P1-B: Gate also predicted this capability at PR merge time */}
+                                      {item.gatePredicted && (
+                                        <span className="px-1.5 py-0.5 text-xs rounded bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-700 font-medium">
+                                          ⚠️ Gate also flagged
+                                        </span>
+                                      )}
+                                    </div>
                                     {isOpen && (
                                       <div className="mt-1 ml-1 p-2 rounded bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 text-xs space-y-1">
                                         {item.lastSeen && <div className="text-gray-600 dark:text-gray-300">Last seen: <span className="font-mono">{new Date(item.lastSeen).toLocaleString()}</span></div>}
@@ -370,11 +411,24 @@ function GovernanceContent() {
                           <div>
                             <div className="text-xs font-semibold text-yellow-600 dark:text-yellow-400 mb-1">⚠️ Over-scoped ({unusedDeclarations.length})</div>
                             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">Declared in Spec but never observed:</div>
-                            <div className="flex flex-wrap gap-1.5">
+                            <div className="space-y-1.5">
                               {unusedDeclarations.map((item, i) => (
-                                <span key={i} className="px-2 py-0.5 text-xs font-mono rounded-full bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700">
-                                  {item.capability}{item.target && item.target !== '*' ? `:${item.target}` : ''}
-                                </span>
+                                <div key={i} className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="px-2 py-0.5 text-xs font-mono rounded-full bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700">
+                                    {item.capability}{item.target && item.target !== '*' ? `:${item.target}` : ''}
+                                  </span>
+                                  {/* P2-A: Distinguish data-coverage gap from genuine "not observed" */}
+                                  {item.observationReason === 'source_coverage_gap' && (
+                                    <span className="px-1.5 py-0.5 text-xs rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700">
+                                      No source coverage
+                                    </span>
+                                  )}
+                                  {item.observationReason === 'not_observed_in_window' && (
+                                    <span className="px-1.5 py-0.5 text-xs rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 border border-yellow-200 dark:border-yellow-700">
+                                      Not observed in window
+                                    </span>
+                                  )}
+                                </div>
                               ))}
                             </div>
                           </div>

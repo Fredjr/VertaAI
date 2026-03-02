@@ -27,6 +27,7 @@ scope:
   prEvents:
     - opened
     - synchronize
+    - closed       # P0-A: fire at merge time to write isFinalSnapshot:true specBuildFindings
   actorSignals:
     detectAgentAuthorship: true
     agentPatterns:

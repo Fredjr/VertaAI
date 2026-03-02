@@ -22,6 +22,23 @@ import type { CapabilityType } from '../../types/agentGovernance.js';
 import type { CloudTrailEvent, GCPAuditLogEntry, DatabaseQueryLog } from '../../types/runtimeObservation.js';
 
 /**
+ * AWS Cost Explorer / Budget Alert event
+ * Sent from a Lambda forwarder that listens to SNS Budget Alerts or Cost Anomaly Detection.
+ */
+export interface CostExplorerEvent {
+  eventId: string;           // Unique event ID for deduplication
+  timestamp: string;         // ISO-8601 timestamp of the alert
+  awsService: string;        // AWS service name e.g. "Amazon S3", "Amazon EC2"
+  resourceId?: string;       // Resource ARN or ID if available
+  currentSpend: number;      // Current period spend in USD
+  forecastedSpend?: number;  // Forecasted spend for the period
+  budgetLimit?: number;      // Budget threshold that was crossed
+  anomalyScore?: number;     // Anomaly score 0-100 (Cost Anomaly Detection)
+  alertType: 'budget_exceeded' | 'anomaly_detected' | 'spike' | 'forecast_exceeded';
+  tags?: Record<string, string>; // AWS resource tags for service attribution
+}
+
+/**
  * Capability mapping result
  */
 export interface CapabilityMapping {
@@ -243,6 +260,31 @@ export function mapDatabaseQuery(log: DatabaseQueryLog): CapabilityMapping | nul
       table: log.table,
       user: log.user,
       duration: log.duration,
+    },
+  };
+}
+
+/**
+ * Map AWS Cost Explorer / Budget Alert event to capability.
+ * All cost spike/anomaly events map to the `cost_increase` canonical capability type.
+ * Target is the resource ARN when available, falling back to the AWS service name.
+ */
+export function mapCostExplorerEvent(event: CostExplorerEvent): CapabilityMapping | null {
+  // target = resource ARN if present, else AWS service name (normalized)
+  const target = event.resourceId || event.awsService.toLowerCase().replace(/\s+/g, '-');
+
+  return {
+    capabilityType: 'cost_increase',
+    capabilityTarget: target,
+    confidence: 1.0,
+    metadata: {
+      alertType: event.alertType,
+      awsService: event.awsService,
+      currentSpend: event.currentSpend,
+      forecastedSpend: event.forecastedSpend ?? null,
+      budgetLimit: event.budgetLimit ?? null,
+      anomalyScore: event.anomalyScore ?? null,
+      tags: event.tags ?? {},
     },
   };
 }
