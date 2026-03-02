@@ -1,0 +1,181 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://verta.ai/schemas/intent-artifact/v1",
+  "title": "Intent Artifact",
+  "description": "Structured intent claims for agent-authored code governance",
+  "type": "object",
+  "required": [
+    "author",
+    "authorType",
+    "requestedCapabilities"
+  ],
+  "properties": {
+    "author": {
+      "type": "string",
+      "description": "Author identifier (username, email, or agent ID)",
+      "minLength": 1
+    },
+    "authorType": {
+      "type": "string",
+      "enum": ["HUMAN", "AGENT", "UNKNOWN"],
+      "description": "Type of author"
+    },
+    "agentIdentity": {
+      "type": "object",
+      "description": "Agent identity details (required if authorType is AGENT)",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Agent ID (e.g., 'cursor', 'copilot', 'replit-agent')"
+        },
+        "version": {
+          "type": "string",
+          "description": "Agent version (e.g., 'v1.2.3')"
+        },
+        "platform": {
+          "type": "string",
+          "description": "Platform (e.g., 'vscode', 'jetbrains', 'web')"
+        }
+      },
+      "required": ["id", "version"]
+    },
+    "requestedCapabilities": {
+      "type": "array",
+      "description": "List of requested capabilities",
+      "items": {
+        "type": "object",
+        "required": ["type", "resource"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "db_read", "db_write", "db_admin",
+              "s3_read", "s3_write", "s3_delete",
+              "api_endpoint", "iam_modify",
+              "infra_create", "infra_modify", "infra_delete",
+              "secret_read", "secret_write",
+              "network_public", "network_private",
+              "cost_increase", "schema_modify", "deployment_modify"
+            ]
+          },
+          "resource": {
+            "type": "string",
+            "description": "Resource identifier (e.g., 'users_table', 'uploads_bucket', 'POST:/api/users')"
+          },
+          "scope": {
+            "type": "string",
+            "description": "Scope of capability (e.g., 'read-only', 'admin', 'least-privilege')"
+          },
+          "justification": {
+            "type": "string",
+            "description": "Justification for this capability"
+          }
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "description": "Constraints on the implementation",
+      "properties": {
+        "read_only": {
+          "type": "boolean",
+          "description": "Implementation must be read-only"
+        },
+        "no_new_infra": {
+          "type": "boolean",
+          "description": "No new infrastructure resources allowed"
+        },
+        "least_privilege": {
+          "type": "boolean",
+          "description": "Must follow least privilege principle"
+        },
+        "max_cost_increase": {
+          "type": "string",
+          "description": "Maximum cost increase allowed (e.g., '$100/month')"
+        },
+        "no_schema_changes": {
+          "type": "boolean",
+          "description": "No database schema changes allowed"
+        },
+        "no_public_endpoints": {
+          "type": "boolean",
+          "description": "No public-facing endpoints allowed"
+        },
+        "require_tests": {
+          "type": "boolean",
+          "description": "Tests are required"
+        },
+        "require_docs": {
+          "type": "boolean",
+          "description": "Documentation updates are required"
+        }
+      }
+    },
+    "affectedServices": {
+      "type": "array",
+      "description": "List of affected service IDs",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expectedSideEffects": {
+      "type": "object",
+      "description": "Expected side effects of the implementation",
+      "properties": {
+        "creates_table": {
+          "type": "boolean"
+        },
+        "modifies_schema": {
+          "type": "boolean"
+        },
+        "changes_permissions": {
+          "type": "boolean"
+        },
+        "adds_dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "creates_infra": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "modifies_api": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "increases_cost": {
+          "type": "string"
+        }
+      }
+    },
+    "riskAcknowledgements": {
+      "type": "array",
+      "description": "Explicit risk acknowledgements and approvals",
+      "items": {
+        "type": "object",
+        "required": ["type", "justification", "approved_by"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Risk type (e.g., 'schema_change', 'privilege_expansion', 'cost_increase')"
+          },
+          "justification": {
+            "type": "string",
+            "description": "Justification for accepting this risk"
+          },
+          "approved_by": {
+            "type": "string",
+            "description": "Approver identifier (e.g., '@tech-lead', 'security-team')"
+          }
+        }
+      }
+    }
+  }
+}
+
