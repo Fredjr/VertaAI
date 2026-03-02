@@ -12,6 +12,11 @@ interface SetupStatus {
     notion: { connected: boolean; status: string; workspaceName?: string };
     pagerduty: { connected: boolean; status: string };
   };
+  runtimeObservations?: {
+    cloudtrail?: { connected: boolean; lastObservation?: string };
+    gcpAudit?: { connected: boolean; lastObservation?: string };
+    databaseLogs?: { connected: boolean; lastObservation?: string };
+  };
   progress: { connected: number; required: number; percentage: number };
   stats: { signalEvents: number; driftCandidates: number; docMappings: number };
   webhookUrls: { github: string; pagerduty: string };
@@ -232,6 +237,54 @@ function OnboardingContent() {
           />
         </div>
 
+        {/* Runtime Observations (Advanced) */}
+        <div className="mt-8 p-6 bg-purple-50 dark:bg-purple-950/30 rounded-xl border border-purple-200 dark:border-purple-800">
+          <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
+            <span>🔬</span> Runtime Observations (Advanced)
+          </h3>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            Enable Spec→Run verification by streaming runtime capability observations from your cloud infrastructure
+          </p>
+
+          <div className="space-y-3">
+            <RuntimeObservationCard
+              name="AWS CloudTrail"
+              icon="☁️"
+              description="Stream AWS API calls to detect runtime capability usage"
+              connected={status.runtimeObservations?.cloudtrail?.connected || false}
+              details={status.runtimeObservations?.cloudtrail?.lastObservation
+                ? `Last event: ${new Date(status.runtimeObservations.cloudtrail.lastObservation).toLocaleString()}`
+                : undefined}
+              setupUrl={`/setup/cloudtrail?workspace=${workspaceId}`}
+              setupLabel="Setup CloudTrail"
+            />
+
+            <RuntimeObservationCard
+              name="GCP Audit Logs"
+              icon="🔍"
+              description="Stream GCP Audit Logs to detect runtime capability usage"
+              connected={status.runtimeObservations?.gcpAudit?.connected || false}
+              details={status.runtimeObservations?.gcpAudit?.lastObservation
+                ? `Last event: ${new Date(status.runtimeObservations.gcpAudit.lastObservation).toLocaleString()}`
+                : undefined}
+              setupUrl={`/setup/gcp-audit?workspace=${workspaceId}`}
+              setupLabel="Setup GCP Audit"
+            />
+
+            <RuntimeObservationCard
+              name="Database Query Logs"
+              icon="🗄️"
+              description="Stream database query logs to detect data access patterns"
+              connected={status.runtimeObservations?.databaseLogs?.connected || false}
+              details={status.runtimeObservations?.databaseLogs?.lastObservation
+                ? `Last event: ${new Date(status.runtimeObservations.databaseLogs.lastObservation).toLocaleString()}`
+                : undefined}
+              setupUrl={`/setup/database-logs?workspace=${workspaceId}`}
+              setupLabel="Setup DB Logs"
+            />
+          </div>
+        </div>
+
         {/* Active Workflows Summary - show when at least one integration is connected */}
         {(status.integrations.github.connected || status.integrations.pagerduty.connected) && (
           <ActiveWorkflowsSummary status={status} />
@@ -414,6 +467,44 @@ function StatCard({ label, value }: { label: string; value: number }) {
     <div className="p-4 bg-white dark:bg-gray-900 rounded-xl shadow border border-gray-200 dark:border-gray-800 text-center">
       <div className="text-2xl font-bold text-primary-600">{value}</div>
       <div className="text-sm text-gray-600 dark:text-gray-400">{label}</div>
+    </div>
+  );
+}
+
+interface RuntimeObservationCardProps {
+  name: string;
+  icon: string;
+  description: string;
+  connected: boolean;
+  details?: string;
+  setupUrl: string;
+  setupLabel: string;
+}
+
+function RuntimeObservationCard({ name, icon, description, connected, details, setupUrl, setupLabel }: RuntimeObservationCardProps) {
+  return (
+    <div className={`p-4 bg-white dark:bg-gray-900 rounded-lg shadow-sm border ${connected ? 'border-green-300 dark:border-green-700' : 'border-gray-200 dark:border-gray-800'}`}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">{icon}</span>
+          <div>
+            <div className="flex items-center gap-2">
+              <h4 className="font-medium text-sm">{name}</h4>
+              {connected && <span className="text-green-600 text-xs">✓ Connected</span>}
+            </div>
+            <p className="text-xs text-gray-600 dark:text-gray-400">{description}</p>
+            {details && <p className="text-xs text-gray-500 mt-1">{details}</p>}
+          </div>
+        </div>
+        {!connected && (
+          <a
+            href={setupUrl}
+            className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-medium transition"
+          >
+            {setupLabel}
+          </a>
+        )}
+      </div>
     </div>
   );
 }
