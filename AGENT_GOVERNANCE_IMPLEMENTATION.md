@@ -205,11 +205,18 @@
    - `INFRA_OWNERSHIP_PARITY` - Infrastructure ownership parity check
    - `CHURN_COMPLEXITY_RISK` - Churn/complexity risk assessment
 
+**Completed Tasks:**
+- [x] Implement `INTENT_CAPABILITY_PARITY` comparator
+- [x] Add message catalog entries for agent governance findings
+- [x] Wire up intent artifact ingestion into pack evaluator
+- [x] Create agent governance starter policy pack template
+
 **Remaining Tasks:**
 - [ ] Implement `INFRA_OWNERSHIP_PARITY` comparator (Build→Run)
 - [ ] Implement `CHURN_COMPLEXITY_RISK` comparator (Build quality)
 - [ ] Build capability lattice engine
-- [ ] Add message catalog entries for agent governance findings
+- [ ] Test end-to-end flow with sample PR
+- [ ] Fix integration issues discovered during testing
 
 ### Step 5: New Comparator Types (Week 2)
 

@@ -1,0 +1,195 @@
+apiVersion: verta.ai/v1
+kind: PolicyPack
+
+metadata:
+  id: verta.agent-governance.v1
+  name: Agent Governance Starter Pack
+  version: 1.0.0
+  description: Spec→Build→Run triangle verification for agent-authored code. Prevents privilege expansion, orphaned infrastructure, and governance debt.
+  packMode: enforce
+  strictness: balanced
+  owner: platform-team
+  tags:
+    - agent-governance
+    - intent-verification
+    - capability-lattice
+    - spec-build-run
+
+scope:
+  type: workspace
+  ref: null
+  branches:
+    include: ["main", "master", "develop", "release/*"]
+    exclude: []
+  repos:
+    include: []
+    exclude: []
+  prEvents:
+    - opened
+    - synchronize
+  actorSignals:
+    detectAgentAuthorship: true
+    agentPatterns:
+      - "cursor"
+      - "copilot"
+      - "codeium"
+      - "replit"
+      - "augment"
+
+comparators:
+  library: verta.comparators.v1
+
+artifacts:
+  requiredTypes: []
+  definitions:
+    - id: intent-artifact
+      name: Intent Artifact
+      description: Structured YAML block in PR description declaring capabilities, constraints, and expected side effects
+      paths:
+        - "PR_DESCRIPTION"  # Special path indicating PR description
+      required: false  # Optional by default, required by specific rules
+
+pathGroups:
+  - id: iac-paths
+    name: Infrastructure as Code Paths
+    description: Paths that modify infrastructure
+    patterns:
+      - "**/*.tf"
+      - "**/*.tfvars"
+      - "**/terraform/**"
+      - "**/infrastructure/**"
+      - "**/*.yaml"  # Kubernetes manifests
+      - "**/*.yml"
+      - "**/k8s/**"
+      - "**/cloudformation/**"
+
+  - id: permission-paths
+    name: Permission/IAM Paths
+    description: Paths that modify permissions or access control
+    patterns:
+      - "**/iam/**"
+      - "**/permissions/**"
+      - "**/roles/**"
+      - "**/policies/**"
+      - "**/*-policy.json"
+      - "**/*-role.json"
+
+  - id: database-paths
+    name: Database Schema Paths
+    description: Paths that modify database schemas
+    patterns:
+      - "**/migrations/**"
+      - "**/schema.prisma"
+      - "**/schema.sql"
+      - "**/models/**"
+
+rules:
+  - id: intent-capability-parity-check
+    name: Intent ↔ Capability Parity (Spec→Build)
+    description: Verify that code changes match declared intent capabilities. Detects privilege expansion and constraint violations.
+    enabled: true
+    trigger:
+      always: true  # Run on all PRs to detect undeclared capabilities
+    obligations:
+      - comparator: INTENT_CAPABILITY_PARITY
+        params: {}
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Code capabilities do not match declared intent. Review capability declarations in PR description."
+    skipIf:
+      labels: ["skip-intent-check", "emergency-hotfix"]
+    excludePaths:
+      - "test/**"
+      - "examples/**"
+      - "docs/**"
+
+  - id: require-intent-for-iac
+    name: Require Intent Artifact for Infrastructure Changes
+    description: Infrastructure changes must include intent artifact with ownership and decommission plan
+    enabled: true
+    trigger:
+      anyChangedPathsRef: iac-paths
+    obligations:
+      - comparator: ARTIFACT_PRESENT
+        params:
+          artifactId: intent-artifact
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Infrastructure changes require intent artifact with ownership declaration"
+    skipIf:
+      labels: ["infra-approved"]
+    excludePaths: []
+
+  - id: require-intent-for-permissions
+    name: Require Intent Artifact for Permission Changes
+    description: Permission/IAM changes must include intent artifact with justification
+    enabled: true
+    trigger:
+      anyChangedPathsRef: permission-paths
+    obligations:
+      - comparator: ARTIFACT_PRESENT
+        params:
+          artifactId: intent-artifact
+        severity: critical
+        decisionOnFail: block
+        decisionOnUnknown: block
+        message: "Permission changes require intent artifact with security justification"
+    skipIf:
+      labels: []  # No skip for permission changes
+    excludePaths: []
+
+  - id: require-intent-for-schema
+    name: Require Intent Artifact for Schema Changes
+    description: Database schema changes must include intent artifact with migration plan
+    enabled: true
+    trigger:
+      anyChangedPathsRef: database-paths
+    obligations:
+      - comparator: ARTIFACT_PRESENT
+        params:
+          artifactId: intent-artifact
+        severity: high
+        decisionOnFail: block
+        decisionOnUnknown: warn
+        message: "Schema changes require intent artifact with migration plan and rollback strategy"
+    skipIf:
+      labels: ["schema-approved"]
+    excludePaths:
+      - "test/**"
+
+evaluation:
+  externalDependencyMode: soft_fail
+  unknownArtifactMode: soft_fail
+  budgets:
+    maxTotalMs: 120000  # 2 minutes
+    perComparatorTimeoutMs: 30000  # 30 seconds
+    maxGitHubApiCalls: 60
+  maxFindings: 100
+  maxEvidenceSnippetsPerFinding: 5
+
+routing:
+  github:
+    checkRunName: "VertaAI Agent Governance"
+    conclusionMapping:
+      pass: success
+      warn: neutral
+      block: action_required
+    postSummaryComment: true
+    annotateFiles: true
+
+spawnTrackB:
+  enabled: true
+  when: on_block_only
+  createRemediationCase: true
+  remediationDefaults:
+    targetSystems:
+      - github_pr_comment
+    approvalChannelRef: platform-approvals
+    autoApplyThreshold: never  # Agent governance violations always require manual review
+  grouping:
+    byService: true
+    byDriftType: true
+    maxDriftsPerBatch: 5
+
