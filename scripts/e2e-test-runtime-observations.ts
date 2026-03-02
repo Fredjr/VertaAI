@@ -141,7 +141,7 @@ async function testGCPAuditWebhook() {
       messageId: 'test-message-id-' + Date.now(),
       publishTime: new Date().toISOString(),
     },
-    subscription: 'projects/test-project/subscriptions/vertaai-audit-logs-sub',
+    subscription: `projects/test-project/subscriptions/vertaai-audit-workspace-${WORKSPACE_ID}`,
   };
 
   try {
@@ -185,15 +185,15 @@ async function testDatabaseQueryLogWebhook() {
 
   const dbQueryEvent = {
     workspaceId: WORKSPACE_ID,
-    serviceName: 'user-service',
+    service: 'user-service',
     database: 'production',
     query: 'SELECT * FROM users WHERE id = $1',
     operation: 'SELECT',
     table: 'users',
     user: 'app_user',
     timestamp: new Date().toISOString(),
-    duration: 15.5,
-    rowsAffected: 1,
+    duration_ms: 15,
+    rows_affected: 1,
   };
 
   try {
@@ -247,9 +247,9 @@ async function testConnectionStatus() {
         details: data.status,
       });
       console.log('✅ Connection status test passed');
-      console.log('   CloudTrail:', data.status.cloudtrail.connected ? '✅ Connected' : '❌ Not connected');
-      console.log('   GCP Audit:', data.status.gcpAudit.connected ? '✅ Connected' : '❌ Not connected');
-      console.log('   Database Logs:', data.status.databaseLogs.connected ? '✅ Connected' : '❌ Not connected');
+      console.log('   CloudTrail:', data.status.aws_cloudtrail?.connected ? '✅ Connected' : '❌ Not connected');
+      console.log('   GCP Audit:', data.status.gcp_audit_log?.connected ? '✅ Connected' : '❌ Not connected');
+      console.log('   Database Logs:', data.status.database_query_log?.connected ? '✅ Connected' : '❌ Not connected');
     } else {
       results.push({
         test: 'Connection Status',
