@@ -188,34 +188,36 @@ async function detectDriftForService(
   };
 }
 
+// Canonical severity tiers (18-type lattice only)
+const CRITICAL_CAPABILITIES = ['iam_modify', 'secret_write', 'db_admin', 'infra_delete', 'deployment_modify'];
+const HIGH_CAPABILITIES = ['s3_delete', 's3_write', 'schema_modify', 'network_public', 'infra_create', 'infra_modify', 'secret_read'];
+
 /**
- * Calculate drift severity based on drift patterns
+ * Deterministic severity — privilege expansion is NEVER low.
+ * Low is reserved exclusively for clusters with zero undeclared usage.
  */
 function calculateDriftSeverity(drifts: any[]): 'critical' | 'high' | 'medium' | 'low' {
   const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
-  const criticalCapabilities = ['db_admin', 'permission_grant', 'secret_write', 'infra_delete'];
+  if (undeclaredUsage.length === 0) return 'low'; // Only unused declarations
+  if (undeclaredUsage.some(d => CRITICAL_CAPABILITIES.includes(d.capabilityType))) return 'critical';
+  if (undeclaredUsage.some(d => HIGH_CAPABILITIES.includes(d.capabilityType))) return 'high';
+  return 'medium'; // Any undeclared usage → minimum medium (privilege expansion)
+}
 
-  // Critical: Undeclared usage of critical capabilities
-  const criticalDrifts = undeclaredUsage.filter(d =>
-    criticalCapabilities.includes(d.capabilityType)
-  );
-
-  if (criticalDrifts.length > 0) {
-    return 'critical';
+/**
+ * Human-readable explanation of why this severity was assigned.
+ */
+function buildSeverityRationale(undeclaredUsage: any[], severity: string): string {
+  if (undeclaredUsage.length === 0) return 'No undeclared capabilities; only over-scoped declarations.';
+  const criticalCaps = undeclaredUsage.filter(d => CRITICAL_CAPABILITIES.includes(d.capabilityType));
+  const highCaps = undeclaredUsage.filter(d => HIGH_CAPABILITIES.includes(d.capabilityType));
+  if (criticalCaps.length > 0) {
+    return `Critical: undeclared ${criticalCaps.map((d: any) => d.capabilityType).join(', ')} detected — requires immediate security review.`;
   }
-
-  // High: More than 5 undeclared usages
-  if (undeclaredUsage.length > 5) {
-    return 'high';
+  if (highCaps.length > 0) {
+    return `High: undeclared ${highCaps.map((d: any) => d.capabilityType).join(', ')} — sensitive capability used without spec declaration.`;
   }
-
-  // Medium: 2-5 undeclared usages
-  if (undeclaredUsage.length >= 2) {
-    return 'medium';
-  }
-
-  // Low: Only unused declarations or 1 undeclared usage
-  return 'low';
+  return `Medium: ${undeclaredUsage.length} capability(ies) used at runtime without intent declaration — privilege expansion detected.`;
 }
 
 /**
@@ -241,29 +243,93 @@ async function createDriftPlanForRuntimeDrift(
     const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
     const unusedDeclarations = drifts.filter(d => d.driftType === 'unused_declaration');
     const severity = calculateDriftSeverity(drifts);
+    const severityRationale = buildSeverityRationale(undeclaredUsage, severity);
+
+    // Enrich each undeclared capability with actual observation evidence from DB
+    const undeclaredUsageEnriched = await Promise.all(
+      undeclaredUsage.map(async (d: any) => {
+        const samples = await prisma.runtimeCapabilityObservation.findMany({
+          where: { workspaceId, service, capabilityType: d.capabilityType, capabilityTarget: d.capabilityTarget },
+          orderBy: { observedAt: 'desc' },
+          take: 3,
+          select: { observedAt: true, source: true, sourceEventId: true, metadata: true },
+        });
+        const baseCount = d.evidence?.[0]?.metadata?.count ?? samples.length ?? 1;
+        const oldestSample = samples[samples.length - 1];
+        const newestSample = samples[0];
+        return {
+          capability: d.capabilityType,
+          target: d.capabilityTarget,
+          observationCount: baseCount,
+          firstSeen: oldestSample?.observedAt?.toISOString() ?? null,
+          lastSeen: newestSample?.observedAt?.toISOString() ?? null,
+          sources: [...new Set(samples.map((s: any) => s.source))],
+          severity: CRITICAL_CAPABILITIES.includes(d.capabilityType) ? 'critical'
+            : HIGH_CAPABILITIES.includes(d.capabilityType) ? 'high' : 'medium',
+          evidence: samples.map((s: any) => {
+            const meta = s.metadata as any;
+            return {
+              observedAt: s.observedAt.toISOString(),
+              source: s.source,
+              sourceEventId: s.sourceEventId ?? null,
+              actor: meta?.userArn ?? meta?.principalEmail ?? meta?.user ?? 'unknown',
+              region: meta?.awsRegion ?? null,
+              rawEvent: meta?.eventName ?? meta?.methodName ?? meta?.operation ?? null,
+            };
+          }),
+        };
+      })
+    );
 
     // Build the summary object (used for both create and update)
     const summaryPayload = {
       intentArtifactId: intentArtifact.id,
       severity,
+      severityRationale,
       driftsDetected: drifts.length,
-      undeclaredUsage: undeclaredUsage.map(d => ({
-        capability: d.capabilityType,
-        target: d.capabilityTarget,
-        observationCount: d.evidence?.[0]?.metadata?.count ?? 1,
-      })),
-      unusedDeclarations: unusedDeclarations.map(d => ({
+      undeclaredUsage: undeclaredUsageEnriched,
+      unusedDeclarations: unusedDeclarations.map((d: any) => ({
         capability: d.capabilityType,
         target: d.capabilityTarget,
       })),
-      proposedChanges: {
-        type: 'update_intent_artifact',
-        description: `Update intent artifact to match runtime observations for service ${service}`,
-        changes: undeclaredUsage.map(d => ({
-          action: 'add_capability',
-          capability: { type: d.capabilityType, target: d.capabilityTarget },
-        })),
-      },
+      remediationOptions: [
+        {
+          id: 'A',
+          label: 'Tighten runtime (recommended)',
+          description: 'Remove or restrict the undeclared capability from code/IAM. Spec remains unchanged.',
+          requiresApproval: false,
+          actions: undeclaredUsage.map((d: any) => ({
+            type: 'remove_capability',
+            capability: d.capabilityType,
+            target: d.capabilityTarget,
+            guidance: `Remove ${d.capabilityType} access to ${d.capabilityTarget} from code/IAM policy.`,
+          })),
+        },
+        {
+          id: 'B',
+          label: 'Expand intent (requires security approval)',
+          description: 'Add the capability to the intent artifact — triggers security review workflow.',
+          requiresApproval: true,
+          actions: undeclaredUsage.map((d: any) => ({
+            type: 'add_to_intent',
+            capability: d.capabilityType,
+            target: d.capabilityTarget,
+            guidance: `Add ${d.capabilityType}:${d.capabilityTarget} to intent artifact. Requires security team sign-off.`,
+          })),
+        },
+        {
+          id: 'C',
+          label: 'Mark as false positive',
+          description: 'Dismiss with documented justification and mandatory expiry date for re-evaluation.',
+          requiresApproval: true,
+          actions: undeclaredUsage.map((d: any) => ({
+            type: 'false_positive',
+            capability: d.capabilityType,
+            target: d.capabilityTarget,
+            guidance: `Document why ${d.capabilityType} is benign. Set expiry ≤ 90 days for mandatory re-evaluation.`,
+          })),
+        },
+      ],
     };
 
     if (existingCluster) {

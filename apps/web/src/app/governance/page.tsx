@@ -6,23 +6,42 @@ import Navigation from '../../components/Navigation';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+interface EvidenceItem {
+  observedAt: string;
+  source: string;
+  sourceEventId?: string | null;
+  actor?: string;
+  region?: string | null;
+  rawEvent?: string | null;
+}
+
+interface RemediationOption {
+  id: 'A' | 'B' | 'C';
+  label: string;
+  description: string;
+  requiresApproval: boolean;
+  actions: { type: string; capability: string; target: string; guidance: string }[];
+}
+
 interface CapabilityItem {
   capability: string;
   target: string;
   observationCount?: number;
+  firstSeen?: string | null;
+  lastSeen?: string | null;
+  sources?: string[];
+  severity?: string;
+  evidence?: EvidenceItem[];
 }
 
 interface ClusterSummary {
   intentArtifactId?: string;
   severity?: string;
+  severityRationale?: string;
   driftsDetected?: number;
   undeclaredUsage?: CapabilityItem[];
   unusedDeclarations?: CapabilityItem[];
-  proposedChanges?: {
-    type?: string;
-    description?: string;
-    changes?: { action: string; capability: { type: string; target: string } }[];
-  };
+  remediationOptions?: RemediationOption[];
 }
 
 interface SpecBuildFindings {
@@ -97,6 +116,7 @@ function GovernanceContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [expandedEvidence, setExpandedEvidence] = useState<string | null>(null);
 
   const fetchClusters = async () => {
     setLoading(true);
@@ -176,10 +196,13 @@ function GovernanceContent() {
               {clusters.map(cluster => {
                 const summary = cluster.clusterSummary;
                 const severity = summary?.severity || 'unknown';
+                const severityRationale = summary?.severityRationale || null;
                 const undeclaredUsage: CapabilityItem[] = Array.isArray(summary?.undeclaredUsage) ? summary.undeclaredUsage : [];
                 const unusedDeclarations: CapabilityItem[] = Array.isArray(summary?.unusedDeclarations) ? summary.unusedDeclarations : [];
-                const proposedFix = summary?.proposedChanges?.description || null;
+                const remediationOptions: RemediationOption[] = Array.isArray(summary?.remediationOptions) ? summary.remediationOptions : [];
                 const specCaps = cluster.intentArtifact ? normalizeCapabilities(cluster.intentArtifact.requestedCapabilities) : [];
+                const artifactId = cluster.intentArtifact?.id ?? null;
+                const artifactHash = artifactId ? artifactId.slice(-8) : null;
                 const prNumber = cluster.intentArtifact?.prNumber;
                 const repoFullName = cluster.intentArtifact?.repoFullName;
                 const prUrl = prNumber && repoFullName ? `https://github.com/${repoFullName}/pull/${prNumber}` : null;
@@ -194,18 +217,23 @@ function GovernanceContent() {
                 return (
                   <div key={cluster.id} className="bg-white dark:bg-gray-900 rounded-xl shadow hover:shadow-md transition-shadow overflow-hidden">
                     {/* Card header */}
-                    <div className="flex items-center justify-between gap-4 px-6 py-4 border-b border-gray-100 dark:border-gray-800">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white font-mono">{cluster.service}</h3>
-                        <span className={`px-2 py-0.5 text-xs font-semibold rounded border ${SEVERITY_COLORS[severity]}`}>
-                          {severity.toUpperCase()} severity
-                        </span>
-                        <span className={`px-2 py-0.5 text-xs font-medium rounded ${STATUS_COLORS[cluster.status] || 'bg-gray-100 text-gray-600'}`}>
-                          {cluster.status}
-                        </span>
-                        <span className="text-xs text-gray-400">{cluster.driftCount} drifts detected</span>
+                    <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white font-mono">{cluster.service}</h3>
+                          <span className={`px-2 py-0.5 text-xs font-semibold rounded border ${SEVERITY_COLORS[severity]}`}>
+                            {severity.toUpperCase()} severity
+                          </span>
+                          <span className={`px-2 py-0.5 text-xs font-medium rounded ${STATUS_COLORS[cluster.status] || 'bg-gray-100 text-gray-600'}`}>
+                            {cluster.status}
+                          </span>
+                          <span className="text-xs text-gray-400">{cluster.driftCount} drifts detected</span>
+                        </div>
+                        <div className="text-xs text-gray-400 whitespace-nowrap">{new Date(cluster.createdAt).toLocaleDateString()}</div>
                       </div>
-                      <div className="text-xs text-gray-400 whitespace-nowrap">{new Date(cluster.createdAt).toLocaleDateString()}</div>
+                      {severityRationale && (
+                        <div className="mt-1.5 text-xs text-gray-500 dark:text-gray-400 italic">{severityRationale}</div>
+                      )}
                     </div>
 
                     {/* Spec → Build → Run triangle (+ Spec→Build findings from INTENT_CAPABILITY_PARITY) */}
@@ -227,8 +255,13 @@ function GovernanceContent() {
                           <span className="text-xs text-gray-400 italic">No intent artifact linked</span>
                         )}
                         {cluster.intentArtifact && (
-                          <div className="mt-3 text-xs text-gray-400">
-                            by <span className="font-mono">{cluster.intentArtifact.author}</span>
+                          <div className="mt-3 space-y-0.5">
+                            <div className="text-xs text-gray-400">
+                              by <span className="font-mono">{cluster.intentArtifact.author}</span>
+                            </div>
+                            {artifactHash && (
+                              <div className="text-xs text-gray-400 font-mono">artifact #{artifactHash}</div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -277,7 +310,11 @@ function GovernanceContent() {
                             </div>
                           </>
                         ) : (
-                          <span className="text-xs text-gray-400 italic">No PR gate data yet — runs on next PR webhook</span>
+                          <div className="rounded-md bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 p-3">
+                            <div className="text-xs font-bold text-orange-700 dark:text-orange-400">⚠️ CONTROL GAP — Gate Not Run</div>
+                            <div className="text-xs text-orange-800 dark:text-orange-300 mt-1">Spec→Build verification was not enforced on this PR.</div>
+                            <div className="text-xs text-orange-600 dark:text-orange-400 mt-1">Impact: Runtime-only detection increases breach window. Code may have shipped capabilities never declared in intent.</div>
+                          </div>
                         )}
                       </div>
 
@@ -290,12 +327,41 @@ function GovernanceContent() {
                           <div className="mb-3">
                             <div className="text-xs font-semibold text-red-600 dark:text-red-400 mb-1">❌ Privilege expansion ({undeclaredUsage.length})</div>
                             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">Used at runtime but NOT declared in Spec:</div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {undeclaredUsage.map((item, i) => (
-                                <span key={i} className="px-2 py-0.5 text-xs font-mono rounded-full bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700">
-                                  {item.capability}{item.target && item.target !== '*' ? `:${item.target}` : ''}
-                                </span>
-                              ))}
+                            <div className="space-y-1.5">
+                              {undeclaredUsage.map((item, i) => {
+                                const evidenceKey = `${cluster.id}:${item.capability}:${i}`;
+                                const isOpen = expandedEvidence === evidenceKey;
+                                return (
+                                  <div key={i}>
+                                    <button onClick={() => setExpandedEvidence(isOpen ? null : evidenceKey)}
+                                      className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-mono rounded-full bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors cursor-pointer">
+                                      {item.capability}{item.target && item.target !== '*' ? `:${item.target}` : ''}
+                                      <span className="text-red-400">{isOpen ? '▲' : '▼'}</span>
+                                    </button>
+                                    {isOpen && (
+                                      <div className="mt-1 ml-1 p-2 rounded bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 text-xs space-y-1">
+                                        {item.lastSeen && <div className="text-gray-600 dark:text-gray-300">Last seen: <span className="font-mono">{new Date(item.lastSeen).toLocaleString()}</span></div>}
+                                        {item.firstSeen && <div className="text-gray-600 dark:text-gray-300">First seen: <span className="font-mono">{new Date(item.firstSeen).toLocaleString()}</span></div>}
+                                        {item.observationCount && <div className="text-gray-600 dark:text-gray-300">Observations: <span className="font-semibold">{item.observationCount}</span></div>}
+                                        {item.sources && item.sources.length > 0 && <div className="text-gray-600 dark:text-gray-300">Sources: <span className="font-mono">{item.sources.join(', ')}</span></div>}
+                                        {item.evidence && item.evidence.length > 0 && (
+                                          <div className="mt-1.5 space-y-1 border-t border-red-200 dark:border-red-800 pt-1.5">
+                                            <div className="text-gray-500 dark:text-gray-400 font-semibold">Evidence samples:</div>
+                                            {item.evidence.map((ev, ei) => (
+                                              <div key={ei} className="bg-white dark:bg-gray-900 rounded p-1.5 border border-red-100 dark:border-red-800 space-y-0.5">
+                                                <div className="text-gray-500 dark:text-gray-400 font-mono">{new Date(ev.observedAt).toLocaleString()}</div>
+                                                {ev.rawEvent && <div>Event: <span className="font-mono text-gray-700 dark:text-gray-300">{ev.rawEvent}</span></div>}
+                                                {ev.actor && ev.actor !== 'unknown' && <div>Actor: <span className="font-mono text-gray-700 dark:text-gray-300">{ev.actor}</span></div>}
+                                                {ev.source && <div>Source: <span className="font-mono text-gray-700 dark:text-gray-300">{ev.source}</span></div>}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -320,11 +386,30 @@ function GovernanceContent() {
                       </div>
                     </div>
 
-                    {/* Proposed fix footer */}
-                    {proposedFix && (
-                      <div className="px-6 py-3 bg-blue-50 dark:bg-blue-900/10 border-t border-blue-100 dark:border-blue-900/30">
-                        <span className="text-xs font-semibold text-blue-700 dark:text-blue-300 mr-2">💡 Proposed fix:</span>
-                        <span className="text-xs text-blue-800 dark:text-blue-200">{proposedFix}</span>
+                    {/* Remediation options footer */}
+                    {remediationOptions.length > 0 && (
+                      <div className="px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-800">
+                        <div className="text-xs font-bold text-gray-700 dark:text-gray-300 mb-3">🔧 Remediation Options</div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          {remediationOptions.map(opt => (
+                            <div key={opt.id} className={`rounded-lg border p-3 ${
+                              opt.id === 'A' ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800'
+                              : opt.id === 'B' ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800'
+                              : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'
+                            }`}>
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${
+                                  opt.id === 'A' ? 'bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-300'
+                                  : opt.id === 'B' ? 'bg-amber-100 dark:bg-amber-800 text-amber-700 dark:text-amber-300'
+                                  : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                }`}>Option {opt.id}</span>
+                                {opt.requiresApproval && <span className="text-xs text-orange-600 dark:text-orange-400 font-medium">🔒 Needs approval</span>}
+                              </div>
+                              <div className="text-xs font-semibold text-gray-800 dark:text-gray-200 mb-1">{opt.label}</div>
+                              <div className="text-xs text-gray-600 dark:text-gray-400">{opt.description}</div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>

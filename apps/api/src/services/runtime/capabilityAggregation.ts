@@ -185,16 +185,18 @@ export async function detectCapabilityDrift(
 }
 
 /**
- * Calculate severity based on capability type
+ * Calculate severity based on capability type (canonical 18-type lattice).
+ * Any undeclared usage is treated as minimum medium — privilege expansion is never low.
  */
 function calculateSeverity(capabilityType: CapabilityType): 'low' | 'medium' | 'high' | 'critical' {
-  const criticalCapabilities: CapabilityType[] = ['db_admin', 'permission_grant', 'secret_write', 'infra_delete'];
-  const highCapabilities: CapabilityType[] = ['db_write', 'permission_revoke', 'secret_read', 'infra_modify', 'code_delete'];
-  const mediumCapabilities: CapabilityType[] = ['api_modify', 'api_delete', 'infra_create', 'code_modify'];
-  
+  // Critical: immediate security review required
+  const criticalCapabilities: CapabilityType[] = ['iam_modify', 'secret_write', 'db_admin', 'infra_delete', 'deployment_modify'];
+  // High: sensitive capability — escalate to security
+  const highCapabilities: CapabilityType[] = ['s3_delete', 's3_write', 'schema_modify', 'network_public', 'infra_create', 'infra_modify', 'secret_read'];
+
   if (criticalCapabilities.includes(capabilityType)) return 'critical';
   if (highCapabilities.includes(capabilityType)) return 'high';
-  if (mediumCapabilities.includes(capabilityType)) return 'medium';
-  return 'low';
+  // Any other undeclared usage → medium (privilege expansion minimum)
+  return 'medium';
 }
 
