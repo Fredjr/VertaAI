@@ -26,6 +26,8 @@ import { testImplementationParityComparator } from './cross-artifact/testImpleme
 import { dashboardServiceParityComparator } from './cross-artifact/dashboardServiceParity.js';
 import { runbookOwnershipParityComparator } from './cross-artifact/runbookOwnershipParity.js';
 import { sloThresholdParityComparator } from './cross-artifact/sloThresholdParity.js';
+// Agent Governance Comparators (Spec→Build→Run Triangle)
+import { intentCapabilityParityComparator } from './cross-artifact/intentCapabilityParity.js';
 
 export function initializeComparators(): void {
   console.log('[Comparators] Initializing comparator registry...');
@@ -53,6 +55,9 @@ export function initializeComparators(): void {
   comparatorRegistry.register(dashboardServiceParityComparator);
   comparatorRegistry.register(runbookOwnershipParityComparator);
   comparatorRegistry.register(sloThresholdParityComparator);
+
+  // Register Agent Governance Comparators
+  comparatorRegistry.register(intentCapabilityParityComparator);
 
   console.log(`[Comparators] Registered ${comparatorRegistry.list().length} comparators`);
   console.log(`[Comparators] Available: ${comparatorRegistry.list().join(', ')}`);

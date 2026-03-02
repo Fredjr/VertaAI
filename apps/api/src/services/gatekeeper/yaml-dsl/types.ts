@@ -59,6 +59,11 @@ export enum ComparatorId {
   DASHBOARD_SERVICE_PARITY = 'DASHBOARD_SERVICE_PARITY',
   RUNBOOK_OWNERSHIP_PARITY = 'RUNBOOK_OWNERSHIP_PARITY',
   SLO_THRESHOLD_PARITY = 'SLO_THRESHOLD_PARITY',
+
+  // Agent Governance comparators (Spec→Build→Run Triangle)
+  INTENT_CAPABILITY_PARITY = 'INTENT_CAPABILITY_PARITY',
+  INFRA_OWNERSHIP_PARITY = 'INFRA_OWNERSHIP_PARITY',
+  CHURN_COMPLEXITY_RISK = 'CHURN_COMPLEXITY_RISK',
 }
 
 // ============================================================================

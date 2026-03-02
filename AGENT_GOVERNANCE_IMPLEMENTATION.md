@@ -171,6 +171,46 @@
 
 ## Next Steps
 
+### ⏳ Step 5: New Comparator Types (IN PROGRESS)
+
+**Files Created:**
+- `apps/api/src/services/gatekeeper/yaml-dsl/comparators/cross-artifact/intentCapabilityParity.ts` (150 lines)
+
+**Files Modified:**
+- `apps/api/src/services/gatekeeper/yaml-dsl/types.ts` - Added agent governance comparator IDs
+- `apps/api/src/services/gatekeeper/yaml-dsl/comparators/types.ts` - Added agent governance finding codes
+- `apps/api/src/services/gatekeeper/yaml-dsl/comparators/index.ts` - Registered new comparator
+
+**Accomplishments:**
+
+1. **INTENT_CAPABILITY_PARITY Comparator** (Spec→Build) - ✅ COMPLETED
+   - Fetches intent artifact from database
+   - Extracts declared capabilities and constraints
+   - Infers actual capabilities from file changes
+   - Compares declared vs actual capabilities
+   - Detects undeclared capabilities (privilege expansion)
+   - Validates constraint compliance (read_only, no_new_infra, etc.)
+   - Returns structured violations with evidence
+
+2. **New Finding Codes Added:**
+   - `INTENT_CAPABILITY_UNDECLARED` - Undeclared capability detected
+   - `INTENT_CAPABILITY_UNUSED` - Declared but unused capability
+   - `INTENT_CONSTRAINT_VIOLATED` - Constraint violation detected
+   - `INFRA_OWNERSHIP_MISSING` - Infrastructure ownership missing
+   - `INFRA_OWNERSHIP_MISMATCH` - Infrastructure ownership mismatch
+   - `CHURN_COMPLEXITY_HIGH` - High churn/complexity risk
+
+3. **New Comparator IDs Added:**
+   - `INTENT_CAPABILITY_PARITY` - Intent ↔ Capability parity check
+   - `INFRA_OWNERSHIP_PARITY` - Infrastructure ownership parity check
+   - `CHURN_COMPLEXITY_RISK` - Churn/complexity risk assessment
+
+**Remaining Tasks:**
+- [ ] Implement `INFRA_OWNERSHIP_PARITY` comparator (Build→Run)
+- [ ] Implement `CHURN_COMPLEXITY_RISK` comparator (Build quality)
+- [ ] Build capability lattice engine
+- [ ] Add message catalog entries for agent governance findings
+
 ### Step 5: New Comparator Types (Week 2)
 
 ### Step 5: New Comparator Types (Week 2)
