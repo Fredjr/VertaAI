@@ -51,14 +51,14 @@ router.post('/', async (req, res) => {
     console.log(`[Database Query Log Webhook] Processing query for workspace: ${queryLog.workspaceId}`);
 
     // Ingest database query
-    const observation = await ingestDatabaseQuery(queryLog.workspaceId, queryLog);
+    const observationId = await ingestDatabaseQuery(queryLog.workspaceId, queryLog.service, queryLog as any);
 
-    console.log(`[Database Query Log Webhook] Ingested observation: ${observation.id}`);
+    console.log(`[Database Query Log Webhook] Ingested observation: ${observationId}`);
 
     res.status(200).json({
       success: true,
       message: 'Database query log entry ingested successfully',
-      observationId: observation.id,
+      observationId,
     });
   } catch (error: any) {
     console.error('[Database Query Log Webhook] Error:', error.message);
@@ -93,8 +93,8 @@ router.post('/batch', async (req, res) => {
     for (const entry of entries) {
       try {
         const queryLog = DatabaseQueryLogSchema.parse({ ...entry, workspaceId });
-        const observation = await ingestDatabaseQuery(workspaceId, queryLog);
-        results.push({ success: true, observationId: observation.id });
+        const observationId = await ingestDatabaseQuery(workspaceId, queryLog.service, queryLog as any);
+        results.push({ success: true, observationId });
       } catch (error: any) {
         console.error('[Database Query Log Webhook] Error ingesting entry:', error.message);
         results.push({ success: false, error: error.message });

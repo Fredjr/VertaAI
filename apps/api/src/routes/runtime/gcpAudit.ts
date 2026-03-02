@@ -57,14 +57,15 @@ router.post('/', async (req, res) => {
     console.log(`[GCP Audit Webhook] Processing event for workspace: ${workspaceId}`);
 
     // Ingest GCP Audit Log entry
-    const observation = await ingestGCPAuditLog(workspaceId, auditLogEntry);
+    const service = auditLogEntry.protoPayload?.serviceName || auditLogEntry.resource?.labels?.service_name || 'unknown';
+    const observationId = await ingestGCPAuditLog(workspaceId, service, auditLogEntry);
 
-    console.log(`[GCP Audit Webhook] Ingested observation: ${observation.id}`);
+    console.log(`[GCP Audit Webhook] Ingested observation: ${observationId}`);
 
     res.status(200).json({
       success: true,
       message: 'GCP Audit Log entry ingested successfully',
-      observationId: observation.id,
+      observationId,
     });
   } catch (error: any) {
     console.error('[GCP Audit Webhook] Error:', error.message);
@@ -98,8 +99,9 @@ router.post('/batch', async (req, res) => {
 
     for (const entry of entries) {
       try {
-        const observation = await ingestGCPAuditLog(workspaceId, entry);
-        results.push({ success: true, observationId: observation.id });
+        const service = entry.protoPayload?.serviceName || entry.resource?.labels?.service_name || 'unknown';
+        const observationId = await ingestGCPAuditLog(workspaceId, service, entry);
+        results.push({ success: true, observationId });
       } catch (error: any) {
         console.error('[GCP Audit Webhook] Error ingesting entry:', error.message);
         results.push({ success: false, error: error.message });

@@ -65,8 +65,9 @@ router.post('/', async (req, res) => {
 
     for (const record of records) {
       try {
-        const observation = await ingestCloudTrailEvent(workspaceId, record);
-        results.push({ success: true, observationId: observation.id });
+        const service = record.eventSource || 'unknown';
+        const observationId = await ingestCloudTrailEvent(workspaceId, service, record);
+        results.push({ success: true, observationId });
       } catch (error: any) {
         console.error('[CloudTrail Webhook] Error ingesting record:', error.message);
         results.push({ success: false, error: error.message });
