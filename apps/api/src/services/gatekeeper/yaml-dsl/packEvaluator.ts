@@ -21,6 +21,9 @@ import { evaluateCondition, evaluateConditions } from './conditions/evaluator.js
 import type { Condition, ConditionEvaluationResult } from './conditions/types.js';
 // TRACK A TASK 2: Import auto-invoked comparators
 import { runAutoInvokedComparators } from './autoInvokedComparators.js';
+// AGENT GOVERNANCE: Import intent artifact ingestion
+import { ingestIntentArtifactFromPR } from '../../agentGovernance/ingestion/intentArtifactIngestionService.js';
+import type { FileChange } from '../../../types/agentGovernance.js';
 // 11.1: Import artifact graph builder
 import { buildArtifactGraph } from './artifactGraphBuilder.js';
 // GAP-1 FIX: ChangeSurface → path-glob expansion
@@ -112,6 +115,49 @@ export class PackEvaluator {
       currentApiCalls: 0,
       startTime: Date.now(),
     };
+
+    // AGENT GOVERNANCE: Ingest intent artifact from PR (if present)
+    // This runs BEFORE comparators so they can access the intent artifact
+    console.log('[PackEvaluator] Ingesting intent artifact (if present)...');
+    try {
+      const fileChanges: FileChange[] = context.files.map(f => ({
+        path: f.filename,
+        changeType: f.status === 'added' ? 'created' : f.status === 'removed' ? 'deleted' : 'modified',
+        additions: f.additions,
+        deletions: f.deletions,
+      }));
+
+      const prData = {
+        number: context.prNumber,
+        title: context.title,
+        body: context.body,
+        labels: context.labels,
+        user: {
+          login: context.author,
+          type: 'User', // Will be detected by agent identity extraction
+        },
+        commits: context.commits.map(c => ({
+          message: c.message,
+          author: { name: c.author, email: '' },
+        })),
+        files: fileChanges,
+        repoFullName: `${context.owner}/${context.repo}`,
+      };
+
+      const ingestionResult = await ingestIntentArtifactFromPR(context.workspaceId, prData);
+
+      if (ingestionResult.intentArtifact) {
+        console.log(`[PackEvaluator] Intent artifact ingested: ${ingestionResult.intentArtifact.id}`);
+        if (ingestionResult.agentActionTrace) {
+          console.log(`[PackEvaluator] Agent action trace created: ${ingestionResult.agentActionTrace.id}`);
+        }
+      } else {
+        console.log(`[PackEvaluator] No intent artifact found or validation failed`);
+      }
+    } catch (error) {
+      console.error('[PackEvaluator] Intent artifact ingestion failed:', error);
+      // Continue evaluation even if ingestion fails (non-blocking)
+    }
 
     // TRACK A TASK 2: Run auto-invoked comparators on every PR
     // These run BEFORE rule evaluation to detect drift and safety issues

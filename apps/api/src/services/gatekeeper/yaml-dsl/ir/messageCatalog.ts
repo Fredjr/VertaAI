@@ -288,6 +288,52 @@ export const MESSAGE_CATALOG: MessageCatalog = {
   },
 
   // ==========================================================================
+  // FAIL MESSAGES - AGENT GOVERNANCE DOMAIN (Spec→Build→Run Triangle)
+  // ==========================================================================
+
+  'fail.agent_governance.intent_capability_undeclared': {
+    id: 'fail.agent_governance.intent_capability_undeclared',
+    template: 'Undeclared capabilities detected: {capabilities}. These capabilities were used but not declared in the intent artifact.',
+    description: 'Code uses capabilities not declared in intent (privilege expansion)',
+    params: ['capabilities'],
+  },
+
+  'fail.agent_governance.intent_capability_unused': {
+    id: 'fail.agent_governance.intent_capability_unused',
+    template: 'Declared capabilities not used: {capabilities}. These capabilities were declared but not used in the code.',
+    description: 'Intent declares capabilities not used in code',
+    params: ['capabilities'],
+  },
+
+  'fail.agent_governance.intent_constraint_violated': {
+    id: 'fail.agent_governance.intent_constraint_violated',
+    template: 'Constraint violated: {constraint}. {details}',
+    description: 'Code violates declared constraints',
+    params: ['constraint', 'details'],
+  },
+
+  'fail.agent_governance.infra_ownership_missing': {
+    id: 'fail.agent_governance.infra_ownership_missing',
+    template: 'Infrastructure ownership missing for: {resources}',
+    description: 'Infrastructure created without ownership metadata',
+    params: ['resources'],
+  },
+
+  'fail.agent_governance.infra_ownership_mismatch': {
+    id: 'fail.agent_governance.infra_ownership_mismatch',
+    template: 'Infrastructure ownership mismatch: {resources}. Expected: {expected}, Found: {actual}',
+    description: 'Infrastructure ownership does not match declared owner',
+    params: ['resources', 'expected', 'actual'],
+  },
+
+  'fail.agent_governance.churn_complexity_high': {
+    id: 'fail.agent_governance.churn_complexity_high',
+    template: 'High churn/complexity risk detected: {files}. Churn score: {churnScore}, Complexity score: {complexityScore}',
+    description: 'Code changes have high churn and complexity',
+    params: ['files', 'churnScore', 'complexityScore'],
+  },
+
+  // ==========================================================================
   // PASS MESSAGES - CROSS-ARTIFACT DOMAIN (Track A Task 2)
   // ==========================================================================
 
@@ -319,6 +365,28 @@ export const MESSAGE_CATALOG: MessageCatalog = {
     id: 'pass.cross_artifact.test_implementation_consistent',
     template: 'Tests and implementation are consistent',
     description: 'Test and implementation changes are aligned',
+  },
+
+  // ==========================================================================
+  // PASS MESSAGES - AGENT GOVERNANCE DOMAIN (Spec→Build→Run Triangle)
+  // ==========================================================================
+
+  'pass.agent_governance.intent_capability_consistent': {
+    id: 'pass.agent_governance.intent_capability_consistent',
+    template: 'Intent and capabilities are consistent. All declared capabilities are used, no undeclared capabilities detected.',
+    description: 'Intent artifact matches actual code capabilities',
+  },
+
+  'pass.agent_governance.infra_ownership_consistent': {
+    id: 'pass.agent_governance.infra_ownership_consistent',
+    template: 'Infrastructure ownership is consistent',
+    description: 'Infrastructure ownership matches declared owner',
+  },
+
+  'pass.agent_governance.churn_complexity_acceptable': {
+    id: 'pass.agent_governance.churn_complexity_acceptable',
+    template: 'Churn and complexity are within acceptable limits',
+    description: 'Code changes have acceptable churn and complexity',
   },
 
   // ==========================================================================
@@ -661,6 +729,51 @@ export const MESSAGE_CATALOG: MessageCatalog = {
   },
 
   // ==========================================================================
+  // REMEDIATION MESSAGES - AGENT GOVERNANCE DOMAIN (Spec→Build→Run Triangle)
+  // ==========================================================================
+
+  'remediation.agent_governance.declare_capability': {
+    id: 'remediation.agent_governance.declare_capability',
+    template: 'Add the following capabilities to the intent artifact YAML block in the PR description: {capabilities}',
+    description: 'Declare missing capabilities in intent artifact',
+    params: ['capabilities'],
+  },
+
+  'remediation.agent_governance.remove_unused_capability': {
+    id: 'remediation.agent_governance.remove_unused_capability',
+    template: 'Remove unused capabilities from the intent artifact: {capabilities}',
+    description: 'Remove unused capabilities from intent artifact',
+    params: ['capabilities'],
+  },
+
+  'remediation.agent_governance.fix_constraint_violation': {
+    id: 'remediation.agent_governance.fix_constraint_violation',
+    template: 'Fix constraint violation: {constraint}. {suggestion}',
+    description: 'Fix constraint violation',
+    params: ['constraint', 'suggestion'],
+  },
+
+  'remediation.agent_governance.add_infra_ownership': {
+    id: 'remediation.agent_governance.add_infra_ownership',
+    template: 'Add ownership metadata to infrastructure resources: {resources}',
+    description: 'Add infrastructure ownership metadata',
+    params: ['resources'],
+  },
+
+  'remediation.agent_governance.fix_infra_ownership': {
+    id: 'remediation.agent_governance.fix_infra_ownership',
+    template: 'Update infrastructure ownership to match declared owner: {resources}',
+    description: 'Fix infrastructure ownership mismatch',
+    params: ['resources'],
+  },
+
+  'remediation.agent_governance.reduce_churn_complexity': {
+    id: 'remediation.agent_governance.reduce_churn_complexity',
+    template: 'Reduce code churn and complexity by breaking changes into smaller PRs or simplifying implementation',
+    description: 'Reduce churn and complexity',
+  },
+
+  // ==========================================================================
   // EVIDENCE CONTEXT MESSAGES
   // ==========================================================================
 
@@ -892,6 +1005,26 @@ export const RemediationMessages = {
     updateTests: () =>
       formatMessage('remediation.cross_artifact.update_tests'),
   },
+
+  agentGovernance: {
+    declareCapability: (capabilities: string) =>
+      formatMessage('remediation.agent_governance.declare_capability', { capabilities }),
+
+    removeUnusedCapability: (capabilities: string) =>
+      formatMessage('remediation.agent_governance.remove_unused_capability', { capabilities }),
+
+    fixConstraintViolation: (constraint: string, suggestion: string) =>
+      formatMessage('remediation.agent_governance.fix_constraint_violation', { constraint, suggestion }),
+
+    addInfraOwnership: (resources: string) =>
+      formatMessage('remediation.agent_governance.add_infra_ownership', { resources }),
+
+    fixInfraOwnership: (resources: string) =>
+      formatMessage('remediation.agent_governance.fix_infra_ownership', { resources }),
+
+    reduceChurnComplexity: () =>
+      formatMessage('remediation.agent_governance.reduce_churn_complexity'),
+  },
 };
 
 /**
@@ -947,5 +1080,40 @@ export const CrossArtifactMessages = {
 
   testImplementationConsistent: () =>
     formatMessage('pass.cross_artifact.test_implementation_consistent'),
+};
+
+/**
+ * Format agent governance messages (Spec→Build→Run Triangle)
+ */
+export const AgentGovernanceMessages = {
+  // Intent ↔ Capability (Spec→Build)
+  intentCapabilityUndeclared: (capabilities: string) =>
+    formatMessage('fail.agent_governance.intent_capability_undeclared', { capabilities }),
+
+  intentCapabilityUnused: (capabilities: string) =>
+    formatMessage('fail.agent_governance.intent_capability_unused', { capabilities }),
+
+  intentConstraintViolated: (constraint: string, details: string) =>
+    formatMessage('fail.agent_governance.intent_constraint_violated', { constraint, details }),
+
+  intentCapabilityConsistent: () =>
+    formatMessage('pass.agent_governance.intent_capability_consistent'),
+
+  // Infrastructure Ownership (Build→Run)
+  infraOwnershipMissing: (resources: string) =>
+    formatMessage('fail.agent_governance.infra_ownership_missing', { resources }),
+
+  infraOwnershipMismatch: (resources: string, expected: string, actual: string) =>
+    formatMessage('fail.agent_governance.infra_ownership_mismatch', { resources, expected, actual }),
+
+  infraOwnershipConsistent: () =>
+    formatMessage('pass.agent_governance.infra_ownership_consistent'),
+
+  // Churn/Complexity Risk (Build Quality)
+  churnComplexityHigh: (files: string, churnScore: number, complexityScore: number) =>
+    formatMessage('fail.agent_governance.churn_complexity_high', { files, churnScore, complexityScore }),
+
+  churnComplexityAcceptable: () =>
+    formatMessage('pass.agent_governance.churn_complexity_acceptable'),
 };
 
