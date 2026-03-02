@@ -1308,6 +1308,10 @@ model IntentArtifact {
   expectedSideEffects   Json     @default("{}") @map("expected_side_effects") // creates_table, modifies_schema, etc.
   riskAcknowledgements  Json     @default("[]") @map("risk_acknowledgements") // Explicit risk approvals
 
+  // Spec→Build comparator findings (stored as JSON string, like DriftCluster.clusterSummary)
+  // Shape: { violations: [{capability, reason, type}], actualCapabilities: string[], checkedAt: string }
+  specBuildFindings String? @map("spec_build_findings") @db.Text
+
   // Links to external artifacts
   links Json? // { ticket, design_doc, prd, runbook }
 

@@ -71,9 +71,30 @@ export const intentCapabilityParityComparator: Comparator = {
     // Step 4: Compare declared vs actual capabilities
     const violations = compareCapabilities(declaredCapabilities, actualCapabilities, constraints);
 
-    // Step 5: Build evidence
-    const evidence: EvidenceItem[] = [];
+    // Step 5: Persist findings to IntentArtifact.specBuildFindings (governance page reads this)
+    const specBuildFindings = {
+      checkedAt: new Date().toISOString(),
+      declaredCapabilities: declaredCapabilities.map(c => c.type),
+      actualCapabilities: actualCapabilities.map(c => c.type),
+      violations: violations.map(v => ({
+        type: v.type,
+        capability: v.capability,
+        resource: v.resource,
+        reason: v.reason,
+      })),
+      summary: violations.length === 0 ? 'pass' : (
+        violations.some(v => v.type === 'undeclared') ? 'privilege_expansion' : 'constraint_violation'
+      ),
+    };
+    try {
+      await prisma.intentArtifact.update({
+        where: { id: intentArtifact.id },
+        data: { specBuildFindings: JSON.stringify(specBuildFindings) },
+      });
+    } catch { /* non-blocking — governance display is best-effort */ }
 
+    // Step 6: Build evidence
+    const evidence: EvidenceItem[] = [];
     for (const violation of violations) {
       evidence.push({
         type: 'artifact',
@@ -84,16 +105,15 @@ export const intentCapabilityParityComparator: Comparator = {
       });
     }
 
-    // Step 6: Return result
+    // Step 7: Return result
     if (violations.length > 0) {
       const undeclaredViolations = violations.filter(v => v.type === 'undeclared');
-      const constraintViolations = violations.filter(v => v.type === 'constraint_violation');
 
       return {
         comparatorId: ComparatorId.INTENT_CAPABILITY_PARITY,
         status: 'fail',
-        reasonCode: undeclaredViolations.length > 0 
-          ? FindingCode.INTENT_CAPABILITY_UNDECLARED 
+        reasonCode: undeclaredViolations.length > 0
+          ? FindingCode.INTENT_CAPABILITY_UNDECLARED
           : FindingCode.INTENT_CONSTRAINT_VIOLATED,
         message: `Intent capability parity check failed: ${violations.length} violation(s) detected`,
         evidence,

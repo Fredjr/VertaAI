@@ -238,14 +238,43 @@ async function createDriftPlanForRuntimeDrift(
       },
     });
 
-    if (existingCluster) {
-      console.log(`[RuntimeDriftMonitor] DriftCluster already exists for service ${service}`);
-      return false;
-    }
-
     const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
     const unusedDeclarations = drifts.filter(d => d.driftType === 'unused_declaration');
     const severity = calculateDriftSeverity(drifts);
+
+    // Build the summary object (used for both create and update)
+    const summaryPayload = {
+      intentArtifactId: intentArtifact.id,
+      severity,
+      driftsDetected: drifts.length,
+      undeclaredUsage: undeclaredUsage.map(d => ({
+        capability: d.capabilityType,
+        target: d.capabilityTarget,
+        observationCount: d.evidence?.[0]?.metadata?.count ?? 1,
+      })),
+      unusedDeclarations: unusedDeclarations.map(d => ({
+        capability: d.capabilityType,
+        target: d.capabilityTarget,
+      })),
+      proposedChanges: {
+        type: 'update_intent_artifact',
+        description: `Update intent artifact to match runtime observations for service ${service}`,
+        changes: undeclaredUsage.map(d => ({
+          action: 'add_capability',
+          capability: { type: d.capabilityType, target: d.capabilityTarget },
+        })),
+      },
+    };
+
+    if (existingCluster) {
+      // Refresh the clusterSummary with latest observations (keeps data current)
+      await prisma.driftCluster.update({
+        where: { workspaceId_id: { workspaceId: existingCluster.workspaceId, id: existingCluster.id } },
+        data: { clusterSummary: JSON.stringify(summaryPayload), driftCount: drifts.length },
+      });
+      console.log(`[RuntimeDriftMonitor] Updated existing DriftCluster for service ${service}`);
+      return false;
+    }
 
     const cluster = await prisma.driftCluster.create({
       data: {
@@ -255,28 +284,7 @@ async function createDriftPlanForRuntimeDrift(
         fingerprintPattern: `runtime:${service}:capability_drift`,
         status: 'pending',
         driftCount: drifts.length,
-        clusterSummary: JSON.stringify({
-          intentArtifactId: intentArtifact.id,
-          severity,
-          driftsDetected: drifts.length,
-          undeclaredUsage: undeclaredUsage.map(d => ({
-            capability: d.capabilityType,
-            target: d.capabilityTarget,
-            observationCount: d.evidence?.[0]?.metadata?.count ?? 1,
-          })),
-          unusedDeclarations: unusedDeclarations.map(d => ({
-            capability: d.capabilityType,
-            target: d.capabilityTarget,
-          })),
-          proposedChanges: {
-            type: 'update_intent_artifact',
-            description: `Update intent artifact to match runtime observations for service ${service}`,
-            changes: undeclaredUsage.map(d => ({
-              action: 'add_capability',
-              capability: { type: d.capabilityType, target: d.capabilityTarget },
-            })),
-          },
-        }),
+        clusterSummary: JSON.stringify(summaryPayload),
         driftIds: drifts.map((d, i) => `runtime-drift-${service}-${i}`),
       },
     });

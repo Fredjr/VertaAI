@@ -10,10 +10,12 @@
  * - Mapping: Event name → Capability type (deterministic)
  * 
  * EXAMPLES:
- * - AWS CloudTrail "PutObject" → file_system_access (s3://bucket/key)
- * - GCP Audit "storage.objects.create" → file_system_access (gs://bucket/key)
+ * - AWS CloudTrail "PutObject" → s3_write (s3://bucket/key)
+ * - AWS CloudTrail "GetObject" → s3_read (s3://bucket/key)
+ * - GCP Audit "storage.objects.create" → s3_write (gs://bucket/key)
  * - DB query "INSERT INTO users" → db_write (users_table)
  * - AWS CloudTrail "CreateTable" → infra_create (dynamodb:table/users)
+ * - AWS CloudTrail "AttachRolePolicy" → iam_modify
  */
 
 import type { CapabilityType } from '../../types/agentGovernance.js';
@@ -31,15 +33,22 @@ export interface CapabilityMapping {
 
 /**
  * AWS CloudTrail event name → Capability type mapping
+ * All types must be members of the canonical 18-type CapabilityType lattice:
+ * db_read, db_write, db_admin, s3_read, s3_write, s3_delete, api_endpoint,
+ * iam_modify, infra_create, infra_modify, infra_delete, secret_read, secret_write,
+ * network_public, network_private, cost_increase, schema_modify, deployment_modify
  */
 const CLOUDTRAIL_CAPABILITY_MAP: Record<string, CapabilityType> = {
-  // S3 operations
-  'PutObject': 'file_system_access',
-  'GetObject': 'file_system_access',
-  'DeleteObject': 'file_system_access',
+  // S3 operations — mapped to granular s3_* types
+  'PutObject': 's3_write',
+  'GetObject': 's3_read',
+  'DeleteObject': 's3_delete',
+  'CopyObject': 's3_write',
+  'CreateMultipartUpload': 's3_write',
+  'CompleteMultipartUpload': 's3_write',
   'CreateBucket': 'infra_create',
   'DeleteBucket': 'infra_delete',
-  
+
   // DynamoDB operations
   'CreateTable': 'infra_create',
   'DeleteTable': 'infra_delete',
@@ -47,66 +56,103 @@ const CLOUDTRAIL_CAPABILITY_MAP: Record<string, CapabilityType> = {
   'PutItem': 'db_write',
   'GetItem': 'db_read',
   'DeleteItem': 'db_write',
+  'UpdateItem': 'db_write',
   'Query': 'db_read',
   'Scan': 'db_read',
-  
+  'BatchGetItem': 'db_read',
+  'BatchWriteItem': 'db_write',
+
   // RDS operations
   'CreateDBInstance': 'infra_create',
   'DeleteDBInstance': 'infra_delete',
   'ModifyDBInstance': 'infra_modify',
-  
-  // IAM operations
-  'CreateRole': 'permission_grant',
-  'DeleteRole': 'permission_revoke',
-  'AttachRolePolicy': 'permission_grant',
-  'DetachRolePolicy': 'permission_revoke',
-  'PutUserPolicy': 'permission_grant',
-  'DeleteUserPolicy': 'permission_revoke',
-  
+  'CreateDBCluster': 'infra_create',
+  'DeleteDBCluster': 'infra_delete',
+
+  // IAM operations — all map to iam_modify (lattice has one IAM type)
+  'CreateRole': 'iam_modify',
+  'DeleteRole': 'iam_modify',
+  'AttachRolePolicy': 'iam_modify',
+  'DetachRolePolicy': 'iam_modify',
+  'PutUserPolicy': 'iam_modify',
+  'DeleteUserPolicy': 'iam_modify',
+  'CreatePolicy': 'iam_modify',
+  'DeletePolicy': 'iam_modify',
+  'PutRolePolicy': 'iam_modify',
+  'CreateUser': 'iam_modify',
+  'DeleteUser': 'iam_modify',
+
   // Secrets Manager
   'GetSecretValue': 'secret_read',
   'PutSecretValue': 'secret_write',
   'CreateSecret': 'secret_write',
   'DeleteSecret': 'secret_write',
-  
-  // Lambda
+
+  // Lambda / deployment
   'CreateFunction': 'infra_create',
   'DeleteFunction': 'infra_delete',
-  'UpdateFunctionCode': 'code_modify',
-  'Invoke': 'external_api_call',
+  'UpdateFunctionCode': 'deployment_modify',
+  'UpdateFunctionConfiguration': 'deployment_modify',
+  'Invoke': 'api_endpoint',
+
+  // VPC / networking
+  'CreateVpc': 'network_private',
+  'DeleteVpc': 'network_private',
+  'CreateSubnet': 'network_private',
+  'CreateInternetGateway': 'network_public',
+  'AttachInternetGateway': 'network_public',
+
+  // CloudFormation / Terraform (via CloudTrail)
+  'CreateStack': 'infra_create',
+  'UpdateStack': 'infra_modify',
+  'DeleteStack': 'infra_delete',
 };
 
 /**
  * GCP Audit Log method name → Capability type mapping
+ * All types use canonical 18-type lattice.
  */
 const GCP_CAPABILITY_MAP: Record<string, CapabilityType> = {
-  // Cloud Storage
-  'storage.objects.create': 'file_system_access',
-  'storage.objects.get': 'file_system_access',
-  'storage.objects.delete': 'file_system_access',
+  // Cloud Storage — granular s3_* types (bucket = blob storage regardless of vendor)
+  'storage.objects.create': 's3_write',
+  'storage.objects.get': 's3_read',
+  'storage.objects.delete': 's3_delete',
+  'storage.objects.update': 's3_write',
   'storage.buckets.create': 'infra_create',
   'storage.buckets.delete': 'infra_delete',
-  
+
   // Cloud SQL
   'cloudsql.instances.create': 'infra_create',
   'cloudsql.instances.delete': 'infra_delete',
   'cloudsql.instances.update': 'infra_modify',
-  
-  // IAM
-  'iam.roles.create': 'permission_grant',
-  'iam.roles.delete': 'permission_revoke',
-  'iam.serviceAccounts.create': 'permission_grant',
-  'iam.serviceAccounts.delete': 'permission_revoke',
-  
+
+  // IAM — all iam_modify
+  'iam.roles.create': 'iam_modify',
+  'iam.roles.delete': 'iam_modify',
+  'iam.roles.update': 'iam_modify',
+  'iam.serviceAccounts.create': 'iam_modify',
+  'iam.serviceAccounts.delete': 'iam_modify',
+
   // Secret Manager
   'secretmanager.secrets.create': 'secret_write',
   'secretmanager.secrets.delete': 'secret_write',
   'secretmanager.versions.access': 'secret_read',
-  
+
   // Compute Engine
   'compute.instances.insert': 'infra_create',
   'compute.instances.delete': 'infra_delete',
   'compute.instances.update': 'infra_modify',
+
+  // Cloud Run / deployment
+  'run.services.create': 'infra_create',
+  'run.services.update': 'deployment_modify',
+  'run.services.delete': 'infra_delete',
+
+  // VPC networking
+  'compute.networks.insert': 'network_private',
+  'compute.networks.delete': 'network_private',
+  'compute.firewalls.insert': 'network_public',
+  'compute.firewalls.update': 'network_public',
 };
 
 /**
@@ -120,8 +166,8 @@ const DB_OPERATION_MAP: Record<string, CapabilityType> = {
   'CREATE': 'db_admin',
   'ALTER': 'db_admin',
   'DROP': 'db_admin',
-  'GRANT': 'permission_grant',
-  'REVOKE': 'permission_revoke',
+  'GRANT': 'iam_modify',
+  'REVOKE': 'iam_modify',
 };
 
 /**

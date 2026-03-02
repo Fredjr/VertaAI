@@ -519,6 +519,7 @@ app.get('/api/workspaces/:id/drift-clusters', async (req: Request, res: Response
         repoFullName: string;
         affectedServices: string[];
         requestedCapabilities: unknown;
+        specBuildFindings: string | null;
       } | null = null;
       const intentArtifactId = summary.intentArtifactId as string | undefined;
       if (intentArtifactId) {
@@ -531,6 +532,7 @@ app.get('/api/workspaces/:id/drift-clusters', async (req: Request, res: Response
             repoFullName: true,
             affectedServices: true,
             requestedCapabilities: true,
+            specBuildFindings: true,
           },
         });
       }

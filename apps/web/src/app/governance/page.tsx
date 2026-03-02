@@ -25,6 +25,19 @@ interface ClusterSummary {
   };
 }
 
+interface SpecBuildFindings {
+  checkedAt: string;
+  declaredCapabilities: string[];
+  actualCapabilities: string[];
+  violations: {
+    type: 'undeclared' | 'unused' | 'constraint_violation';
+    capability: string;
+    resource: string;
+    reason: string;
+  }[];
+  summary: 'pass' | 'privilege_expansion' | 'constraint_violation';
+}
+
 interface IntentArtifact {
   id: string;
   prNumber: number;
@@ -32,6 +45,7 @@ interface IntentArtifact {
   repoFullName: string;
   affectedServices: string[];
   requestedCapabilities: string[] | { type: string; resource: string; scope?: string }[];
+  specBuildFindings?: string | null; // JSON string — parse before use
 }
 
 interface DriftCluster {
@@ -170,6 +184,13 @@ function GovernanceContent() {
                 const repoFullName = cluster.intentArtifact?.repoFullName;
                 const prUrl = prNumber && repoFullName ? `https://github.com/${repoFullName}/pull/${prNumber}` : null;
 
+                // Parse Spec→Build findings (stored as JSON string on intentArtifact)
+                let specBuildFindings: SpecBuildFindings | null = null;
+                try {
+                  const raw = cluster.intentArtifact?.specBuildFindings;
+                  if (raw && typeof raw === 'string') specBuildFindings = JSON.parse(raw) as SpecBuildFindings;
+                } catch { /* ignore parse errors */ }
+
                 return (
                   <div key={cluster.id} className="bg-white dark:bg-gray-900 rounded-xl shadow hover:shadow-md transition-shadow overflow-hidden">
                     {/* Card header */}
@@ -187,8 +208,8 @@ function GovernanceContent() {
                       <div className="text-xs text-gray-400 whitespace-nowrap">{new Date(cluster.createdAt).toLocaleDateString()}</div>
                     </div>
 
-                    {/* Spec → Build → Run triangle */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100 dark:divide-gray-800">
+                    {/* Spec → Build → Run triangle (+ Spec→Build findings from INTENT_CAPABILITY_PARITY) */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-gray-100 dark:divide-gray-800">
 
                       {/* 🎯 SPEC — Intent Artifact */}
                       <div className="px-5 py-4">
@@ -227,6 +248,36 @@ function GovernanceContent() {
                         )}
                         {repoFullName && (
                           <div className="mt-2 text-xs font-mono text-gray-400">{repoFullName}</div>
+                        )}
+                      </div>
+
+                      {/* 🔍 SPEC→BUILD — Capability parity findings at PR merge time */}
+                      <div className="px-5 py-4">
+                        <div className="text-xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-wider mb-2">🔍 Spec→Build — PR Gate</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">Capability parity check at merge time</div>
+                        {specBuildFindings ? (
+                          <>
+                            <div className={`text-xs font-semibold mb-2 ${specBuildFindings.summary === 'pass' ? 'text-green-600' : 'text-red-600 dark:text-red-400'}`}>
+                              {specBuildFindings.summary === 'pass' ? '✅ All capabilities declared' : specBuildFindings.summary === 'privilege_expansion' ? '❌ Privilege expansion in code' : '⚠️ Constraint violation'}
+                            </div>
+                            {specBuildFindings.violations.filter(v => v.type === 'undeclared').length > 0 && (
+                              <div className="mb-2">
+                                <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">In code but not in Spec:</div>
+                                <div className="flex flex-wrap gap-1">
+                                  {specBuildFindings.violations.filter(v => v.type === 'undeclared').map((v, i) => (
+                                    <span key={i} className="px-2 py-0.5 text-xs font-mono rounded-full bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-700">
+                                      {v.capability}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            <div className="text-xs text-gray-400 mt-2">
+                              Checked: {new Date(specBuildFindings.checkedAt).toLocaleDateString()}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-xs text-gray-400 italic">No PR gate data yet — runs on next PR webhook</span>
                         )}
                       </div>
 
