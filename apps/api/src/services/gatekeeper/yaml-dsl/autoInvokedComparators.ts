@@ -90,6 +90,7 @@ const AUTO_INVOKED_COMPARATORS = [
 
   // Agent Governance Comparators (Spec→Build→Run Triangle)
   // These verify agent-authored code against declared intent
+  // NOTE: INTENT_RUNTIME_PARITY moved to Track B (async runtime monitoring)
   {
     id: 'INTENT_CAPABILITY_PARITY' as ComparatorId,
     category: 'agent-governance',
@@ -101,10 +102,12 @@ const AUTO_INVOKED_COMPARATORS = [
     decisionOnFail: 'warn' as const,
   },
   {
-    id: 'INTENT_RUNTIME_PARITY' as ComparatorId,
+    id: 'CHURN_COMPLEXITY_RISK' as ComparatorId,
     category: 'agent-governance',
     decisionOnFail: 'warn' as const,
   },
+  // INTENT_RUNTIME_PARITY removed from Track A - now runs in Track B (async, post-deploy)
+  // See: apps/api/src/services/trackB/runtimeDriftMonitor.ts
 ];
 
 /**
