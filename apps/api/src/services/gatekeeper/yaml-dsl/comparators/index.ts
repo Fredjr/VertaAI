@@ -28,6 +28,7 @@ import { runbookOwnershipParityComparator } from './cross-artifact/runbookOwners
 import { sloThresholdParityComparator } from './cross-artifact/sloThresholdParity.js';
 // Agent Governance Comparators (Spec→Build→Run Triangle)
 import { intentCapabilityParityComparator } from './cross-artifact/intentCapabilityParity.js';
+import { infraOwnershipParityComparator } from './cross-artifact/infraOwnershipParity.js';
 
 export function initializeComparators(): void {
   console.log('[Comparators] Initializing comparator registry...');
@@ -58,6 +59,7 @@ export function initializeComparators(): void {
 
   // Register Agent Governance Comparators
   comparatorRegistry.register(intentCapabilityParityComparator);
+  comparatorRegistry.register(infraOwnershipParityComparator);
 
   console.log(`[Comparators] Registered ${comparatorRegistry.list().length} comparators`);
   console.log(`[Comparators] Available: ${comparatorRegistry.list().join(', ')}`);
