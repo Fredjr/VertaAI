@@ -500,7 +500,45 @@ app.get('/api/workspaces/:id/drift-clusters', async (req: Request, res: Response
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
-    res.json({ success: true, data: clusters });
+
+    // Enrich each cluster with parsed clusterSummary and intent artifact (Spec layer)
+    const enriched = await Promise.all(clusters.map(async (cluster) => {
+      // Parse clusterSummary — stored as a JSON string in the Text column
+      let summary: Record<string, unknown> = {};
+      try {
+        if (typeof cluster.clusterSummary === 'string' && cluster.clusterSummary.length > 0) {
+          summary = JSON.parse(cluster.clusterSummary) as Record<string, unknown>;
+        }
+      } catch { /* leave summary empty if unparseable */ }
+
+      // Fetch intent artifact for Spec layer using intentArtifactId from summary
+      let intentArtifact: {
+        id: string;
+        prNumber: number;
+        author: string;
+        repoFullName: string;
+        affectedServices: string[];
+        requestedCapabilities: unknown;
+      } | null = null;
+      const intentArtifactId = summary.intentArtifactId as string | undefined;
+      if (intentArtifactId) {
+        intentArtifact = await prisma.intentArtifact.findUnique({
+          where: { id: intentArtifactId },
+          select: {
+            id: true,
+            prNumber: true,
+            author: true,
+            repoFullName: true,
+            affectedServices: true,
+            requestedCapabilities: true,
+          },
+        });
+      }
+
+      return { ...cluster, clusterSummary: summary, intentArtifact };
+    }));
+
+    res.json({ success: true, data: enriched });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to fetch drift clusters' });
   }
