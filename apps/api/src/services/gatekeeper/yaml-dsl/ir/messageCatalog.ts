@@ -333,6 +333,20 @@ export const MESSAGE_CATALOG: MessageCatalog = {
     params: ['files', 'churnScore', 'complexityScore'],
   },
 
+  'fail.agent_governance.intent_runtime_undeclared': {
+    id: 'fail.agent_governance.intent_runtime_undeclared',
+    template: 'Undeclared runtime capabilities detected: {capabilities}. These capabilities were observed in production ({services}) but not declared in the intent artifact.',
+    description: 'Runtime uses capabilities not declared in intent (privilege escalation)',
+    params: ['capabilities', 'services'],
+  },
+
+  'fail.agent_governance.intent_runtime_unused': {
+    id: 'fail.agent_governance.intent_runtime_unused',
+    template: 'Declared capabilities not observed in runtime: {capabilities}. No usage detected in the last {windowDays} days.',
+    description: 'Intent declares capabilities not used in production (over-provisioning)',
+    params: ['capabilities', 'windowDays'],
+  },
+
   // ==========================================================================
   // PASS MESSAGES - CROSS-ARTIFACT DOMAIN (Track A Task 2)
   // ==========================================================================
@@ -387,6 +401,13 @@ export const MESSAGE_CATALOG: MessageCatalog = {
     id: 'pass.agent_governance.churn_complexity_acceptable',
     template: 'Churn and complexity are within acceptable limits',
     description: 'Code changes have acceptable churn and complexity',
+  },
+
+  'pass.agent_governance.intent_runtime_consistent': {
+    id: 'pass.agent_governance.intent_runtime_consistent',
+    template: 'Intent and runtime are consistent for {services}. All declared capabilities observed in the last {windowDays} days, no undeclared usage detected.',
+    description: 'Intent artifact matches runtime behavior',
+    params: ['services', 'windowDays'],
   },
 
   // ==========================================================================
@@ -767,6 +788,20 @@ export const MESSAGE_CATALOG: MessageCatalog = {
     params: ['resources'],
   },
 
+  'remediation.agent_governance.add_runtime_capabilities': {
+    id: 'remediation.agent_governance.add_runtime_capabilities',
+    template: 'Add runtime capabilities to intent artifact: {capabilities}',
+    description: 'Add undeclared runtime capabilities to intent',
+    params: ['capabilities'],
+  },
+
+  'remediation.agent_governance.remove_unused_capabilities': {
+    id: 'remediation.agent_governance.remove_unused_capabilities',
+    template: 'Remove unused capabilities from intent artifact: {capabilities}',
+    description: 'Remove capabilities not used in production',
+    params: ['capabilities'],
+  },
+
   'remediation.agent_governance.reduce_churn_complexity': {
     id: 'remediation.agent_governance.reduce_churn_complexity',
     template: 'Reduce code churn and complexity by breaking changes into smaller PRs or simplifying implementation',
@@ -1024,6 +1059,12 @@ export const RemediationMessages = {
 
     reduceChurnComplexity: () =>
       formatMessage('remediation.agent_governance.reduce_churn_complexity'),
+
+    addRuntimeCapabilities: (capabilities: string) =>
+      formatMessage('remediation.agent_governance.add_runtime_capabilities', { capabilities }),
+
+    removeUnusedCapabilities: (capabilities: string) =>
+      formatMessage('remediation.agent_governance.remove_unused_capabilities', { capabilities }),
   },
 };
 
@@ -1115,5 +1156,15 @@ export const AgentGovernanceMessages = {
 
   churnComplexityAcceptable: () =>
     formatMessage('pass.agent_governance.churn_complexity_acceptable'),
+
+  // Intent ↔ Runtime (Spec→Run)
+  intentRuntimeUndeclared: (capabilities: string, services: string) =>
+    formatMessage('fail.agent_governance.intent_runtime_undeclared', { capabilities, services }),
+
+  intentRuntimeUnused: (capabilities: string, windowDays: number) =>
+    formatMessage('fail.agent_governance.intent_runtime_unused', { capabilities, windowDays }),
+
+  intentRuntimeConsistent: (services: string, windowDays: number) =>
+    formatMessage('pass.agent_governance.intent_runtime_consistent', { services, windowDays }),
 };
 

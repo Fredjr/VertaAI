@@ -29,6 +29,7 @@ import { sloThresholdParityComparator } from './cross-artifact/sloThresholdParit
 // Agent Governance Comparators (Spec→Build→Run Triangle)
 import { intentCapabilityParityComparator } from './cross-artifact/intentCapabilityParity.js';
 import { infraOwnershipParityComparator } from './cross-artifact/infraOwnershipParity.js';
+import { intentRuntimeParityComparator } from './cross-artifact/intentRuntimeParity.js';
 
 export function initializeComparators(): void {
   console.log('[Comparators] Initializing comparator registry...');
@@ -57,9 +58,10 @@ export function initializeComparators(): void {
   comparatorRegistry.register(runbookOwnershipParityComparator);
   comparatorRegistry.register(sloThresholdParityComparator);
 
-  // Register Agent Governance Comparators
-  comparatorRegistry.register(intentCapabilityParityComparator);
-  comparatorRegistry.register(infraOwnershipParityComparator);
+  // Register Agent Governance Comparators (Spec→Build→Run Triangle)
+  comparatorRegistry.register(intentCapabilityParityComparator); // Spec→Build
+  comparatorRegistry.register(infraOwnershipParityComparator); // Build→Run
+  comparatorRegistry.register(intentRuntimeParityComparator); // Spec→Run
 
   console.log(`[Comparators] Registered ${comparatorRegistry.list().length} comparators`);
   console.log(`[Comparators] Available: ${comparatorRegistry.list().join(', ')}`);

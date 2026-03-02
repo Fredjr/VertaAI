@@ -61,9 +61,10 @@ export enum ComparatorId {
   SLO_THRESHOLD_PARITY = 'SLO_THRESHOLD_PARITY',
 
   // Agent Governance comparators (Spec→Build→Run Triangle)
-  INTENT_CAPABILITY_PARITY = 'INTENT_CAPABILITY_PARITY',
-  INFRA_OWNERSHIP_PARITY = 'INFRA_OWNERSHIP_PARITY',
-  CHURN_COMPLEXITY_RISK = 'CHURN_COMPLEXITY_RISK',
+  INTENT_CAPABILITY_PARITY = 'INTENT_CAPABILITY_PARITY', // Spec→Build
+  INFRA_OWNERSHIP_PARITY = 'INFRA_OWNERSHIP_PARITY', // Build→Run
+  CHURN_COMPLEXITY_RISK = 'CHURN_COMPLEXITY_RISK', // Build→Run
+  INTENT_RUNTIME_PARITY = 'INTENT_RUNTIME_PARITY', // Spec→Run
 }
 
 // ============================================================================
