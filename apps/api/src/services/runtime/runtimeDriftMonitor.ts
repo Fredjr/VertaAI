@@ -317,6 +317,45 @@ async function createDriftPlanForRuntimeDrift(
       ? intentArtifact.createdAt.toISOString()
       : new Date(intentArtifact.createdAt).toISOString();
 
+    // FIX(issue-6): confirmedCompliant — declared caps that are actually observed at runtime.
+    // Gives operators confidence that the declared surface is exercised.
+    const unusedCapabilityTypes = new Set(unusedDeclarations.map((d: any) => d.capabilityType));
+    const declaredCaps: string[] = Array.isArray(intentArtifact.requestedCapabilities)
+      ? intentArtifact.requestedCapabilities.map((c: any) =>
+          typeof c === 'string' ? c : (c.type ?? String(c))
+        )
+      : [];
+    const confirmedCompliant = (await Promise.all(
+      declaredCaps
+        .filter(cap => !unusedCapabilityTypes.has(cap))
+        .map(async (cap) => {
+          const count = await prisma.runtimeCapabilityObservation.count({
+            where: { workspaceId, service, capabilityType: cap },
+          });
+          if (count === 0) return null;
+          const sourceSamples = await prisma.runtimeCapabilityObservation.findMany({
+            where: { workspaceId, service, capabilityType: cap },
+            select: { source: true },
+            take: 10,
+          });
+          return {
+            capability: cap,
+            observationCount: count,
+            sources: [...new Set(sourceSamples.map((o: any) => o.source))],
+          };
+        })
+    )).filter(Boolean);
+
+    // FIX(issue-1): buildContext — link to the agent action trace (file-level evidence).
+    // Lets the BUILD column show which files changed rather than just the PR link.
+    const agentTrace = await prisma.agentActionTrace.findFirst({
+      where: { workspaceId, prNumber: intentArtifact.prNumber, repoFullName: intentArtifact.repoFullName },
+      select: { filesModified: true },
+    });
+    const buildContext = agentTrace
+      ? { changedFiles: agentTrace.filesModified as any[] ?? [] }
+      : null;
+
     // Build the summary object (used for both create and update)
     const summaryPayload = {
       intentArtifactId: intentArtifact.id,
@@ -377,6 +416,10 @@ async function createDriftPlanForRuntimeDrift(
           })),
         },
       ],
+      // FIX(issue-6): confirmed compliant capabilities
+      confirmedCompliant,
+      // FIX(issue-1): build context from agent action trace
+      buildContext,
     };
 
     if (existingCluster) {

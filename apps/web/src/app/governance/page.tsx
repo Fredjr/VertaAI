@@ -38,6 +38,21 @@ interface CapabilityItem {
   observationReason?: 'not_observed_in_window' | 'source_coverage_gap';
 }
 
+/** FIX(issue-1): Build-time context — file changes and agent signals from the PR */
+interface BuildContext {
+  commitSha?: string;
+  checkRunUrl?: string;
+  changedFiles?: { path: string; changeType: string; linesAdded?: number; linesDeleted?: number }[];
+  agentChanges?: string[];
+}
+
+/** FIX(issue-6): Declared capability confirmed observed at runtime */
+interface ConfirmedCompliantItem {
+  capability: string;
+  observationCount: number;
+  sources: string[];
+}
+
 interface ClusterSummary {
   intentArtifactId?: string;
   /** P1-A: ISO timestamp proxied from intent artifact creation (merge anchor) */
@@ -54,6 +69,10 @@ interface ClusterSummary {
   remediationOptions?: RemediationOption[];
   /** P2-B: non-null when intent artifact ingestion failed during the PR gate run */
   artifactIngestionWarning?: string;
+  /** FIX(issue-1): build-time context (changed files, commit, agent signals) */
+  buildContext?: BuildContext;
+  /** FIX(issue-6): declared capabilities confirmed observed at runtime */
+  confirmedCompliant?: ConfirmedCompliantItem[];
 }
 
 interface SpecBuildFindings {
@@ -79,6 +98,11 @@ interface IntentArtifact {
   affectedServices: string[];
   requestedCapabilities: string[] | { type: string; resource: string; scope?: string }[];
   specBuildFindings?: string | null; // JSON string — parse before use
+  /** FIX(issue-1): ticket / design-doc links for BUILD column */
+  links?: Record<string, string> | null;
+  /** FIX(issue-1): approval metadata for BUILD column */
+  signature?: { signed_by?: string; signed_at?: string; approval_tier?: string; approval_method?: string } | null;
+  createdAt?: string;
 }
 
 interface DriftCluster {
@@ -213,13 +237,17 @@ function GovernanceContent() {
                 const severityRationale = summary?.severityRationale || null;
                 const undeclaredUsage: CapabilityItem[] = Array.isArray(summary?.undeclaredUsage) ? summary.undeclaredUsage : [];
                 const unusedDeclarations: CapabilityItem[] = Array.isArray(summary?.unusedDeclarations) ? summary.unusedDeclarations : [];
+                const confirmedCompliant: ConfirmedCompliantItem[] = Array.isArray(summary?.confirmedCompliant) ? summary.confirmedCompliant : [];
                 const remediationOptions: RemediationOption[] = Array.isArray(summary?.remediationOptions) ? summary.remediationOptions : [];
+                const buildContext: BuildContext | undefined = summary?.buildContext ?? undefined;
                 const specCaps = cluster.intentArtifact ? normalizeCapabilities(cluster.intentArtifact.requestedCapabilities) : [];
                 const artifactId = cluster.intentArtifact?.id ?? null;
                 const artifactHash = artifactId ? artifactId.slice(-8) : null;
                 const prNumber = cluster.intentArtifact?.prNumber;
                 const repoFullName = cluster.intentArtifact?.repoFullName;
                 const prUrl = prNumber && repoFullName ? `https://github.com/${repoFullName}/pull/${prNumber}` : null;
+                const iaLinks = cluster.intentArtifact?.links ?? null;
+                const iaSignature = cluster.intentArtifact?.signature ?? null;
 
                 // Parse Spec→Build findings (stored as JSON string on intentArtifact)
                 let specBuildFindings: SpecBuildFindings | null = null;
@@ -227,6 +255,19 @@ function GovernanceContent() {
                   const raw = cluster.intentArtifact?.specBuildFindings;
                   if (raw && typeof raw === 'string') specBuildFindings = JSON.parse(raw) as SpecBuildFindings;
                 } catch { /* ignore parse errors */ }
+
+                // FIX(issue-11): SLA — days pending since cluster was created
+                const daysPending = Math.floor((Date.now() - new Date(cluster.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+                const slaBreached =
+                  (severity === 'critical' && daysPending >= 1) ||
+                  (severity === 'high' && daysPending >= 3) ||
+                  (severity === 'medium' && daysPending >= 7);
+                const slaNear =
+                  !slaBreached && (
+                    (severity === 'critical' && daysPending >= 0) ||
+                    (severity === 'high' && daysPending >= 1) ||
+                    (severity === 'medium' && daysPending >= 4)
+                  );
 
                 return (
                   <div key={cluster.id} className="bg-white dark:bg-gray-900 rounded-xl shadow hover:shadow-md transition-shadow overflow-hidden">
@@ -242,6 +283,19 @@ function GovernanceContent() {
                             {cluster.status}
                           </span>
                           <span className="text-xs text-gray-400">{cluster.driftCount} drifts detected</span>
+                          {/* FIX(issue-11): SLA / time-to-remediate indicator */}
+                          {cluster.status === 'pending' && (
+                            <span className={`px-2 py-0.5 text-xs font-medium rounded border ${
+                              slaBreached
+                                ? 'bg-red-100 text-red-700 border-red-300 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700'
+                                : slaNear
+                                ? 'bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-700'
+                                : 'bg-gray-100 text-gray-500 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-600'
+                            }`}
+                              title={`SLA: CRITICAL ≤1d · HIGH ≤3d · MEDIUM ≤7d`}>
+                              ⏱ {daysPending === 0 ? 'today' : `${daysPending}d pending`}{slaBreached ? ' — SLA breached' : ''}
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-gray-400 whitespace-nowrap">{new Date(cluster.createdAt).toLocaleDateString()}</div>
                       </div>
@@ -280,22 +334,84 @@ function GovernanceContent() {
                         )}
                       </div>
 
-                      {/* 🔨 BUILD — PR reference */}
+                      {/* 🔨 BUILD — PR reference + file diff evidence (FIX issue-1) */}
                       <div className="px-5 py-4">
                         <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider mb-2">🔨 Build — Merged PR</div>
                         <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">What was shipped to production</div>
-                        {prUrl ? (
-                          <a href={prUrl} target="_blank" rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-sm font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors">
-                            PR #{prNumber}
-                            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                          </a>
-                        ) : (
-                          <span className="text-xs text-gray-400 italic">No PR linked</span>
-                        )}
-                        {repoFullName && (
-                          <div className="mt-2 text-xs font-mono text-gray-400">{repoFullName}</div>
-                        )}
+                        <div className="space-y-2">
+                          {/* PR link + commit SHA */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {prUrl ? (
+                              <a href={prUrl} target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 text-xs font-semibold hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors">
+                                PR #{prNumber}
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                              </a>
+                            ) : (
+                              <span className="text-xs text-gray-400 italic">No PR linked</span>
+                            )}
+                            {buildContext?.commitSha && (
+                              <span className="font-mono text-xs text-gray-500 dark:text-gray-400" title="Commit SHA">
+                                {buildContext.commitSha.slice(0, 7)}
+                              </span>
+                            )}
+                            {buildContext?.checkRunUrl && (
+                              <a href={buildContext.checkRunUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline">CI ↗</a>
+                            )}
+                          </div>
+                          {repoFullName && <div className="text-xs font-mono text-gray-400">{repoFullName}</div>}
+
+                          {/* Changed files */}
+                          {buildContext?.changedFiles && buildContext.changedFiles.length > 0 && (
+                            <div>
+                              <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Changed files ({buildContext.changedFiles.length}):</div>
+                              <div className="space-y-0.5">
+                                {buildContext.changedFiles.map((f, fi) => (
+                                  <div key={fi} className="flex items-center gap-1.5 text-xs font-mono text-gray-600 dark:text-gray-300">
+                                    <span className="text-gray-400">{f.changeType === 'added' ? '+' : f.changeType === 'deleted' ? '-' : '~'}</span>
+                                    <span className="truncate max-w-[130px]" title={f.path}>{f.path}</span>
+                                    {(f.linesAdded != null || f.linesDeleted != null) && (
+                                      <span className="text-gray-400 shrink-0">
+                                        {f.linesAdded != null && <span className="text-green-600">+{f.linesAdded}</span>}
+                                        {f.linesDeleted != null && <span className="text-red-500">/{f.linesDeleted}</span>}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Agent-specific signals */}
+                          {buildContext?.agentChanges && buildContext.agentChanges.length > 0 && (
+                            <div className="rounded bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 p-1.5">
+                              <div className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-0.5">⚠️ Agent signals</div>
+                              {buildContext.agentChanges.map((c, ci) => (
+                                <div key={ci} className="text-xs text-amber-800 dark:text-amber-300">• {c}</div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* External links (ticket, design doc) */}
+                          {iaLinks && Object.keys(iaLinks).length > 0 && (
+                            <div className="flex gap-2 flex-wrap">
+                              {Object.entries(iaLinks).map(([key, url]) => url ? (
+                                <a key={key} href={url} target="_blank" rel="noopener noreferrer"
+                                  className="text-xs text-indigo-500 dark:text-indigo-400 hover:underline capitalize">
+                                  🔗 {key.replace(/_/g, ' ')} ↗
+                                </a>
+                              ) : null)}
+                            </div>
+                          )}
+
+                          {/* Approval / signature */}
+                          {iaSignature && (
+                            <div className="text-xs text-gray-400">
+                              ✅ Signed: <span className="font-mono">{iaSignature.signed_by}</span>
+                              {iaSignature.approval_tier && <span className="ml-1">({iaSignature.approval_tier})</span>}
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {/* 🔍 SPEC→BUILD — Capability parity findings at PR merge time */}
@@ -334,12 +450,20 @@ function GovernanceContent() {
                                 </div>
                               </div>
                             )}
+                            {/* FIX(issue-4): when isFinalSnapshot=true, gate ran AT merge time —
+                                show a single "Gate ran at merge" date, not a confusing Checked vs Merged gap. */}
                             <div className="text-xs text-gray-400 mt-2">
-                              Checked: {new Date(specBuildFindings.checkedAt).toLocaleDateString()}
-                              {/* P1-A: Show merge anchor date when available */}
-                              {summary?.mergedAt && (
-                                <span className="ml-2">· Merged: {new Date(summary.mergedAt).toLocaleDateString()}</span>
-                              )}
+                              {specBuildFindings.isFinalSnapshot
+                                ? <>Gate ran at merge: <span className="font-medium">{new Date(specBuildFindings.checkedAt).toLocaleDateString()}</span></>
+                                : <>
+                                    Checked: {new Date(specBuildFindings.checkedAt).toLocaleDateString()}
+                                    {summary?.mergedAt && (
+                                      <span className="ml-2" title="Runtime observation window anchored to this date">
+                                        · Merged: {new Date(summary.mergedAt).toLocaleDateString()}
+                                      </span>
+                                    )}
+                                  </>
+                              }
                             </div>
                           </>
                         ) : (
@@ -358,7 +482,10 @@ function GovernanceContent() {
 
                         {undeclaredUsage.length > 0 && (
                           <div className="mb-3">
-                            <div className="text-xs font-semibold text-red-600 dark:text-red-400 mb-1">❌ Privilege expansion ({undeclaredUsage.length})</div>
+                            {/* FIX(issue-7): renamed from "Privilege expansion" — more accurate term */}
+                            <div className="text-xs font-semibold text-red-600 dark:text-red-400 mb-1">
+                              ❌ Undeclared at runtime ({undeclaredUsage.length} capability type{undeclaredUsage.length !== 1 ? 's' : ''})
+                            </div>
                             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">Used at runtime but NOT declared in Spec:</div>
                             <div className="space-y-1.5">
                               {undeclaredUsage.map((item, i) => {
@@ -366,16 +493,37 @@ function GovernanceContent() {
                                 const isOpen = expandedEvidence === evidenceKey;
                                 return (
                                   <div key={i}>
+                                    {/* FIX(issues 2, 3, 8): inline severity + source + count always visible on collapsed pill */}
                                     <div className="flex items-center gap-1.5 flex-wrap">
                                       <button onClick={() => setExpandedEvidence(isOpen ? null : evidenceKey)}
                                         className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-mono rounded-full bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors cursor-pointer">
                                         {item.capability}{item.target && item.target !== '*' ? `:${item.target}` : ''}
                                         <span className="text-red-400">{isOpen ? '▲' : '▼'}</span>
                                       </button>
-                                      {/* P1-B: Gate also predicted this capability at PR merge time */}
-                                      {item.gatePredicted && (
+                                      {/* Severity badge — always on collapsed row */}
+                                      {item.severity && (
+                                        <span className={`px-1.5 py-0.5 text-xs rounded border font-semibold ${SEVERITY_COLORS[item.severity] ?? SEVERITY_COLORS['unknown']}`}>
+                                          {item.severity.toUpperCase()}
+                                        </span>
+                                      )}
+                                      {/* Primary source tag */}
+                                      {item.sources?.[0] && (
+                                        <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">{item.sources[0]}</span>
+                                      )}
+                                      {/* Observation count */}
+                                      {item.observationCount != null && (
+                                        <span className="text-xs text-gray-500 dark:text-gray-400">×{item.observationCount}</span>
+                                      )}
+                                      {/* P1-B: gate also predicted — confirmed regression */}
+                                      {item.gatePredicted === true && (
                                         <span className="px-1.5 py-0.5 text-xs rounded bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-700 font-medium">
                                           ⚠️ Gate also flagged
+                                        </span>
+                                      )}
+                                      {/* FIX(issue-3): new post-merge regression the gate didn't predict */}
+                                      {item.gatePredicted === false && (
+                                        <span className="px-1.5 py-0.5 text-xs rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 font-medium">
+                                          🆕 New regression
                                         </span>
                                       )}
                                     </div>
@@ -385,6 +533,13 @@ function GovernanceContent() {
                                         {item.firstSeen && <div className="text-gray-600 dark:text-gray-300">First seen: <span className="font-mono">{new Date(item.firstSeen).toLocaleString()}</span></div>}
                                         {item.observationCount && <div className="text-gray-600 dark:text-gray-300">Observations: <span className="font-semibold">{item.observationCount}</span></div>}
                                         {item.sources && item.sources.length > 0 && <div className="text-gray-600 dark:text-gray-300">Sources: <span className="font-mono">{item.sources.join(', ')}</span></div>}
+                                        {/* FIX(issue-9): show gate violation reason when gatePredicted=true */}
+                                        {item.gatePredicted === true && (() => {
+                                          const gv = specBuildFindings?.violations.find(v => v.capability === item.capability);
+                                          return gv ? (
+                                            <div className="text-gray-500 dark:text-gray-400">Gate violation: <span className="font-mono">{gv.reason}</span></div>
+                                          ) : null;
+                                        })()}
                                         {item.evidence && item.evidence.length > 0 && (
                                           <div className="mt-1.5 space-y-1 border-t border-red-200 dark:border-red-800 pt-1.5">
                                             <div className="text-gray-500 dark:text-gray-400 font-semibold">Evidence samples:</div>
@@ -392,7 +547,12 @@ function GovernanceContent() {
                                               <div key={ei} className="bg-white dark:bg-gray-900 rounded p-1.5 border border-red-100 dark:border-red-800 space-y-0.5">
                                                 <div className="text-gray-500 dark:text-gray-400 font-mono">{new Date(ev.observedAt).toLocaleString()}</div>
                                                 {ev.rawEvent && <div>Event: <span className="font-mono text-gray-700 dark:text-gray-300">{ev.rawEvent}</span></div>}
-                                                {ev.actor && ev.actor !== 'unknown' && <div>Actor: <span className="font-mono text-gray-700 dark:text-gray-300">{ev.actor}</span></div>}
+                                                {/* FIX(issue-10): truncate long ARNs — show first+last 20 chars with title tooltip */}
+                                                {ev.actor && ev.actor !== 'unknown' && (
+                                                  <div>Actor: <span className="font-mono text-gray-700 dark:text-gray-300 break-all" title={ev.actor}>
+                                                    {ev.actor.length > 52 ? `${ev.actor.slice(0, 20)}…${ev.actor.slice(-20)}` : ev.actor}
+                                                  </span></div>
+                                                )}
                                                 {ev.source && <div>Source: <span className="font-mono text-gray-700 dark:text-gray-300">{ev.source}</span></div>}
                                               </div>
                                             ))}
@@ -434,7 +594,24 @@ function GovernanceContent() {
                           </div>
                         )}
 
-                        {undeclaredUsage.length === 0 && unusedDeclarations.length === 0 && (
+                        {/* FIX(issue-6): Confirmed compliant — declared caps with runtime evidence */}
+                        {confirmedCompliant.length > 0 && (
+                          <div className="mt-3">
+                            <div className="text-xs font-semibold text-green-600 dark:text-green-400 mb-1">✅ Confirmed compliant ({confirmedCompliant.length})</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mb-1.5">Declared and observed at runtime:</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {confirmedCompliant.map((item, i) => (
+                                <span key={i}
+                                  className="px-2 py-0.5 text-xs font-mono rounded-full bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-700"
+                                  title={`${item.observationCount} obs · ${item.sources.join(', ')}`}>
+                                  {item.capability} ✓{item.observationCount > 1 ? ` ×${item.observationCount}` : ''}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {undeclaredUsage.length === 0 && unusedDeclarations.length === 0 && confirmedCompliant.length === 0 && (
                           <span className="text-xs text-gray-400 italic">No runtime drift data</span>
                         )}
                       </div>
@@ -461,6 +638,22 @@ function GovernanceContent() {
                               </div>
                               <div className="text-xs font-semibold text-gray-800 dark:text-gray-200 mb-1">{opt.label}</div>
                               <div className="text-xs text-gray-600 dark:text-gray-400">{opt.description}</div>
+                              {/* FIX(issue-5): per-capability action guidance */}
+                              {opt.actions && opt.actions.length > 0 && (
+                                <div className="mt-2 space-y-1.5 border-t border-gray-200 dark:border-gray-700 pt-2">
+                                  {opt.actions.map((action, ai) => (
+                                    <div key={ai} className="text-xs">
+                                      <div className="flex items-center gap-1 flex-wrap">
+                                        <span className="font-mono font-semibold text-gray-700 dark:text-gray-300">{action.capability}</span>
+                                        {action.target && action.target !== '*' && (
+                                          <span className="text-gray-400 truncate max-w-[100px]" title={action.target}>→ {action.target}</span>
+                                        )}
+                                      </div>
+                                      <div className="text-gray-500 dark:text-gray-500 mt-0.5 leading-snug">{action.guidance}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>

@@ -16,12 +16,14 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 const WORKSPACE_ID = 'demo-workspace';
 
-async function createSampleIntentArtifact() {
+async function createSampleIntentArtifact(): Promise<{ intentArtifact: Awaited<ReturnType<typeof prisma.intentArtifact.create>>; mergedAt: Date }> {
   console.log('📝 Creating sample intent artifact...');
 
   // specBuildFindings: realistic PR gate result at MERGE TIME.
   // s3_write was detected in the diff but NOT declared in the intent → privilege_expansion.
   // isFinalSnapshot:true means this snapshot was written when the PR was actually merged (closed event).
+  // FIX(issue-4): mergedAt is the authoritative anchor used by BOTH specBuildFindings.checkedAt AND
+  // the DriftCluster's clusterSummary.mergedAt — ensures the UI shows a consistent single date.
   const mergedAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000); // 3 days ago
   const specBuildFindings = JSON.stringify({
     checkedAt: mergedAt.toISOString(),
@@ -81,7 +83,8 @@ async function createSampleIntentArtifact() {
   });
   console.log(`✅ Created fresh intent artifact: ${intentArtifact.id}`);
 
-  return intentArtifact;
+  // Return both artifact and mergedAt so drift cluster can use the same anchor date
+  return { intentArtifact, mergedAt };
 }
 
 async function createSampleAgentActionTrace() {
@@ -276,20 +279,49 @@ async function createSampleRuntimeObservations() {
  *       is anchored to post-merge traffic.
  * P2-A: unusedDeclarations include observationReason to distinguish no-coverage from not-seen.
  */
-async function createSampleDriftCluster(intentArtifact: { id: string; createdAt: Date }) {
+/**
+ * FIX(issue-4): Accept mergedAt explicitly from createSampleIntentArtifact so that
+ * clusterSummary.mergedAt matches specBuildFindings.checkedAt — both anchor to the
+ * same "3 days ago" date and the UI shows a single coherent date, not a confusing gap.
+ */
+async function createSampleDriftCluster(intentArtifact: { id: string }, mergedAt: Date) {
   console.log('📝 Creating/refreshing demo DriftCluster for user-service...');
 
   const now = new Date();
-  const mergedAt = intentArtifact.createdAt.toISOString();
+  const mergedAtIso = mergedAt.toISOString(); // same date as specBuildFindings.checkedAt
 
   // P1-B: Cross-reference the gate violations to build the gateFlaggedTypes set.
   // The gate flagged s3_write at merge time. cost_increase was never mentioned in specBuildFindings.
   // → s3_write.gatePredicted = true  (gate confirmed it — regression known at ship time)
   // → cost_increase.gatePredicted = false (gate silent — new post-merge regression)
+  // FIX(issue-1): buildContext carries the file-level evidence of what the agent changed.
+  // This populates the BUILD column in the governance UI with real signal beyond just PR #.
+  const buildContext = {
+    commitSha: 'a3f7e2c',
+    checkRunUrl: `https://github.com/acme-corp/user-service/pull/42/checks`,
+    changedFiles: [
+      { path: 'src/services/userService.ts', changeType: 'modified', linesAdded: 150, linesDeleted: 12 },
+      { path: 'src/routes/users.ts', changeType: 'modified', linesAdded: 22, linesDeleted: 5 },
+    ],
+    // Agent-specific signals inferred from the PR diff (written by INTENT_CAPABILITY_PARITY)
+    agentChanges: [
+      's3.putObject() added at src/services/userService.ts:142 — triggers s3_write (not in spec)',
+      'Profile picture upload path expanded without updating intent artifact',
+    ],
+  };
+
+  // FIX(issue-6): confirmedCompliant = declared caps that were OBSERVED at runtime.
+  // Gives operators confidence that the declared surface is actually exercised.
+  const confirmedCompliant = [
+    { capability: 'db_read',      observationCount: 14, sources: ['database_query_log'] },
+    { capability: 'db_write',     observationCount: 1,  sources: ['database_query_log'] },
+    { capability: 'api_endpoint', observationCount: 1,  sources: ['gcp_audit_log'] },
+  ];
+
   const clusterSummary = {
     intentArtifactId: intentArtifact.id,
-    // P1-A: merge anchor for observation window
-    mergedAt,
+    // P1-A / FIX(issue-4): use the authoritative mergedAt anchor (same value as checkedAt)
+    mergedAt: mergedAtIso,
     // P1-B: chain-of-custody — the gate DID have violations for this service
     specBuildViolated: true,
     gatePredictedCount: 1, // only s3_write was predicted by the gate
@@ -385,6 +417,10 @@ async function createSampleDriftCluster(intentArtifact: { id: string; createdAt:
         ],
       },
     ],
+    // FIX(issue-1): build-time context for the BUILD column
+    buildContext,
+    // FIX(issue-6): declared caps confirmed observed at runtime
+    confirmedCompliant,
   };
 
   // Idempotent: update if a cluster already exists for user-service, otherwise create
@@ -476,10 +512,10 @@ async function main() {
   console.log('🚀 Setting up demo-workspace for E2E testing\n');
 
   try {
-    const intentArtifact = await createSampleIntentArtifact();
+    const { intentArtifact, mergedAt } = await createSampleIntentArtifact();
     await createSampleAgentActionTrace();
     await createSampleRuntimeObservations();
-    await createSampleDriftCluster(intentArtifact);
+    await createSampleDriftCluster(intentArtifact, mergedAt);
     await printSummary();
   } catch (error) {
     console.error('❌ Error setting up demo workspace:', error);
