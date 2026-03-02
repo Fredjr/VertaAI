@@ -87,6 +87,24 @@ const AUTO_INVOKED_COMPARATORS = [
     category: 'safety',
     decisionOnFail: 'block' as const,
   },
+
+  // Agent Governance Comparators (Spec→Build→Run Triangle)
+  // These verify agent-authored code against declared intent
+  {
+    id: 'INTENT_CAPABILITY_PARITY' as ComparatorId,
+    category: 'agent-governance',
+    decisionOnFail: 'block' as const,
+  },
+  {
+    id: 'INFRA_OWNERSHIP_PARITY' as ComparatorId,
+    category: 'agent-governance',
+    decisionOnFail: 'warn' as const,
+  },
+  {
+    id: 'INTENT_RUNTIME_PARITY' as ComparatorId,
+    category: 'agent-governance',
+    decisionOnFail: 'warn' as const,
+  },
 ];
 
 /**

@@ -159,6 +159,54 @@ rules:
     excludePaths:
       - "test/**"
 
+  - id: infra-ownership-parity-check
+    name: Infrastructure Ownership Parity (Build→Run)
+    description: Verify that infrastructure resources have ownership metadata matching authoritative sources (PagerDuty, CODEOWNERS, service catalog)
+    enabled: true
+    trigger:
+      anyChangedPathsRef: iac-paths
+    obligations:
+      - comparator: INFRA_OWNERSHIP_PARITY
+        params:
+          sources:
+            - pagerduty
+            - codeowners
+            - service_catalog
+          requireOwnership: true
+        severity: high
+        decisionOnFail: warn
+        decisionOnUnknown: info
+        message: "Infrastructure ownership metadata missing or inconsistent with authoritative sources"
+    skipIf:
+      labels: ["skip-ownership-check"]
+    excludePaths:
+      - "test/**"
+      - "examples/**"
+
+  - id: intent-runtime-parity-check
+    name: Intent ↔ Runtime Parity (Spec→Run)
+    description: Verify that runtime behavior matches declared intent capabilities. Detects privilege escalation and over-provisioning.
+    enabled: true
+    trigger:
+      always: true  # Run on all PRs with intent artifacts
+    obligations:
+      - comparator: INTENT_RUNTIME_PARITY
+        params:
+          observationWindowDays: 7
+          minObservationCount: 1
+          failOnUndeclaredUsage: true
+          warnOnUnusedDeclarations: true
+        severity: high
+        decisionOnFail: warn  # Warn by default, block in production
+        decisionOnUnknown: info
+        message: "Runtime capability usage does not match declared intent. Review production observations."
+    skipIf:
+      labels: ["skip-runtime-check", "no-runtime-data"]
+    excludePaths:
+      - "test/**"
+      - "examples/**"
+      - "docs/**"
+
 evaluation:
   externalDependencyMode: soft_fail
   unknownArtifactMode: soft_fail

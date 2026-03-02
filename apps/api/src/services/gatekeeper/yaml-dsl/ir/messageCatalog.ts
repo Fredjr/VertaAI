@@ -326,11 +326,18 @@ export const MESSAGE_CATALOG: MessageCatalog = {
     params: ['resources', 'expected', 'actual'],
   },
 
-  'fail.agent_governance.churn_complexity_high': {
-    id: 'fail.agent_governance.churn_complexity_high',
-    template: 'High churn/complexity risk detected: {files}. Churn score: {churnScore}, Complexity score: {complexityScore}',
-    description: 'Code changes have high churn and complexity',
-    params: ['files', 'churnScore', 'complexityScore'],
+  'fail.agent_governance.churn_complexity_high_risk': {
+    id: 'fail.agent_governance.churn_complexity_high_risk',
+    template: '{riskLevel} risk change detected: {filesChanged} files, {totalChanges} lines changed. Design notes required for high-risk changes.',
+    description: 'Code changes have high churn/complexity risk and require design documentation',
+    params: ['riskLevel', 'filesChanged', 'totalChanges'],
+  },
+
+  'fail.agent_governance.churn_complexity_medium_risk': {
+    id: 'fail.agent_governance.churn_complexity_medium_risk',
+    template: '{riskLevel} risk change detected: {filesChanged} files, {totalChanges} lines changed. Consider adding design notes.',
+    description: 'Code changes have medium churn/complexity risk',
+    params: ['riskLevel', 'filesChanged', 'totalChanges'],
   },
 
   'fail.agent_governance.intent_runtime_undeclared': {
@@ -397,10 +404,11 @@ export const MESSAGE_CATALOG: MessageCatalog = {
     description: 'Infrastructure ownership matches declared owner',
   },
 
-  'pass.agent_governance.churn_complexity_acceptable': {
-    id: 'pass.agent_governance.churn_complexity_acceptable',
-    template: 'Churn and complexity are within acceptable limits',
-    description: 'Code changes have acceptable churn and complexity',
+  'pass.agent_governance.churn_complexity_low_risk': {
+    id: 'pass.agent_governance.churn_complexity_low_risk',
+    template: 'Low risk change: {filesChanged} files, {totalChanges} lines changed. Churn and complexity are within acceptable limits.',
+    description: 'Code changes have low churn/complexity risk',
+    params: ['filesChanged', 'totalChanges'],
   },
 
   'pass.agent_governance.intent_runtime_consistent': {
@@ -788,6 +796,13 @@ export const MESSAGE_CATALOG: MessageCatalog = {
     params: ['resources'],
   },
 
+  'remediation.agent_governance.add_design_notes': {
+    id: 'remediation.agent_governance.add_design_notes',
+    template: 'Add design notes to PR description explaining the approach for this high-risk change. Risk factors: {riskFactors}',
+    description: 'Add design documentation for high-risk changes',
+    params: ['riskFactors'],
+  },
+
   'remediation.agent_governance.add_runtime_capabilities': {
     id: 'remediation.agent_governance.add_runtime_capabilities',
     template: 'Add runtime capabilities to intent artifact: {capabilities}',
@@ -1057,8 +1072,8 @@ export const RemediationMessages = {
     fixInfraOwnership: (resources: string) =>
       formatMessage('remediation.agent_governance.fix_infra_ownership', { resources }),
 
-    reduceChurnComplexity: () =>
-      formatMessage('remediation.agent_governance.reduce_churn_complexity'),
+    addDesignNotes: (riskFactors: string) =>
+      formatMessage('remediation.agent_governance.add_design_notes', { riskFactors }),
 
     addRuntimeCapabilities: (capabilities: string) =>
       formatMessage('remediation.agent_governance.add_runtime_capabilities', { capabilities }),
@@ -1151,11 +1166,14 @@ export const AgentGovernanceMessages = {
     formatMessage('pass.agent_governance.infra_ownership_consistent'),
 
   // Churn/Complexity Risk (Build Quality)
-  churnComplexityHigh: (files: string, churnScore: number, complexityScore: number) =>
-    formatMessage('fail.agent_governance.churn_complexity_high', { files, churnScore, complexityScore }),
+  churnComplexityHighRisk: (riskLevel: string, filesChanged: number, totalChanges: number) =>
+    formatMessage('fail.agent_governance.churn_complexity_high_risk', { riskLevel, filesChanged, totalChanges }),
 
-  churnComplexityAcceptable: () =>
-    formatMessage('pass.agent_governance.churn_complexity_acceptable'),
+  churnComplexityMediumRisk: (riskLevel: string, filesChanged: number, totalChanges: number) =>
+    formatMessage('fail.agent_governance.churn_complexity_medium_risk', { riskLevel, filesChanged, totalChanges }),
+
+  churnComplexityLowRisk: (filesChanged: number, totalChanges: number) =>
+    formatMessage('pass.agent_governance.churn_complexity_low_risk', { filesChanged, totalChanges }),
 
   // Intent ↔ Runtime (Spec→Run)
   intentRuntimeUndeclared: (capabilities: string, services: string) =>

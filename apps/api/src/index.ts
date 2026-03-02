@@ -25,6 +25,7 @@ import contractPacksRouter from './routes/contractPacks.js';  // Phase 1 Week 1-
 import contractPoliciesRouter from './routes/contractPolicies.js';  // Week 5-6: Contract Policies Management
 import policyPacksRouter from './routes/policyPacks.js';  // P2 Week 7: Unified WorkspacePolicyPack Management
 import adminRouter from './routes/admin.js';  // Admin routes for one-time operations
+import runtimeRouter from './routes/runtime/index.js';  // Agent Governance: Runtime observation webhooks
 import { initializeComparators } from './services/gatekeeper/yaml-dsl/comparators/index.js';  // YAML DSL Migration
 
 const app: Application = express();
@@ -118,6 +119,9 @@ app.use('/api', policyPacksRouter);
 
 // Admin API routes (one-time operations)
 app.use('/api/admin', adminRouter);
+
+// Runtime observation webhook routes (Agent Governance - Spec→Run verification)
+app.use('/api/runtime', runtimeRouter);
 
 // Health check API routes
 app.use('/api', healthCheckRouter);
