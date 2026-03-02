@@ -487,6 +487,25 @@ app.get('/api/workspaces/:id/drifts', async (req: Request, res: Response) => {
   }
 });
 
+// List runtime drift clusters for a workspace (Agent Governance - Spec→Run)
+app.get('/api/workspaces/:id/drift-clusters', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { status } = req.query;
+  try {
+    const clusters = await prisma.driftCluster.findMany({
+      where: {
+        workspaceId: id,
+        ...(status ? { status: status as string } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    res.json({ success: true, data: clusters });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch drift clusters' });
+  }
+});
+
 // Create or update an integration for a workspace
 app.put('/api/workspaces/:id/integrations/:type', async (req: Request, res: Response) => {
   const workspaceId = req.params.id;

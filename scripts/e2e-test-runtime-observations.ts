@@ -281,15 +281,34 @@ async function testDriftMonitor() {
     const data = await response.json();
 
     if (response.ok && data.success) {
+      const workspacesProcessed: number = data.stats?.workspacesProcessed ?? 0;
+      const driftPlansCreated: number = data.stats?.driftPlansCreated ?? 0;
+      const totalDrifts: number = data.results?.[0]?.driftsDetected ?? 0;
+
+      // The monitor is idempotent — it skips cluster creation if one already exists (pending).
+      // Verify the pipeline end-to-end by checking the drift-clusters endpoint directly.
+      const clustersRes = await fetch(`${API_URL}/api/workspaces/${WORKSPACE_ID}/drift-clusters`);
+      const clustersData = await clustersRes.json();
+      const existingClusters: number = clustersData.success ? (clustersData.data?.length ?? 0) : 0;
+
+      const hasWorkspaces = workspacesProcessed >= 1;
+      const hasDrifts = totalDrifts >= 1;
+      const hasClusters = existingClusters >= 1 || driftPlansCreated >= 1;
+
       results.push({
         test: 'Runtime Drift Monitor',
-        passed: true,
-        message: 'Drift monitor executed successfully',
+        passed: hasWorkspaces && hasDrifts && hasClusters,
+        message: hasWorkspaces && hasDrifts && hasClusters
+          ? `Drift monitor executed: ${workspacesProcessed} workspace(s), ${totalDrifts} drift(s), ${existingClusters} cluster(s) in DB`
+          : `Monitor incomplete: workspacesProcessed=${workspacesProcessed}, totalDrifts=${totalDrifts}, existingClusters=${existingClusters}`,
         details: data,
       });
-      console.log('✅ Drift monitor test passed');
-      console.log(`   Workspaces checked: ${data.workspacesChecked}`);
-      console.log(`   Drift detected: ${data.driftDetected}`);
+      const passed = hasWorkspaces && hasDrifts && hasClusters;
+      console.log(passed ? '✅ Drift monitor test passed' : '❌ Drift monitor test: insufficient results');
+      console.log(`   Workspaces processed: ${workspacesProcessed}`);
+      console.log(`   New clusters created this run: ${driftPlansCreated}`);
+      console.log(`   Total drifts detected: ${totalDrifts}`);
+      console.log(`   Existing drift clusters in DB: ${existingClusters}`);
     } else {
       results.push({
         test: 'Runtime Drift Monitor',

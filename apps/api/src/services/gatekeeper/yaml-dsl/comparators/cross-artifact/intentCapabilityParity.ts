@@ -46,15 +46,24 @@ export const intentCapabilityParityComparator: Comparator = {
     }
 
     // Step 2: Extract declared capabilities and constraints
-    const declaredCapabilities = intentArtifact.requestedCapabilities as unknown as Capability[];
+    // requestedCapabilities is stored as string[] in DB (e.g. ["db_read","db_write"])
+    // Parse them into Capability objects with wildcard resource so comparison works.
+    const rawRequested: unknown[] = (intentArtifact.requestedCapabilities as unknown as unknown[]) || [];
+    const declaredCapabilities: Capability[] = rawRequested.map((cap: unknown) => {
+      if (typeof cap === 'string') {
+        return { type: cap as Capability['type'], resource: '*' };
+      }
+      const c = cap as Partial<Capability>;
+      return { type: c.type!, resource: c.resource ?? '*', scope: c.scope };
+    });
     const constraints = (intentArtifact.constraints as unknown as Constraints) || {};
 
     // Step 3: Infer actual capabilities from file changes
     const fileChanges: FileChange[] = files.map(f => ({
       path: f.filename,
-      changeType: f.status === 'added' ? 'created' : f.status === 'removed' ? 'deleted' : 'modified',
-      additions: f.additions,
-      deletions: f.deletions,
+      changeType: (f.status === 'added' ? 'created' : f.status === 'removed' ? 'deleted' : 'modified') as FileChange['changeType'],
+      linesAdded: f.additions ?? 0,
+      linesDeleted: f.deletions ?? 0,
     }));
 
     const actualCapabilities = inferCapabilitiesFromFileChanges(fileChanges);
@@ -67,10 +76,11 @@ export const intentCapabilityParityComparator: Comparator = {
 
     for (const violation of violations) {
       evidence.push({
-        type: 'capability_violation',
-        path: violation.resource,
-        snippet: `${violation.type}: ${violation.reason}`,
-        confidence: 90,
+        type: 'artifact',
+        location: violation.resource,
+        found: true,
+        details: `${violation.type}: ${violation.reason}`,
+        metadata: { capabilityType: violation.capability, violationType: violation.type },
       });
     }
 
@@ -120,11 +130,13 @@ function compareCapabilities(
 
   // Check for undeclared capabilities (privilege expansion)
   for (const actualCap of actual) {
-    const isDeclared = declared.some(
-      declaredCap => 
-        declaredCap.type === actualCap.type && 
-        declaredCap.resource === actualCap.resource
-    );
+    const isDeclared = declared.some(declaredCap => {
+      // Types must match
+      if (declaredCap.type !== actualCap.type) return false;
+      // Wildcard resource '*' covers any actual resource
+      if (declaredCap.resource === '*') return true;
+      return declaredCap.resource === actualCap.resource;
+    });
 
     if (!isDeclared) {
       violations.push({

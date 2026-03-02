@@ -80,64 +80,97 @@ export function extractAgentIdentity(
  */
 export function inferCapabilitiesFromFileChanges(files: FileChange[]): Capability[] {
   const capabilities: Capability[] = [];
-  
+
   for (const file of files) {
     const path = file.path.toLowerCase();
-    
-    // Database schema changes
+
+    // Database schema changes → schema_modify
     if (path.includes('schema.prisma') || path.includes('migrations/')) {
-      capabilities.push({
-        type: 'schema_modify',
-        resource: file.path,
-        scope: 'schema-change',
-      });
+      capabilities.push({ type: 'schema_modify', resource: file.path, scope: 'schema-change' });
     }
-    
-    // IAM/permissions changes
-    if (path.includes('iam') || path.includes('permissions') || path.includes('policy.json')) {
-      capabilities.push({
-        type: 'iam_modify',
-        resource: file.path,
-        scope: 'permissions-change',
-      });
+
+    // ORM model / repository / DAO files that perform writes → db_write
+    if (
+      path.includes('repository') || path.includes('dao') ||
+      (path.includes('model') && (path.endsWith('.ts') || path.endsWith('.js') || path.endsWith('.py'))) ||
+      path.includes('mutation') || path.includes('write')
+    ) {
+      capabilities.push({ type: 'db_write', resource: file.path, scope: 'database-write' });
     }
-    
-    // Infrastructure changes
-    if (path.includes('terraform') || path.includes('cloudformation') || path.includes('infrastructure')) {
+
+    // Query / read files → db_read
+    if (path.includes('query') || path.includes('reader') || path.includes('fetch') || path.includes('finder')) {
+      capabilities.push({ type: 'db_read', resource: file.path, scope: 'database-read' });
+    }
+
+    // IAM / permissions changes → iam_modify
+    if (path.includes('iam') || path.includes('permissions') || path.includes('policy.json') || path.includes('rbac') || path.includes('acl')) {
+      capabilities.push({ type: 'iam_modify', resource: file.path, scope: 'permissions-change' });
+    }
+
+    // Infrastructure changes → infra_create / infra_modify / infra_delete
+    if (path.includes('terraform') || path.includes('.tf') || path.includes('cloudformation') || path.includes('infrastructure') || path.includes('pulumi')) {
       if (file.changeType === 'created') {
-        capabilities.push({
-          type: 'infra_create',
-          resource: file.path,
-          scope: 'new-infrastructure',
-        });
+        capabilities.push({ type: 'infra_create', resource: file.path, scope: 'new-infrastructure' });
+      } else if (file.changeType === 'deleted') {
+        capabilities.push({ type: 'infra_delete', resource: file.path, scope: 'infrastructure-removal' });
       } else {
-        capabilities.push({
-          type: 'infra_modify',
-          resource: file.path,
-          scope: 'infrastructure-change',
-        });
+        capabilities.push({ type: 'infra_modify', resource: file.path, scope: 'infrastructure-change' });
       }
     }
-    
-    // API endpoint changes
-    if (path.includes('routes') || path.includes('api') || path.includes('endpoints')) {
-      capabilities.push({
-        type: 'api_endpoint',
-        resource: file.path,
-        scope: 'api-change',
-      });
+
+    // S3 / blob storage / object storage → s3_read / s3_write / s3_delete
+    if (path.includes('s3') || path.includes('storage') || path.includes('bucket') || path.includes('blob') || path.includes('gcs') || path.includes('minio')) {
+      if (path.includes('delete') || path.includes('remove') || path.includes('purge')) {
+        capabilities.push({ type: 's3_delete', resource: file.path, scope: 'storage-delete' });
+      } else if (path.includes('upload') || path.includes('put') || path.includes('write') || path.includes('store')) {
+        capabilities.push({ type: 's3_write', resource: file.path, scope: 'storage-write' });
+      } else {
+        capabilities.push({ type: 's3_read', resource: file.path, scope: 'storage-read' });
+      }
     }
-    
-    // Deployment changes
-    if (path.includes('dockerfile') || path.includes('deploy') || path.includes('k8s') || path.includes('kubernetes')) {
-      capabilities.push({
-        type: 'deployment_modify',
-        resource: file.path,
-        scope: 'deployment-change',
-      });
+
+    // Secret / credential / vault files → secret_read / secret_write
+    if (
+      path.includes('secret') || path.includes('vault') || path.includes('credential') ||
+      path.includes('.env') || path.includes('keystore') || path.includes('ssm')
+    ) {
+      if (path.includes('write') || path.includes('store') || path.includes('create') || file.changeType === 'created') {
+        capabilities.push({ type: 'secret_write', resource: file.path, scope: 'secret-write' });
+      } else {
+        capabilities.push({ type: 'secret_read', resource: file.path, scope: 'secret-read' });
+      }
+    }
+
+    // Public network exposure → network_public
+    if (
+      path.includes('ingress') || path.includes('loadbalancer') || path.includes('load-balancer') ||
+      path.includes('public') || path.includes('cdn') || path.includes('cloudfront') ||
+      path.includes('api-gateway') || path.includes('nginx.conf')
+    ) {
+      capabilities.push({ type: 'network_public', resource: file.path, scope: 'public-network' });
+    }
+
+    // Internal / VPC / private networking → network_private
+    if (path.includes('vpc') || path.includes('private-subnet') || path.includes('service-mesh') || path.includes('istio')) {
+      capabilities.push({ type: 'network_private', resource: file.path, scope: 'private-network' });
+    }
+
+    // API route/endpoint files (narrowed to avoid catching every file with 'api' in its path)
+    if (path.includes('/routes/') || path.includes('/endpoints/') || path.includes('/controllers/') || path.match(/\/api\/[a-z]/)) {
+      capabilities.push({ type: 'api_endpoint', resource: file.path, scope: 'api-change' });
+    }
+
+    // Deployment changes → deployment_modify
+    if (
+      path.includes('dockerfile') || path.includes('docker-compose') ||
+      path.includes('/deploy/') || path.includes('k8s/') || path.includes('kubernetes/') ||
+      path.includes('helm/') || path.includes('.github/workflows/')
+    ) {
+      capabilities.push({ type: 'deployment_modify', resource: file.path, scope: 'deployment-change' });
     }
   }
-  
+
   return capabilities;
 }
 
@@ -183,7 +216,7 @@ export function buildAgentActionTrace(
     toolCalls,
     filesModified: files,
     externalActions,
-    runtimeEffects: {},
+    runtimeEffects: [],
   };
 }
 

@@ -13,6 +13,7 @@ export default function Navigation() {
     { href: `/compliance?workspace=${workspaceId}`, label: '📋 Compliance', icon: '📋' },
     { href: `/coverage?workspace=${workspaceId}`, label: '📊 Coverage', icon: '📊' },
     { href: `/policy-packs?workspace=${workspaceId}`, label: '📦 Policy Packs', icon: '📦' },
+    { href: `/governance?workspace=${workspaceId}`, label: '🔍 Governance', icon: '🔍' },
     { href: `/settings?workspace=${workspaceId}`, label: '⚙️ Settings', icon: '⚙️' },
   ];
 
