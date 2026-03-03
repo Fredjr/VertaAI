@@ -62,7 +62,29 @@ async function createSampleIntentArtifact(): Promise<{ intentArtifact: Awaited<R
       repoFullName: 'acme-corp/user-service',
       author: 'cursor:v0.42.1',
       authorType: 'AGENT',
-      agentIdentity: 'cursor:v0.42.1',
+      agentIdentity: JSON.stringify({ tooling: 'cursor', version: 'v0.42.1', sessionId: 'ses_8fg3k2x9' }),
+      agentTraceId: 'cursor-session-8fg3k2x9-2026-02-27',
+      promptText: 'Add profile picture upload feature to the user service. Users should be able to upload JPG/PNG files up to 5 MB. Store them in S3 under a per-user prefix. Keep DB schema unchanged — no new tables.',
+      claimSet: {
+        expectedOutcomes: [
+          'Users can upload a profile picture from the settings page',
+          'Images stored durably in object storage (S3)',
+          'Existing user DB schema unchanged — no new tables',
+        ],
+        constraints: [
+          'No new DB tables',
+          'File size ≤ 5 MB',
+          'Allowed types: JPG, PNG only',
+          'Bucket must NOT be public',
+          'Uploads scoped to prefix: profile-pictures/{userId}/',
+        ],
+        nonGoals: [
+          'Image resizing or CDN integration',
+          'Video upload support',
+          'Admin moderation UI',
+          'Multi-file batch upload',
+        ],
+      },
       requestedCapabilities: ['db_read', 'db_write', 'api_endpoint'],
       affectedServices: ['user-service'],
       constraints: { least_privilege: true, no_new_infra: true },
@@ -318,10 +340,40 @@ async function createSampleDriftCluster(intentArtifact: { id: string }, mergedAt
     { capability: 'api_endpoint', observationCount: 1,  sources: ['gcp_audit_log'] },
   ];
 
+  // Observation window: starts 1h before merge anchor, ends now (mirrors runtimeDriftMonitor logic)
+  const obsWindowStart = new Date(mergedAt.getTime() - 60 * 60 * 1000);
+  const obsWindowEnd = now;
+
   const clusterSummary = {
     intentArtifactId: intentArtifact.id,
     // P1-A / FIX(issue-4): use the authoritative mergedAt anchor (same value as checkedAt)
     mergedAt: mergedAtIso,
+    // Gap B: exact observation window used for drift detection
+    observationWindow: {
+      start: obsWindowStart.toISOString(),
+      end: obsWindowEnd.toISOString(),
+    },
+    // Gap B: gate provenance — which policy pack ran and when
+    gateProvenance: {
+      gateRunAt: mergedAtIso,
+      isFinalSnapshot: true,
+      packName: 'acme-security-baseline',
+      packVersion: '2.1.0',
+    },
+    // Gap F: agent context from the originating intent artifact
+    agentContext: {
+      authorType: 'AGENT',
+      agentIdentity: { tooling: 'cursor', version: 'v0.42.1', sessionId: 'ses_8fg3k2x9' },
+      traceId: 'cursor-session-8fg3k2x9-2026-02-27',
+      promptProvided: true,
+      claimSetProvided: true,
+    },
+    // Gap E: cross-service correlation signal
+    correlationSignal: {
+      correlatedServices: ['storage-service', 'billing-service'],
+      correlatedCount: 2,
+      note: '2 other services show S3 cost anomalies correlating with the user-service PR #42 merge window.',
+    },
     // P1-B: chain-of-custody — the gate DID have violations for this service
     specBuildViolated: true,
     gatePredictedCount: 1, // only s3_write was predicted by the gate
@@ -341,6 +393,16 @@ async function createSampleDriftCluster(intentArtifact: { id: string }, mergedAt
         firstSeen: new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString(),
         lastSeen: new Date(now.getTime() - 30 * 60 * 1000).toISOString(),
         sources: ['aws_cloudtrail'],
+        // Gap D: parsed resource scope
+        scopeDetails: {
+          resourcePath: 's3://user-uploads/profile-pictures',
+          environment: 'prod',
+          isWildcard: false,
+          isExactResource: true,
+        },
+        // Gap C: causal — changed file directly introduces this capability
+        attributionConfidence: 'causal',
+        attributionNote: 's3.putObject() added in src/services/userService.ts:142 — directly writes to this bucket.',
         evidence: [
           {
             observedAt: new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString(),
@@ -349,6 +411,8 @@ async function createSampleDriftCluster(intentArtifact: { id: string }, mergedAt
             actor: 'arn:aws:iam::123456789012:role/user-service-role',
             region: 'us-east-1',
             rawEvent: 'PutObject',
+            // Gap B: deep link to CloudTrail console filtered to this event
+            evidenceLink: 'https://console.aws.amazon.com/cloudtrail/home?region=us-east-1#/events?EventName=PutObject',
           },
           {
             observedAt: new Date(now.getTime() - 30 * 60 * 1000).toISOString(),
@@ -357,6 +421,7 @@ async function createSampleDriftCluster(intentArtifact: { id: string }, mergedAt
             actor: 'arn:aws:iam::123456789012:role/user-service-role',
             region: 'us-east-1',
             rawEvent: 'PutObject',
+            evidenceLink: 'https://console.aws.amazon.com/cloudtrail/home?region=us-east-1#/events?EventName=PutObject',
           },
         ],
       },
@@ -370,6 +435,16 @@ async function createSampleDriftCluster(intentArtifact: { id: string }, mergedAt
         firstSeen: new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString(),
         lastSeen: new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString(),
         sources: ['cost_explorer'],
+        // Gap D: scope for cost anomaly
+        scopeDetails: {
+          resourcePath: 'amazon-s3',
+          environment: null,
+          isWildcard: false,
+          isExactResource: true,
+        },
+        // Gap C: causal — same PR introduced s3_write which drives this cost
+        attributionConfidence: 'causal',
+        attributionNote: 's3.putObject() added in src/services/userService.ts:142 — S3 uploads directly drive this cost anomaly.',
         evidence: [
           {
             observedAt: new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString(),
@@ -378,6 +453,7 @@ async function createSampleDriftCluster(intentArtifact: { id: string }, mergedAt
             actor: 'unknown',
             region: null,
             rawEvent: 'anomaly_detected',
+            evidenceLink: null,
           },
         ],
       },
@@ -385,37 +461,60 @@ async function createSampleDriftCluster(intentArtifact: { id: string }, mergedAt
     // All declared capabilities (db_read, db_write, api_endpoint) were observed —
     // no over-scoped items for this demo.
     unusedDeclarations: [],
+    // remediationOptions is RemediationOption[][] — one A/B/C set per undeclared capability.
+    // Using a single shared set here (applies to both s3_write and cost_increase).
     remediationOptions: [
-      {
-        id: 'A',
-        label: 'Tighten runtime (recommended)',
-        description: 'Remove or restrict the undeclared capability from code/IAM. Spec remains unchanged.',
-        requiresApproval: false,
-        actions: [
-          { type: 'remove_capability', capability: 's3_write', target: 's3://user-uploads/profile-pictures', guidance: 'Remove s3_write access to s3://user-uploads/profile-pictures from code/IAM policy.' },
-          { type: 'remove_capability', capability: 'cost_increase', target: 'amazon-s3', guidance: 'Investigate and remove the unbudgeted S3 spend causing the cost anomaly.' },
-        ],
-      },
-      {
-        id: 'B',
-        label: 'Expand intent (requires security approval)',
-        description: 'Add the capability to the intent artifact — triggers security review workflow.',
-        requiresApproval: true,
-        actions: [
-          { type: 'add_to_intent', capability: 's3_write', target: 's3://user-uploads/profile-pictures', guidance: 'Add s3_write:s3://user-uploads/profile-pictures to intent artifact. Requires security team sign-off.' },
-          { type: 'add_to_intent', capability: 'cost_increase', target: 'amazon-s3', guidance: 'Add cost_increase:amazon-s3 to intent artifact with budget ceiling. Requires security team sign-off.' },
-        ],
-      },
-      {
-        id: 'C',
-        label: 'Mark as false positive',
-        description: 'Dismiss with documented justification and mandatory expiry date for re-evaluation.',
-        requiresApproval: true,
-        actions: [
-          { type: 'false_positive', capability: 's3_write', target: 's3://user-uploads/profile-pictures', guidance: 'Document why s3_write is benign. Set expiry ≤ 90 days for mandatory re-evaluation.' },
-          { type: 'false_positive', capability: 'cost_increase', target: 'amazon-s3', guidance: 'Document why cost_increase is benign. Set expiry ≤ 90 days for mandatory re-evaluation.' },
-        ],
-      },
+      [
+        {
+          id: 'A',
+          label: 'Tighten runtime (recommended)',
+          description: 'Remove or restrict the undeclared capability from code/IAM. Spec remains unchanged.',
+          requiresApproval: false,
+          steps: [
+            {
+              title: 'Remove s3:PutObject from IAM role',
+              description: 'Delete the s3:PutObject permission from the user-service IAM role for the profile-pictures prefix.',
+              snippet: '# Remove from your IAM inline policy:\n{\n  "Effect": "Allow",\n  "Action": "s3:PutObject",\n  "Resource": "arn:aws:s3:::user-uploads/profile-pictures/*"\n}',
+              link: 'https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_manage-edit.html',
+            },
+            {
+              title: 'Remove s3.putObject() from userService.ts:142',
+              description: 'Revert the upload logic or route it through a declared storage abstraction service.',
+            },
+          ],
+        },
+        {
+          id: 'B',
+          label: 'Expand intent (requires security approval)',
+          description: 'Add s3_write to the intent artifact — triggers a security review workflow.',
+          requiresApproval: true,
+          steps: [
+            {
+              title: 'Update intent artifact YAML to declare s3_write',
+              description: 'Add s3_write with the exact bucket/prefix scope. Re-run the Spec→Build gate after committing.',
+              snippet: 'capabilities:\n  - type: s3_write\n    resource: s3://user-uploads/profile-pictures\n    constraints:\n      max_file_size_mb: 5\n      allowed_content_types: [image/jpeg, image/png]\n      prefix_pattern: "profile-pictures/{userId}/"',
+            },
+            {
+              title: 'Open security review request',
+              description: 'Required for any new data-exfiltration-capable capability. Assign to the security team.',
+              link: 'https://linear.app/acme/issue/SEC-approve',
+            },
+          ],
+        },
+        {
+          id: 'C',
+          label: 'Mark as false positive',
+          description: 'Dismiss with documented justification and a mandatory expiry date for re-evaluation.',
+          requiresApproval: true,
+          steps: [
+            {
+              title: 'Document justification and set expiry',
+              description: 'Provide a written reason why this capability is benign. VertaAI will automatically reopen the cluster at expiry.',
+              snippet: '# In VertaAI exception registry:\nexception:\n  capability: s3_write:s3://user-uploads/profile-pictures\n  reason: "Approved by eng-lead — profile picture upload is product-critical"\n  expires: 2026-06-03  # ≤ 90 days',
+            },
+          ],
+        },
+      ],
     ],
     // FIX(issue-1): build-time context for the BUILD column
     buildContext,
