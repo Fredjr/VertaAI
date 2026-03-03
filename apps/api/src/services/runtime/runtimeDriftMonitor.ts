@@ -7,7 +7,7 @@
  * ARCHITECTURE:
  * - Runs as scheduled job (every 1 hour)
  * - Queries all workspaces with runtime observations
- * - For each service, compares declared capabilities (from merged intent artifacts) to observed capabilities
+ * - For each service, unions capabilities from all recent merged intent artifacts
  * - Creates DriftPlans for detected drift
  * - Sends PagerDuty alerts for critical drift
  *
@@ -24,6 +24,13 @@
 
 import { prisma } from '../../lib/db.js';
 import { detectCapabilityDrift } from './capabilityAggregation.js';
+import {
+  calculateDriftSeverity,
+  buildSeverityRationale,
+  CRITICAL_CAPABILITIES,
+  HIGH_CAPABILITIES,
+} from './severityConstants.js';
+import { buildRemediationOptions } from './remediationGuide.js';
 import { getGitHubClient } from '../github-client.js';
 import { sendSlackMessage } from '../slack-client.js';
 import type { Capability } from '../../types/agentGovernance.js';
@@ -42,11 +49,13 @@ export interface RuntimeDriftResult {
   pagerdutyAlertSent: boolean;
   githubCheckPosted: boolean;
   slackAlertSent: boolean;
+  /** Other services in the same workspace that showed the same undeclared capability types. */
+  correlatedServices?: string[];
 }
 
 /**
- * Run runtime drift monitoring for all workspaces
- * This is the main entry point for Track B runtime monitoring
+ * Run runtime drift monitoring for all workspaces.
+ * This is the main entry point for Track B runtime monitoring.
  */
 export async function runRuntimeDriftMonitor(): Promise<RuntimeDriftResult[]> {
   console.log('[RuntimeDriftMonitor] Starting runtime drift monitoring...');
@@ -56,9 +65,7 @@ export async function runRuntimeDriftMonitor(): Promise<RuntimeDriftResult[]> {
   // Step 1: Get all workspaces with runtime observations
   const workspacesWithObservations = await prisma.runtimeCapabilityObservation.groupBy({
     by: ['workspaceId'],
-    _count: {
-      id: true,
-    },
+    _count: { id: true },
   });
 
   console.log(`[RuntimeDriftMonitor] Found ${workspacesWithObservations.length} workspaces with observations`);
@@ -78,7 +85,13 @@ export async function runRuntimeDriftMonitor(): Promise<RuntimeDriftResult[]> {
 }
 
 /**
- * Detect drift for a specific workspace
+ * Detect drift for a specific workspace.
+ *
+ * Cross-service correlation (principle #5):
+ * After the per-service pass, we identify capability types that appear as
+ * undeclared usage in ≥ 2 services simultaneously. A single IAM policy change
+ * that affects 5 services is a qualitatively different event than 5 independent
+ * incidents — this context is surfaced in each cluster's correlationSignal.
  */
 async function detectDriftForWorkspace(workspaceId: string): Promise<RuntimeDriftResult[]> {
   const results: RuntimeDriftResult[] = [];
@@ -92,13 +105,55 @@ async function detectDriftForWorkspace(workspaceId: string): Promise<RuntimeDrif
 
   console.log(`[RuntimeDriftMonitor] Workspace ${workspaceId}: ${servicesWithObservations.length} services`);
 
-  // Step 2: For each service, get the latest merged intent artifact
+  // Step 2: First pass — collect undeclared capability types per service.
+  // This lets us build the cross-service correlation index before committing clusters.
+  const serviceUndeclaredTypes = new Map<string, Set<string>>(); // service → Set<capabilityType>
+
   for (const { service } of servicesWithObservations) {
     try {
-      const result = await detectDriftForService(workspaceId, service);
-      if (result) {
-        results.push(result);
+      const caps = await getUndeclaredCapabilityTypes(workspaceId, service);
+      if (caps.size > 0) serviceUndeclaredTypes.set(service, caps);
+    } catch (error: any) {
+      console.error(`[RuntimeDriftMonitor] Error prefetching undeclared caps for ${service}:`, error.message);
+    }
+  }
+
+  // Step 3: Build correlation index: capabilityType → services that show it undeclared
+  const correlationIndex = new Map<string, string[]>(); // capabilityType → [service, ...]
+  for (const [service, types] of serviceUndeclaredTypes) {
+    for (const type of types) {
+      const list = correlationIndex.get(type) ?? [];
+      list.push(service);
+      correlationIndex.set(type, list);
+    }
+  }
+
+  // Log correlated signals (≥2 services sharing the same undeclared capability)
+  for (const [type, services] of correlationIndex) {
+    if (services.length >= 2) {
+      console.log(`[RuntimeDriftMonitor] Correlated undeclared ${type} across ${services.length} services: ${services.join(', ')}`);
+    }
+  }
+
+  // Step 4: Second pass — full drift detection and cluster management per service
+  for (const { service } of servicesWithObservations) {
+    try {
+      // Compute which other services share at least one undeclared capability type with this service
+      const myTypes = serviceUndeclaredTypes.get(service) ?? new Set();
+      const correlatedServices = new Set<string>();
+      for (const type of myTypes) {
+        const peers = correlationIndex.get(type) ?? [];
+        for (const peer of peers) {
+          if (peer !== service) correlatedServices.add(peer);
+        }
       }
+
+      const result = await detectDriftForService(
+        workspaceId,
+        service,
+        correlatedServices.size > 0 ? Array.from(correlatedServices) : undefined,
+      );
+      if (result) results.push(result);
     } catch (error: any) {
       console.error(`[RuntimeDriftMonitor] Error processing service ${service}:`, error.message);
     }
@@ -108,68 +163,146 @@ async function detectDriftForWorkspace(workspaceId: string): Promise<RuntimeDrif
 }
 
 /**
- * Detect drift for a specific service
+ * Lightweight pre-flight: collect the set of undeclared capability types for a
+ * service without creating clusters or sending alerts. Used for correlation indexing.
+ */
+async function getUndeclaredCapabilityTypes(
+  workspaceId: string,
+  service: string,
+): Promise<Set<string>> {
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const recentArtifacts = await prisma.intentArtifact.findMany({
+    where: { workspaceId, affectedServices: { has: service }, createdAt: { gte: thirtyDaysAgo } },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+  });
+  if (recentArtifacts.length === 0) return new Set();
+
+  const capabilitySet = new Map<string, Capability>();
+  for (const artifact of recentArtifacts) {
+    for (const cap of ((artifact.requestedCapabilities as any) || [])) {
+      const type = typeof cap === 'string' ? cap : cap.type;
+      const target = typeof cap === 'string' ? '*' : (cap.target ?? cap.resource ?? '*');
+      const key = `${type}:${target}`;
+      if (!capabilitySet.has(key)) capabilitySet.set(key, { type, target } as unknown as Capability);
+    }
+  }
+
+  const mergedAt = recentArtifacts[0].createdAt instanceof Date
+    ? recentArtifacts[0].createdAt
+    : new Date(recentArtifacts[0].createdAt);
+  const drifts = await detectCapabilityDrift(
+    workspaceId, service, Array.from(capabilitySet.values()), 7, mergedAt,
+  );
+
+  return new Set(
+    drifts.filter(d => d.driftType === 'undeclared_usage').map(d => d.capabilityType),
+  );
+}
+
+/**
+ * Detect drift for a specific service.
+ * R1-FIX: Unions capabilities from all recent intent artifacts (up to 10, last 30 days)
+ * rather than using only the most recent one, giving a broader declared capability surface.
+ * @param correlatedServices Other services in the workspace showing the same undeclared
+ *   capability types this cycle (cross-service correlation signal).
  */
 async function detectDriftForService(
   workspaceId: string,
-  service: string
+  service: string,
+  correlatedServices?: string[],
 ): Promise<RuntimeDriftResult | null> {
-  // Step 1: Get the latest merged intent artifact for this service
-  const intentArtifact = await prisma.intentArtifact.findFirst({
+  // R1-FIX: Query all recent intent artifacts for this service (not just the latest)
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  const recentArtifacts = await prisma.intentArtifact.findMany({
     where: {
       workspaceId,
-      affectedServices: {
-        has: service,
-      },
+      affectedServices: { has: service },
+      createdAt: { gte: thirtyDaysAgo },
     },
-    orderBy: {
-      createdAt: 'desc',
-    },
+    orderBy: { createdAt: 'desc' },
+    take: 10, // Union up to 10 most recent intents for this service
   });
 
-  if (!intentArtifact) {
+  if (recentArtifacts.length === 0) {
     console.log(`[RuntimeDriftMonitor] No intent artifact found for service ${service}`);
     return null;
   }
 
-  // Step 2: Extract declared capabilities from requestedCapabilities (stored as string[] in DB)
-  // The DB stores requestedCapabilities as a string[] like ["db_read", "db_write", ...]
-  // We convert each string to a Capability-like object with wildcard target ('*')
-  // so that comparisons match any observed target for that capability type.
-  const rawRequested: any[] = (intentArtifact.requestedCapabilities as any) || [];
-  const declaredCapabilities: Capability[] = rawRequested.map((cap: any) => {
-    if (typeof cap === 'string') {
-      return { type: cap, target: '*' } as unknown as Capability;
+  // R1-FIX: Union declared capabilities from all recent artifacts.
+  // If an agent opened 3 PRs touching the same service, all declared capabilities
+  // from all 3 are treated as authorised — avoiding false undeclared_usage positives.
+  const capabilitySet = new Map<string, Capability>();
+  for (const artifact of recentArtifacts) {
+    const rawCaps: any[] = (artifact.requestedCapabilities as any) || [];
+    for (const cap of rawCaps) {
+      const type = typeof cap === 'string' ? cap : cap.type;
+      const target = typeof cap === 'string' ? '*' : (cap.target ?? cap.resource ?? '*');
+      const key = `${type}:${target}`;
+      if (!capabilitySet.has(key)) {
+        capabilitySet.set(key, { type, target } as unknown as Capability);
+      }
     }
-    // Already a Capability object (type + resource or target)
-    return { type: cap.type, target: cap.target ?? cap.resource ?? '*' } as unknown as Capability;
-  });
+  }
+
+  const declaredCapabilities = Array.from(capabilitySet.values());
 
   if (declaredCapabilities.length === 0) {
     console.log(`[RuntimeDriftMonitor] No declared capabilities for service ${service}`);
     return null;
   }
 
+  // Use the most recent artifact for anchor/metadata
+  const latestArtifact = recentArtifacts[0];
+
   // Step 3: Detect drift anchored to merge time (P1-A)
-  // Use intentArtifact.createdAt as a proxy for the merge timestamp.
-  // This anchors the observation window to post-merge production traffic
-  // instead of a flat rolling 7-day window that conflates pre-merge staging noise.
-  const mergedAt = intentArtifact.createdAt instanceof Date
-    ? intentArtifact.createdAt
-    : new Date(intentArtifact.createdAt);
+  const mergedAt = latestArtifact.createdAt instanceof Date
+    ? latestArtifact.createdAt
+    : new Date(latestArtifact.createdAt);
   const drifts = await detectCapabilityDrift(workspaceId, service, declaredCapabilities, 7, mergedAt);
 
-  if (drifts.length === 0) {
-    console.log(`[RuntimeDriftMonitor] No drift detected for service ${service}`);
+  // R7-FIX: Auto-close cluster when undeclared usage has fully resolved.
+  const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
+  if (undeclaredUsage.length === 0) {
+    const openCluster = await prisma.driftCluster.findFirst({
+      where: {
+        workspaceId,
+        service,
+        driftType: 'runtime_capability_drift',
+        status: 'pending',
+      },
+    });
+    if (openCluster) {
+      let existingSummary: Record<string, any> = {};
+      try {
+        existingSummary = JSON.parse(openCluster.clusterSummary as string || '{}');
+      } catch {
+        // ignore parse errors on stale data
+      }
+      await prisma.driftCluster.update({
+        where: { workspaceId_id: { workspaceId, id: openCluster.id } },
+        data: {
+          status: 'closed',
+          closedAt: new Date(),
+          clusterSummary: JSON.stringify({
+            ...existingSummary,
+            autoResolvedAt: new Date().toISOString(),
+            resolvedReason: 'No undeclared capabilities detected in current observation window',
+          }),
+        },
+      });
+      console.log(`[RuntimeDriftMonitor] Auto-closed drift cluster for service ${service} (drift resolved)`);
+    }
+    console.log(`[RuntimeDriftMonitor] No undeclared usage for service ${service} — no action needed`);
     return null;
   }
 
-  // Step 4: Categorize drifts
-  const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
-  const unusedDeclarations = drifts.filter(d => d.driftType === 'unused_declaration');
-
-  // Step 5: Calculate severity
+  // Step 5: Calculate severity using shared constants
   const severity = calculateDriftSeverity(drifts);
+  const unusedDeclarations = drifts.filter(d => d.driftType === 'unused_declaration');
 
   console.log(`[RuntimeDriftMonitor] Service ${service}: ${drifts.length} drifts (${undeclaredUsage.length} undeclared, ${unusedDeclarations.length} unused), severity: ${severity}`);
 
@@ -177,22 +310,33 @@ async function detectDriftForService(
   const driftPlanCreated = await createDriftPlanForRuntimeDrift(
     workspaceId,
     service,
-    intentArtifact,
-    drifts
+    latestArtifact,
+    drifts,
+    correlatedServices,
   );
 
-  // Step 7: Send PagerDuty alert for critical drift
-  const pagerdutyAlertSent = severity === 'critical'
+  // Step 7: Send PagerDuty alert for critical drift.
+  // Use effectiveSeverity (decay+confidence adjusted) for alerting thresholds —
+  // a critical observation from 6 days ago via a low-confidence source should
+  // not page on-call at 3 am with the same urgency as a fresh CloudTrail event.
+  const effectiveSeverityForAlert = undeclaredUsage.reduce<string>((worst, d: any) => {
+    const s = d.effectiveSeverity ?? d.severity;
+    if (s === 'critical') return 'critical';
+    if (s === 'high' && worst !== 'critical') return 'high';
+    return worst;
+  }, 'medium');
+
+  const pagerdutyAlertSent = effectiveSeverityForAlert === 'critical'
     ? await sendPagerDutyAlert(workspaceId, service, drifts)
     : false;
 
   // Step 8: Post GitHub check-run on the originating PR
   const githubCheckPosted = await sendGitHubDriftCheck(
-    workspaceId, service, intentArtifact, drifts, severity
+    workspaceId, service, latestArtifact, drifts, severity,
   );
 
-  // Step 9: Send Slack alert for critical or high severity drift
-  const slackAlertSent = (severity === 'critical' || severity === 'high')
+  // Step 9: Send Slack alert for critical or high effective severity
+  const slackAlertSent = (effectiveSeverityForAlert === 'critical' || effectiveSeverityForAlert === 'high')
     ? await sendSlackDriftAlert(workspaceId, service, drifts, severity)
     : false;
 
@@ -207,49 +351,20 @@ async function detectDriftForService(
     pagerdutyAlertSent,
     githubCheckPosted,
     slackAlertSent,
+    correlatedServices: correlatedServices?.length ? correlatedServices : undefined,
   };
-}
-
-// Canonical severity tiers (18-type lattice only)
-const CRITICAL_CAPABILITIES = ['iam_modify', 'secret_write', 'db_admin', 'infra_delete', 'deployment_modify'];
-const HIGH_CAPABILITIES = ['s3_delete', 's3_write', 'schema_modify', 'network_public', 'infra_create', 'infra_modify', 'secret_read'];
-
-/**
- * Deterministic severity — privilege expansion is NEVER low.
- * Low is reserved exclusively for clusters with zero undeclared usage.
- */
-function calculateDriftSeverity(drifts: any[]): 'critical' | 'high' | 'medium' | 'low' {
-  const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
-  if (undeclaredUsage.length === 0) return 'low'; // Only unused declarations
-  if (undeclaredUsage.some(d => CRITICAL_CAPABILITIES.includes(d.capabilityType))) return 'critical';
-  if (undeclaredUsage.some(d => HIGH_CAPABILITIES.includes(d.capabilityType))) return 'high';
-  return 'medium'; // Any undeclared usage → minimum medium (privilege expansion)
-}
-
-/**
- * Human-readable explanation of why this severity was assigned.
- */
-function buildSeverityRationale(undeclaredUsage: any[], severity: string): string {
-  if (undeclaredUsage.length === 0) return 'No undeclared capabilities; only over-scoped declarations.';
-  const criticalCaps = undeclaredUsage.filter(d => CRITICAL_CAPABILITIES.includes(d.capabilityType));
-  const highCaps = undeclaredUsage.filter(d => HIGH_CAPABILITIES.includes(d.capabilityType));
-  if (criticalCaps.length > 0) {
-    return `Critical: undeclared ${criticalCaps.map((d: any) => d.capabilityType).join(', ')} detected — requires immediate security review.`;
-  }
-  if (highCaps.length > 0) {
-    return `High: undeclared ${highCaps.map((d: any) => d.capabilityType).join(', ')} — sensitive capability used without spec declaration.`;
-  }
-  return `Medium: ${undeclaredUsage.length} capability(ies) used at runtime without intent declaration — privilege expansion detected.`;
 }
 
 /**
  * Create DriftCluster for runtime drift
+ * @param correlatedServices Other services with the same undeclared capability types this cycle.
  */
 async function createDriftPlanForRuntimeDrift(
   workspaceId: string,
   service: string,
   intentArtifact: any,
-  drifts: any[]
+  drifts: any[],
+  correlatedServices?: string[],
 ): Promise<boolean> {
   try {
     // Check if a pending DriftCluster already exists for this service's runtime drift
@@ -267,11 +382,17 @@ async function createDriftPlanForRuntimeDrift(
     const severity = calculateDriftSeverity(drifts);
     const severityRationale = buildSeverityRationale(undeclaredUsage, severity);
 
-    // Enrich each undeclared capability with actual observation evidence from DB
+    // Enrich each undeclared capability with actual observation evidence from DB.
+    // Run in parallel to avoid sequential N+1 latency.
     const undeclaredUsageEnriched = await Promise.all(
       undeclaredUsage.map(async (d: any) => {
         const samples = await prisma.runtimeCapabilityObservation.findMany({
-          where: { workspaceId, service, capabilityType: d.capabilityType, capabilityTarget: d.capabilityTarget },
+          where: {
+            workspaceId,
+            service,
+            capabilityType: d.capabilityType,
+            capabilityTarget: d.capabilityTarget,
+          },
           orderBy: { observedAt: 'desc' },
           take: 3,
           select: { observedAt: true, source: true, sourceEventId: true, metadata: true },
@@ -300,31 +421,37 @@ async function createDriftPlanForRuntimeDrift(
             };
           }),
         };
-      })
+      }),
     );
 
     // P1-B: Cross-reference specBuildFindings to establish chain-of-custody.
-    // If the Spec→Build gate already flagged a capability, runtime drift of
-    // the same type is a regression confirmation, not a surprise.
-    const specBuildFindings = intentArtifact.specBuildFindings
-      ? JSON.parse(intentArtifact.specBuildFindings as string)
-      : null;
+    // L3-FIX: Wrap JSON.parse in try/catch — malformed stored JSON must not abort cluster creation.
+    let specBuildFindings: any = null;
+    try {
+      specBuildFindings = intentArtifact.specBuildFindings
+        ? JSON.parse(intentArtifact.specBuildFindings as string)
+        : null;
+    } catch {
+      console.warn(`[RuntimeDriftMonitor] Failed to parse specBuildFindings for ${service} — skipping chain-of-custody`);
+    }
     const gateFlaggedTypes = new Set<string>(
-      (specBuildFindings?.violations ?? []).map((v: any) => String(v.capability ?? v.type ?? ''))
+      (specBuildFindings?.violations ?? []).map((v: any) => String(v.capability ?? v.type ?? '')),
     );
     const specBuildViolated = gateFlaggedTypes.size > 0;
     const mergedAtIso = intentArtifact.createdAt instanceof Date
       ? intentArtifact.createdAt.toISOString()
       : new Date(intentArtifact.createdAt).toISOString();
 
-    // FIX(issue-6): confirmedCompliant — declared caps that are actually observed at runtime.
-    // Gives operators confidence that the declared surface is exercised.
+    // FIX(issue-6): confirmedCompliant — declared caps actually observed at runtime.
     const unusedCapabilityTypes = new Set(unusedDeclarations.map((d: any) => d.capabilityType));
     const declaredCaps: string[] = Array.isArray(intentArtifact.requestedCapabilities)
       ? intentArtifact.requestedCapabilities.map((c: any) =>
-          typeof c === 'string' ? c : (c.type ?? String(c))
+          typeof c === 'string' ? c : (c.type ?? String(c)),
         )
       : [];
+
+    // Only count a cap as confirmed compliant if it is NOT in unusedDeclarations
+    // (i.e., it was declared AND observed).
     const confirmedCompliant = (await Promise.all(
       declaredCaps
         .filter(cap => !unusedCapabilityTypes.has(cap))
@@ -343,13 +470,16 @@ async function createDriftPlanForRuntimeDrift(
             observationCount: count,
             sources: [...new Set(sourceSamples.map((o: any) => o.source))],
           };
-        })
+        }),
     )).filter(Boolean);
 
-    // FIX(issue-1): buildContext — link to the agent action trace (file-level evidence).
-    // Lets the BUILD column show which files changed rather than just the PR link.
+    // FIX(issue-1): buildContext — link to agent action trace (file-level evidence).
     const agentTrace = await prisma.agentActionTrace.findFirst({
-      where: { workspaceId, prNumber: intentArtifact.prNumber, repoFullName: intentArtifact.repoFullName },
+      where: {
+        workspaceId,
+        prNumber: intentArtifact.prNumber,
+        repoFullName: intentArtifact.repoFullName,
+      },
       select: { filesModified: true },
     });
     const buildContext = agentTrace
@@ -361,7 +491,7 @@ async function createDriftPlanForRuntimeDrift(
       intentArtifactId: intentArtifact.id,
       // P1-A: expose merge anchor for UI display
       mergedAt: mergedAtIso,
-      // P1-B: chain-of-custody — was the Spec→Build gate already aware of these violations?
+      // P1-B: chain-of-custody
       specBuildViolated,
       gatePredictedCount: gateFlaggedTypes.size,
       severity,
@@ -378,48 +508,28 @@ async function createDriftPlanForRuntimeDrift(
         // P2-A: why wasn't this observed?
         observationReason: d.observationReason ?? 'not_observed_in_window',
       })),
-      remediationOptions: [
-        {
-          id: 'A',
-          label: 'Tighten runtime (recommended)',
-          description: 'Remove or restrict the undeclared capability from code/IAM. Spec remains unchanged.',
-          requiresApproval: false,
-          actions: undeclaredUsage.map((d: any) => ({
-            type: 'remove_capability',
-            capability: d.capabilityType,
-            target: d.capabilityTarget,
-            guidance: `Remove ${d.capabilityType} access to ${d.capabilityTarget} from code/IAM policy.`,
-          })),
-        },
-        {
-          id: 'B',
-          label: 'Expand intent (requires security approval)',
-          description: 'Add the capability to the intent artifact — triggers security review workflow.',
-          requiresApproval: true,
-          actions: undeclaredUsage.map((d: any) => ({
-            type: 'add_to_intent',
-            capability: d.capabilityType,
-            target: d.capabilityTarget,
-            guidance: `Add ${d.capabilityType}:${d.capabilityTarget} to intent artifact. Requires security team sign-off.`,
-          })),
-        },
-        {
-          id: 'C',
-          label: 'Mark as false positive',
-          description: 'Dismiss with documented justification and mandatory expiry date for re-evaluation.',
-          requiresApproval: true,
-          actions: undeclaredUsage.map((d: any) => ({
-            type: 'false_positive',
-            capability: d.capabilityType,
-            target: d.capabilityTarget,
-            guidance: `Document why ${d.capabilityType} is benign. Set expiry ≤ 90 days for mandatory re-evaluation.`,
-          })),
-        },
-      ],
+      // Remediation specificity (principle #7): generate concrete, per-capability-type
+      // steps instead of generic "remove or restrict" guidance.
+      // Each undeclared capability gets its own A/B/C option set with IAM snippets,
+      // CLI commands, and audit console links specific to that capability type.
+      remediationOptions: undeclaredUsage.map((d: any) =>
+        buildRemediationOptions(d.capabilityType, d.capabilityTarget),
+      ),
       // FIX(issue-6): confirmed compliant capabilities
       confirmedCompliant,
       // FIX(issue-1): build context from agent action trace
       buildContext,
+      // Cross-service correlation signal (principle #5):
+      // When multiple services in the same workspace show the same undeclared capability
+      // type simultaneously, this is surfaced here so operators understand the blast radius.
+      // A single IAM policy change touching 5 services = 1 correlated incident, not 5 separate ones.
+      correlationSignal: correlatedServices && correlatedServices.length > 0
+        ? {
+            correlatedServices,
+            correlatedCount: correlatedServices.length,
+            note: `${correlatedServices.length} other service(s) show the same undeclared capability type(s) in this monitoring window. This may indicate a shared IAM policy, infrastructure change, or common dependency.`,
+          }
+        : null,
     };
 
     if (existingCluster) {
@@ -432,6 +542,19 @@ async function createDriftPlanForRuntimeDrift(
       return false;
     }
 
+    // R4-FIX: driftIds should reference real DB records, not synthetic strings.
+    // Since RuntimeCapabilityObservation records ARE the canonical drift evidence,
+    // we store the IDs of the most recent observation per undeclared capability pair.
+    const realDriftIds: string[] = [];
+    for (const d of undeclaredUsage) {
+      const obs = await prisma.runtimeCapabilityObservation.findFirst({
+        where: { workspaceId, service, capabilityType: d.capabilityType, capabilityTarget: d.capabilityTarget },
+        orderBy: { observedAt: 'desc' },
+        select: { id: true },
+      });
+      if (obs) realDriftIds.push(obs.id);
+    }
+
     const cluster = await prisma.driftCluster.create({
       data: {
         workspaceId,
@@ -441,7 +564,7 @@ async function createDriftPlanForRuntimeDrift(
         status: 'pending',
         driftCount: drifts.length,
         clusterSummary: JSON.stringify(summaryPayload),
-        driftIds: drifts.map((d, i) => `runtime-drift-${service}-${i}`),
+        driftIds: realDriftIds,
       },
     });
 
@@ -455,14 +578,15 @@ async function createDriftPlanForRuntimeDrift(
 
 /**
  * Post a GitHub check-run on the PR that introduced the service's latest intent artifact.
- * Conclusion is 'failure' for critical/high, 'action_required' for medium, 'neutral' for low.
+ * R10-FIX: Use pr.head.sha — the feature branch's latest commit — not pr.merge_commit_sha
+ * (which is the merge commit on the base branch and is not a valid check-run target SHA).
  */
 async function sendGitHubDriftCheck(
   workspaceId: string,
   service: string,
   intentArtifact: any,
   drifts: any[],
-  severity: string
+  severity: string,
 ): Promise<boolean> {
   try {
     const octokit = await getGitHubClient(workspaceId);
@@ -478,9 +602,11 @@ async function sendGitHubDriftCheck(
     const [owner, repo] = repoFullName.split('/');
     if (!owner || !repo) return false;
 
-    // Fetch the PR to get the merge/head SHA
+    // R10-FIX: Always use pr.head.sha — the commit that the PR introduced.
+    // pr.merge_commit_sha is the merge commit on the base branch after merging and
+    // is not a valid target for a check run associated with the original PR.
     const { data: pr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
-    const headSha: string = pr.merge_commit_sha || pr.head.sha;
+    const headSha: string = pr.head.sha;
 
     const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
     const conclusion = (severity === 'critical' || severity === 'high')
@@ -490,7 +616,7 @@ async function sendGitHubDriftCheck(
         : 'neutral';
 
     const capList = undeclaredUsage.map(d =>
-      `- **${d.capabilityType}** on \`${d.capabilityTarget}\` (undeclared at spec time)`
+      `- **${d.capabilityType}** on \`${d.capabilityTarget}\` (undeclared at spec time)`,
     ).join('\n');
 
     await octokit.rest.checks.create({
@@ -522,7 +648,7 @@ async function sendSlackDriftAlert(
   workspaceId: string,
   service: string,
   drifts: any[],
-  severity: string
+  severity: string,
 ): Promise<boolean> {
   try {
     const integration = await prisma.integration.findFirst({
@@ -574,7 +700,7 @@ async function sendSlackDriftAlert(
       workspaceId,
       channel,
       `${severityEmoji} Runtime drift detected in *${service}*: ${undeclaredUsage.length} undeclared capability(ies) — ${severity.toUpperCase()} severity`,
-      blocks
+      blocks,
     );
 
     if (!result.ok) {
@@ -591,21 +717,20 @@ async function sendSlackDriftAlert(
 }
 
 /**
- * Send PagerDuty alert for critical drift
+ * Send PagerDuty alert for critical drift using the Events API v2.
+ * R9-FIX: Use config.routingKey as the integration key, POST to the canonical
+ * Events API v2 endpoint. If only a generic webhookUrl is configured (no routingKey),
+ * fall back to the generic webhook for backward compatibility.
+ * Also fixed: d.capabilityType (not d.capability.type).
  */
 async function sendPagerDutyAlert(
   workspaceId: string,
   service: string,
-  drifts: any[]
+  drifts: any[],
 ): Promise<boolean> {
   try {
-    // Get workspace PagerDuty integration
     const integration = await prisma.integration.findFirst({
-      where: {
-        workspaceId,
-        type: 'pagerduty',
-        status: 'connected',
-      },
+      where: { workspaceId, type: 'pagerduty', status: 'connected' },
     });
 
     if (!integration) {
@@ -614,18 +739,24 @@ async function sendPagerDutyAlert(
     }
 
     const config = integration.config as any;
-    const webhookUrl = config?.webhookUrl;
+    const routingKey: string | undefined = config?.routingKey;
+    const webhookUrl: string | undefined = config?.webhookUrl;
 
-    if (!webhookUrl) {
-      console.log(`[RuntimeDriftMonitor] No PagerDuty webhook URL configured`);
+    if (!routingKey && !webhookUrl) {
+      console.log(`[RuntimeDriftMonitor] No PagerDuty routing key or webhook URL configured`);
       return false;
     }
 
-    // Send PagerDuty event
     const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
 
+    // R9-FIX: Use PagerDuty Events API v2 endpoint when routingKey is present.
+    // The routingKey goes in the request body, not as a URL param.
+    const endpoint = routingKey
+      ? 'https://events.pagerduty.com/v2/enqueue'
+      : webhookUrl!;
+
     const payload = {
-      routing_key: config.routingKey || 'default',
+      routing_key: routingKey || config.routingKey || 'default',
       event_action: 'trigger',
       payload: {
         summary: `[VertaAI] Critical Runtime Drift Detected: ${service}`,
@@ -635,12 +766,13 @@ async function sendPagerDutyAlert(
           service,
           driftsDetected: drifts.length,
           undeclaredUsage: undeclaredUsage.length,
-          capabilities: undeclaredUsage.map(d => d.capability.type).join(', '),
+          // R9-FIX: d.capabilityType (not d.capability.type — d has no .capability sub-object)
+          capabilities: undeclaredUsage.map((d: any) => d.capabilityType).join(', '),
         },
       },
     };
 
-    const response = await fetch(webhookUrl, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

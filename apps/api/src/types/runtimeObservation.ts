@@ -64,6 +64,18 @@ export interface ServiceCapabilityUsage {
     firstSeen: Date;
     lastSeen: Date;
     sources: ObservationSource[];
+    /**
+     * Observation recency weight [0.0–1.0].
+     * 1.0 = seen within last 24 h; decays to 0.3 beyond 5 days.
+     * Used to downgrade severity for stale observations.
+     */
+    recencyWeight: number;
+    /**
+     * Maximum source confidence [0.0–1.0] across all sources that
+     * observed this capability. Structured audit logs (CloudTrail, GCP)
+     * score higher than inferred signals (raw DB queries).
+     */
+    confidence: number;
   }[];
 }
 
@@ -91,6 +103,22 @@ export interface CapabilityDrift {
    * - 'source_coverage_gap': no data source covers this cap type (e.g. schema_modify)
    */
   observationReason?: 'not_observed_in_window' | 'source_coverage_gap';
+  /**
+   * Recency-weighted, confidence-adjusted severity for undeclared_usage drifts.
+   * May be lower than `severity` when the evidence is stale or low-confidence.
+   * Always at least 'medium' for undeclared_usage (privilege expansion floor).
+   */
+  effectiveSeverity?: 'low' | 'medium' | 'high' | 'critical';
+  /** Recency weight [0.0–1.0] of the most recent observation for this capability. */
+  recencyWeight?: number;
+  /** Max source confidence [0.0–1.0] across evidence sources. */
+  confidence?: number;
+  /**
+   * Other services in the same workspace that observed the same undeclared
+   * capability type simultaneously (within the same monitoring window).
+   * Non-empty = correlated multi-service event.
+   */
+  correlatedServices?: string[];
 }
 
 /**
@@ -119,6 +147,12 @@ export interface CloudTrailEvent {
  */
 export interface GCPAuditLogEntry {
   logName: string;
+  /**
+   * R5-FIX: insertId is the globally unique identifier for a log entry.
+   * Use this for deduplication instead of `${logName}:${timestamp}`,
+   * which is not unique when multiple log entries share the same timestamp.
+   */
+  insertId?: string;
   resource: {
     type: string;
     labels: Record<string, string>;

@@ -127,7 +127,9 @@ function mergeRules(
   const conflicts: any[] = [];
 
   for (const sp of selectedPacks) {
-    for (const rule of sp.pack.rules) {
+    for (const rawRule of sp.pack.rules) {
+      // Cast to PackRule: zod infers optional id/name but packs are validated before selection.
+      const rule = rawRule as PackRule;
       const existing = ruleMap.get(rule.id);
 
       if (!existing) {
@@ -157,8 +159,10 @@ function mergeRules(
           packSource: sp.source,
         });
 
-        // Check if rules are different (conflict)
-        const isDifferent = JSON.stringify(existing.obligations) !== JSON.stringify(rule.obligations);
+        // A6-FIX: Use stable canonical JSON (sorted keys) for conflict detection instead of
+        // JSON.stringify which produces different output for objects with the same keys
+        // in different insertion orders (e.g., { a:1, b:2 } vs { b:2, a:1 }).
+        const isDifferent = stableStringify(existing.obligations) !== stableStringify(rule.obligations);
         
         if (isDifferent) {
           existing.hasConflict = true;
@@ -219,11 +223,34 @@ function resolveConflict(
     }
 
     case 'MOST_RESTRICTIVE': {
-      // Keep most restrictive version (this is complex - for now, keep first)
+      // A5-FIX: Choose the version with more blocking obligations rather than
+      // silently keeping the first pack. Severity order: block > warn > pass.
+      const SEVERITY_RANK: Record<string, number> = { block: 3, warn: 2, pass: 1 };
+      const scoreObligations = (obligations: any[]): number =>
+        (obligations || []).reduce(
+          (sum, ob) => sum + (SEVERITY_RANK[ob.decisionOnFail] ?? 1),
+          0,
+        );
+
+      const existingScore = scoreObligations(existing.obligations);
+      const newScore = scoreObligations(newRule.obligations);
+
+      if (newScore > existingScore) {
+        // Incoming pack is more restrictive — adopt its obligations
+        existing.obligations = newRule.obligations;
+        existing.enabled = newRule.enabled;
+        return {
+          strategy: 'MOST_RESTRICTIVE',
+          winningPackId: newPack.pack.metadata.id,
+          reason: `Pack "${newPack.pack.metadata.name}" has more restrictive obligations (score ${newScore} vs ${existingScore})`,
+        };
+      }
+
+      const winner = existing.sources[0];
       return {
         strategy: 'MOST_RESTRICTIVE',
-        winningPackId: existing.sources[0].packId,
-        reason: 'Using most restrictive rule definition (first pack)',
+        winningPackId: winner.packId,
+        reason: `Pack "${winner.packName}" retained — equal or more restrictive obligations (score ${existingScore} vs ${newScore})`,
       };
     }
 
@@ -243,6 +270,20 @@ function resolveConflict(
         reason: 'Using default conflict resolution',
       };
   }
+}
+
+/**
+ * A6-FIX: Produce a deterministic JSON string by recursively sorting object keys.
+ * This makes obligation conflict detection independent of insertion order, preventing
+ * false-positive conflicts when two packs define the same rule with reordered keys.
+ */
+function stableStringify(value: any): string {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return JSON.stringify(value);
+  }
+  const sortedKeys = Object.keys(value).sort();
+  const parts = sortedKeys.map(k => `${JSON.stringify(k)}:${stableStringify(value[k])}`);
+  return `{${parts.join(',')}}`;
 }
 
 /**

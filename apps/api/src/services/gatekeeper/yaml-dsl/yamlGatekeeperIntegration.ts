@@ -36,6 +36,9 @@ export interface YAMLGatekeeperResult {
 
   // PHASE 2 FIX: Multi-pack support
   packResults?: PackResult[];
+
+  // A4: EXPLICIT mode conflict details (populated when EXPLICIT packs disagree)
+  explicitConflicts?: Array<{ packNames: string[]; decisions: string[] }>;
 }
 
 /**
@@ -76,6 +79,24 @@ export async function runYAMLGatekeeper(
   // Step 2: Load workspace defaults
   const defaults = await loadWorkspaceDefaults(prisma, input.workspaceId);
 
+  // A2-FIX: Resolve base SHA from GitHub once before the pack loop.
+  // `baseSha: ''` was a hardcoded placeholder that broke diff-aware comparators.
+  // We call pulls.get() with raw octokit (no budget deduction) since this is
+  // infrastructure bookkeeping, not a user-triggered comparator call.
+  let baseSha = '';
+  try {
+    const prData = await octokit.rest.pulls.get({
+      owner: input.owner,
+      repo: input.repo,
+      pull_number: input.prNumber,
+    });
+    baseSha = prData.data.base.sha;
+    console.log(`[YAMLGatekeeper] Resolved baseSha=${baseSha} for PR #${input.prNumber}`);
+  } catch (error: any) {
+    console.warn(`[YAMLGatekeeper] Failed to resolve baseSha for PR #${input.prNumber}: ${error.message}`);
+    // Leave baseSha as '' — comparators that need it will report unknown/skip
+  }
+
   // Step 3: PHASE 2 FIX - Evaluate ALL packs
   const packResults: PackResult[] = [];
   const evaluator = new PackEvaluator();
@@ -99,7 +120,7 @@ export async function runYAMLGatekeeper(
       repo: input.repo,
       prNumber: input.prNumber,
       headSha: input.headSha,
-      baseSha: '',
+      baseSha,  // A2-FIX: resolved from GitHub pulls.get above
       author: input.author,
       title: input.title,
       body: input.body,
@@ -165,8 +186,35 @@ export async function runYAMLGatekeeper(
   const allFindings = packResults.flatMap(pr => pr.result.findings);
   const allTriggeredRules = packResults.flatMap(pr => pr.result.triggeredRules);
 
+  // A4-FIX: Detect EXPLICIT-mode conflicts and inject blocking synthetic findings.
+  // Previously conflicts were silently swallowed by falling back to MOST_RESTRICTIVE.
+  // Now they surface as block-severity findings so the user sees WHY the check failed.
+  const explicitConflicts = detectExplicitConflicts(packResults);
+  if (explicitConflicts.length > 0) {
+    for (const conflict of explicitConflicts) {
+      allFindings.push({
+        ruleId: 'explicit-mode-conflict',
+        ruleName: 'EXPLICIT Merge Strategy Conflict',
+        obligationIndex: -1,
+        comparatorResult: {
+          status: 'fail' as const,
+          comparatorId: 'EXPLICIT_CONFLICT' as any,  // synthetic — not a real registered comparator
+          reasonCode: 'EXPLICIT_MERGE_CONFLICT',
+          message: `Packs [${conflict.packNames.join(', ')}] returned conflicting decisions: ` +
+            `[${conflict.decisions.join(', ')}]. All packs must agree in EXPLICIT mode. ` +
+            `Resolve the conflict by aligning pack rules or changing the merge strategy.`,
+          evidence: [],
+        },
+        decisionOnFail: 'block',
+        evaluationStatus: 'evaluated',
+      });
+      allTriggeredRules.push('explicit-mode-conflict');
+    }
+    console.error(`[YAMLGatekeeper] ${explicitConflicts.length} EXPLICIT-mode conflict(s) injected as blocking findings`);
+  }
+
   return {
-    decision: globalDecision,
+    decision: explicitConflicts.length > 0 ? 'block' : globalDecision,
     packUsed: true,
     // Backward compatibility: use first pack's data
     packHash: packResults[0].packHash,
@@ -178,7 +226,32 @@ export async function runYAMLGatekeeper(
     findings: allFindings,
     triggeredRules: allTriggeredRules,
     evaluationTimeMs: Date.now() - startTime,
+    explicitConflicts: explicitConflicts.length > 0 ? explicitConflicts : undefined,
   };
+}
+
+/**
+ * A4-FIX: Detect EXPLICIT-mode conflicts across enforcing packs.
+ * Returns conflicts (packNames + decisions) when enforcing packs disagree
+ * AND the active merge strategy is EXPLICIT. Empty array = no conflict.
+ */
+function detectExplicitConflicts(
+  packResults: PackResult[]
+): Array<{ packNames: string[]; decisions: string[] }> {
+  // Only applies when at least one pack uses EXPLICIT strategy
+  const explicitPacks = packResults.filter(
+    pr => pr.pack.metadata.packMode !== 'observe' &&
+          pr.pack.metadata.scopeMergeStrategy === 'EXPLICIT'
+  );
+  if (explicitPacks.length === 0) return [];
+
+  const decisions = new Set(explicitPacks.map(pr => pr.result.decision));
+  if (decisions.size <= 1) return []; // All agree — no conflict
+
+  return [{
+    packNames: explicitPacks.map(pr => pr.pack.metadata.name),
+    decisions: Array.from(decisions),
+  }];
 }
 
 /**
@@ -213,8 +286,23 @@ function computeGlobalDecision(packResults: PackResult[]): 'pass' | 'warn' | 'bl
     );
   }
 
-  // Get the strategy to use (validated to be consistent or defaulted)
-  const strategy = packResults[0].pack.metadata.scopeMergeStrategy || 'MOST_RESTRICTIVE';
+  // A3-FIX: Determine strategy from the majority of packs (not just packResults[0]).
+  // If all packs agree, use that strategy. If mixed (excluding EXPLICIT conflicts already
+  // handled above), pick the most conservative one: MOST_RESTRICTIVE > HIGHEST_PRIORITY.
+  const strategyCounts = new Map<string, number>();
+  for (const pr of packResults) {
+    const s = pr.pack.metadata.scopeMergeStrategy || 'MOST_RESTRICTIVE';
+    strategyCounts.set(s, (strategyCounts.get(s) ?? 0) + 1);
+  }
+  // Deterministic: MOST_RESTRICTIVE wins ties, then HIGHEST_PRIORITY
+  let strategy = 'MOST_RESTRICTIVE';
+  let maxCount = 0;
+  for (const [s, count] of strategyCounts) {
+    if (count > maxCount || (count === maxCount && s === 'MOST_RESTRICTIVE')) {
+      maxCount = count;
+      strategy = s;
+    }
+  }
 
   switch (strategy) {
     case 'MOST_RESTRICTIVE':

@@ -1,14 +1,14 @@
 /**
  * Capability Aggregation Service
- * 
+ *
  * Aggregates runtime capability observations by service and time window.
  * This enables efficient Spec→Run verification by comparing declared vs observed capabilities.
- * 
+ *
  * ARCHITECTURE:
  * - Input: Workspace ID, service, time window
- * - Processing: Aggregate observations by capability type + target
+ * - Processing: Aggregate observations at DB level (groupBy), then fetch distinct sources
  * - Output: ServiceCapabilityUsage (aggregated stats)
- * 
+ *
  * USAGE:
  * ```typescript
  * const usage = await getServiceCapabilityUsage(workspaceId, 'user-service', 7); // Last 7 days
@@ -19,6 +19,12 @@
 import { prisma } from '../../lib/db.js';
 import type { CapabilityType, Capability } from '../../types/agentGovernance.js';
 import type { ServiceCapabilityUsage, CapabilityDrift, ObservationSource } from '../../types/runtimeObservation.js';
+import {
+  calculateCapabilitySeverity,
+  computeRecencyWeight,
+  computeSourceConfidence,
+  applyDecayAndConfidence,
+} from './severityConstants.js';
 
 /**
  * Capability types covered by at least one runtime data source.
@@ -36,7 +42,8 @@ const SOURCE_COVERED_CAPABILITIES = new Set<CapabilityType>([
 ]);
 
 /**
- * Get aggregated capability usage for a service
+ * Get aggregated capability usage for a service.
+ * R2-FIX: Uses DB-level groupBy to avoid loading all observations into Node memory.
  * P1-A: accepts optional mergedAt to anchor the observation window at merge time
  * rather than using a flat rolling window (which conflates pre-merge staging noise
  * with post-merge production drift).
@@ -45,7 +52,7 @@ export async function getServiceCapabilityUsage(
   workspaceId: string,
   service: string,
   windowDays: number = 7,
-  mergedAt?: Date
+  mergedAt?: Date,
 ): Promise<ServiceCapabilityUsage> {
   const endDate = new Date();
   let startDate: Date;
@@ -60,68 +67,58 @@ export async function getServiceCapabilityUsage(
     startDate = new Date();
     startDate.setDate(startDate.getDate() - windowDays);
   }
-  
-  // Fetch all observations in time window
-  const observations = await prisma.runtimeCapabilityObservation.findMany({
-    where: {
-      workspaceId,
-      service,
-      observedAt: {
-        gte: startDate,
-        lte: endDate,
-      },
-    },
-    orderBy: {
-      observedAt: 'asc',
-    },
-  });
-  
-  // Aggregate by capability type + target
-  const capabilityMap = new Map<string, {
-    type: CapabilityType;
-    target: string;
-    count: number;
-    firstSeen: Date;
-    lastSeen: Date;
-    sources: Set<ObservationSource>;
-  }>();
-  
-  for (const obs of observations) {
-    const key = `${obs.capabilityType}:${obs.capabilityTarget}`;
-    const existing = capabilityMap.get(key);
-    
-    if (existing) {
-      existing.count++;
-      existing.lastSeen = obs.observedAt;
-      existing.sources.add(obs.source as ObservationSource);
-    } else {
-      capabilityMap.set(key, {
-        type: obs.capabilityType as CapabilityType,
-        target: obs.capabilityTarget,
-        count: 1,
-        firstSeen: obs.observedAt,
-        lastSeen: obs.observedAt,
-        sources: new Set([obs.source as ObservationSource]),
-      });
-    }
+
+  const whereClause = {
+    workspaceId,
+    service,
+    observedAt: { gte: startDate, lte: endDate },
+  };
+
+  // R2-FIX: Aggregate at DB level — avoids O(N) memory for large observation sets.
+  // Two queries: (1) grouped counts + min/max timestamps, (2) distinct sources per group.
+  const [grouped, sourceRows] = await Promise.all([
+    prisma.runtimeCapabilityObservation.groupBy({
+      by: ['capabilityType', 'capabilityTarget'],
+      where: whereClause,
+      _count: { id: true },
+      _min: { observedAt: true },
+      _max: { observedAt: true },
+    }),
+    prisma.runtimeCapabilityObservation.findMany({
+      where: whereClause,
+      select: { capabilityType: true, capabilityTarget: true, source: true },
+      distinct: ['capabilityType', 'capabilityTarget', 'source'],
+    }),
+  ]);
+
+  // Build sources map: "type:target" → Set<ObservationSource>
+  const sourcesMap = new Map<string, Set<ObservationSource>>();
+  for (const row of sourceRows) {
+    const key = `${row.capabilityType}:${row.capabilityTarget}`;
+    if (!sourcesMap.has(key)) sourcesMap.set(key, new Set());
+    sourcesMap.get(key)!.add(row.source as ObservationSource);
   }
-  
-  // Convert to array
-  const capabilities = Array.from(capabilityMap.values()).map(cap => ({
-    type: cap.type,
-    target: cap.target,
-    count: cap.count,
-    firstSeen: cap.firstSeen,
-    lastSeen: cap.lastSeen,
-    sources: Array.from(cap.sources),
-  }));
-  
+
+  const capabilities = grouped.map(g => {
+    const lastSeen = g._max.observedAt!;
+    const sources = Array.from(sourcesMap.get(`${g.capabilityType}:${g.capabilityTarget}`) ?? []);
+    return {
+      type: g.capabilityType as CapabilityType,
+      target: g.capabilityTarget,
+      count: g._count.id,
+      firstSeen: g._min.observedAt!,
+      lastSeen,
+      sources,
+      // Intelligence: decay + confidence computed at aggregation time so callers
+      // can modulate alert priority without re-querying the DB.
+      recencyWeight: computeRecencyWeight(lastSeen),
+      confidence: computeSourceConfidence(sources),
+    };
+  });
+
   return {
     service,
-    timeWindow: {
-      start: startDate,
-      end: endDate,
-    },
+    timeWindow: { start: startDate, end: endDate },
     capabilities,
   };
 }
@@ -137,11 +134,11 @@ export async function detectCapabilityDrift(
   service: string,
   declaredCapabilities: Capability[],
   windowDays: number = 7,
-  mergedAt?: Date
+  mergedAt?: Date,
 ): Promise<CapabilityDrift[]> {
   const usage = await getServiceCapabilityUsage(workspaceId, service, windowDays, mergedAt);
   const drifts: CapabilityDrift[] = [];
-  
+
   // Build declared capability map.
   // Supports wildcard target '*' (e.g. requestedCapabilities string array converted to Capability-like objects).
   // Key is `type:target`; a key of `type:*` acts as a type-level wildcard.
@@ -184,13 +181,25 @@ export async function detectCapabilityDrift(
   // Detect undeclared usage (observed but not covered by any declared capability)
   for (const [, observed] of observedMap) {
     if (!isDeclared(observed.type, observed.target)) {
+      const baseSeverity = calculateCapabilitySeverity(observed.type);
+      // Apply decay + confidence to compute effective alert priority.
+      // A critical capability observed 6 days ago by a low-confidence source
+      // is downgraded — still minimum medium (privilege expansion floor).
+      const effectiveSeverity = applyDecayAndConfidence(
+        baseSeverity,
+        observed.recencyWeight,
+        observed.confidence,
+      );
       drifts.push({
         service,
         driftType: 'undeclared_usage',
         capabilityType: observed.type,
         capabilityTarget: observed.target,
         observedAt: observed.lastSeen,
-        severity: calculateSeverity(observed.type),
+        severity: baseSeverity,          // raw — for audit / chain-of-custody
+        effectiveSeverity,               // decay+confidence adjusted — for alerting
+        recencyWeight: observed.recencyWeight,
+        confidence: observed.confidence,
         evidence: [{
           source: observed.sources[0],
           timestamp: observed.lastSeen,
@@ -220,20 +229,3 @@ export async function detectCapabilityDrift(
 
   return drifts;
 }
-
-/**
- * Calculate severity based on capability type (canonical 18-type lattice).
- * Any undeclared usage is treated as minimum medium — privilege expansion is never low.
- */
-function calculateSeverity(capabilityType: CapabilityType): 'low' | 'medium' | 'high' | 'critical' {
-  // Critical: immediate security review required
-  const criticalCapabilities: CapabilityType[] = ['iam_modify', 'secret_write', 'db_admin', 'infra_delete', 'deployment_modify'];
-  // High: sensitive capability — escalate to security
-  const highCapabilities: CapabilityType[] = ['s3_delete', 's3_write', 'schema_modify', 'network_public', 'infra_create', 'infra_modify', 'secret_read'];
-
-  if (criticalCapabilities.includes(capabilityType)) return 'critical';
-  if (highCapabilities.includes(capabilityType)) return 'high';
-  // Any other undeclared usage → medium (privilege expansion minimum)
-  return 'medium';
-}
-

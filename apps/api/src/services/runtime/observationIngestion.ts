@@ -87,8 +87,10 @@ export async function ingestGCPAuditLog(
     return null;
   }
   
-  // Generate event ID from log name + timestamp
-  const eventId = `${entry.logName}:${entry.timestamp}`;
+  // R5-FIX: Prefer insertId for deduplication — it is the globally unique log entry
+  // identifier guaranteed by GCP. The previous `${logName}:${timestamp}` composite
+  // was not unique when two events share the same millisecond timestamp.
+  const eventId = entry.insertId || `${entry.logName}:${entry.timestamp}`;
   
   // Check for duplicate
   const existing = await prisma.runtimeCapabilityObservation.findFirst({
@@ -122,21 +124,50 @@ export async function ingestGCPAuditLog(
 }
 
 /**
- * Ingest database query log
+ * Ingest database query log.
+ * R6-FIX: Use time-bucket deduplication to avoid creating millions of records
+ * for high-frequency DB operations (e.g., SELECT running thousands of times per minute).
+ * Bucket granularity: 1 hour. Within each bucket, one observation per
+ * (workspaceId, service, capabilityType, capabilityTarget) tuple is sufficient.
  */
 export async function ingestDatabaseQuery(
   workspaceId: string,
   service: string,
-  log: DatabaseQueryLog
+  log: DatabaseQueryLog,
 ): Promise<string | null> {
   const mapping = mapDatabaseQuery(log);
-  
+
   if (!mapping) {
     console.log(`[RuntimeObservation] Skipping unmapped DB query: ${log.operation}`);
     return null;
   }
-  
-  // Create observation (no deduplication for DB queries - they're frequent)
+
+  // Time-bucket key: truncate timestamp to the current hour (YYYY-MM-DDTHH:00:00.000Z)
+  const bucketTs = new Date(log.timestamp);
+  bucketTs.setMinutes(0, 0, 0);
+  const bucketKey = `db:${workspaceId}:${service}:${mapping.capabilityType}:${mapping.capabilityTarget}:${bucketTs.toISOString()}`;
+
+  // Check for an existing observation in the same time bucket
+  const bucketStart = bucketTs;
+  const bucketEnd = new Date(bucketTs.getTime() + 60 * 60 * 1000);
+
+  const existing = await prisma.runtimeCapabilityObservation.findFirst({
+    where: {
+      workspaceId,
+      service,
+      capabilityType: mapping.capabilityType,
+      capabilityTarget: mapping.capabilityTarget,
+      source: 'database_query_log',
+      observedAt: { gte: bucketStart, lt: bucketEnd },
+    },
+    select: { id: true },
+  });
+
+  if (existing) {
+    // Already have an observation for this type/target in this hour bucket — skip
+    return existing.id;
+  }
+
   const observation = await prisma.runtimeCapabilityObservation.create({
     data: {
       workspaceId,
@@ -145,7 +176,7 @@ export async function ingestDatabaseQuery(
       capabilityTarget: mapping.capabilityTarget,
       observedAt: log.timestamp,
       source: 'database_query_log',
-      sourceEventId: undefined, // No event ID for DB queries
+      sourceEventId: bucketKey, // Use bucket key for idempotency
       metadata: mapping.metadata,
     },
   });

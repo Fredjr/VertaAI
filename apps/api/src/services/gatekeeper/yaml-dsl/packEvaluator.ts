@@ -17,12 +17,16 @@ import { ComparatorId } from './types.js';
 import { resolveAllFacts } from './facts/resolver.js';
 import { factCatalog } from './facts/catalog.js';
 // PHASE 2.3: Import condition evaluation
-import { evaluateCondition, evaluateConditions } from './conditions/evaluator.js';
+import { evaluateCondition } from './conditions/evaluator.js';
 import type { Condition, ConditionEvaluationResult } from './conditions/types.js';
 // TRACK A TASK 2: Import auto-invoked comparators
 import { runAutoInvokedComparators } from './autoInvokedComparators.js';
 // AGENT GOVERNANCE: Import intent artifact ingestion
-import { ingestIntentArtifactFromPR } from '../../agentGovernance/ingestion/intentArtifactIngestionService.js';
+// A7-FIX: Use getOrCreateIntentArtifact to avoid creating duplicate IntentArtifact records
+// on every pack evaluation pass for the same PR.
+import {
+  getOrCreateIntentArtifact,
+} from '../../agentGovernance/ingestion/intentArtifactIngestionService.js';
 import type { FileChange } from '../../../types/agentGovernance.js';
 // 11.1: Import artifact graph builder
 import { buildArtifactGraph } from './artifactGraphBuilder.js';
@@ -101,20 +105,24 @@ export class PackEvaluator {
     // CRITICAL FIX (Gap #1): Track which comparators are used for fingerprint
     const usedComparators = new Set<ComparatorId>();
 
-    // Initialize budgets
-    const budgets = pack.evaluation?.budgets || {
-      maxTotalMs: 30000,
-      perComparatorTimeoutMs: 5000,
-      maxGitHubApiCalls: 50,
-    };
-
-    context.budgets = {
-      maxTotalMs: budgets.maxTotalMs || 30000,
-      perComparatorTimeoutMs: budgets.perComparatorTimeoutMs || 5000,
-      maxGitHubApiCalls: budgets.maxGitHubApiCalls || 50,
-      currentApiCalls: 0,
-      startTime: Date.now(),
-    };
+    // B5-FIX: Only initialise budgets when the caller hasn't already set them.
+    // Previously this always reset currentApiCalls to 0 and overwrote the pack
+    // budget limits the caller may have configured (e.g. yamlGatekeeperIntegration.ts
+    // builds a BudgetedGitHubClient and sets context.budgets before calling evaluate()).
+    if (!context.budgets || context.budgets.currentApiCalls === undefined) {
+      const budgets = pack.evaluation?.budgets || {
+        maxTotalMs: 30000,
+        perComparatorTimeoutMs: 5000,
+        maxGitHubApiCalls: 50,
+      };
+      context.budgets = {
+        maxTotalMs: budgets.maxTotalMs || 30000,
+        perComparatorTimeoutMs: budgets.perComparatorTimeoutMs || 5000,
+        maxGitHubApiCalls: budgets.maxGitHubApiCalls || 50,
+        currentApiCalls: 0,
+        startTime: Date.now(),
+      };
+    }
 
     // AGENT GOVERNANCE: Ingest intent artifact from PR (if present)
     // This runs BEFORE comparators so they can access the intent artifact
@@ -123,11 +131,12 @@ export class PackEvaluator {
     // instead of silently producing status:'unknown' → "Gate Not Run" with no explanation.
     let artifactIngestionWarning: string | undefined;
     try {
+      // A7-FIX: FileChange requires linesAdded/linesDeleted (not additions/deletions)
       const fileChanges: FileChange[] = context.files.map(f => ({
         path: f.filename,
         changeType: f.status === 'added' ? 'created' : f.status === 'removed' ? 'deleted' : 'modified',
-        additions: f.additions,
-        deletions: f.deletions,
+        linesAdded: f.additions,
+        linesDeleted: f.deletions,
         patch: (f as any).patch ?? undefined,
       }));
 
@@ -142,19 +151,19 @@ export class PackEvaluator {
         },
         commits: context.commits.map(c => ({
           message: c.message,
-          author: { name: c.author, email: '' },
+          author: { name: c.author.name, email: c.author.email },
         })),
         files: fileChanges,
         repoFullName: `${context.owner}/${context.repo}`,
       };
 
-      const ingestionResult = await ingestIntentArtifactFromPR(context.workspaceId, prData);
+      // A7-FIX: Use getOrCreateIntentArtifact to deduplicate intent artifact records.
+      // Previously ingestIntentArtifactFromPR was called directly, creating a new DB row
+      // on every pack evaluation pass (once per pack, per PR event).
+      const artifact = await getOrCreateIntentArtifact(context.workspaceId, prData);
 
-      if (ingestionResult.intentArtifact) {
-        console.log(`[PackEvaluator] Intent artifact ingested: ${ingestionResult.intentArtifact.id}`);
-        if (ingestionResult.agentActionTrace) {
-          console.log(`[PackEvaluator] Agent action trace created: ${ingestionResult.agentActionTrace.id}`);
-        }
+      if (artifact) {
+        console.log(`[PackEvaluator] Intent artifact ready: ${artifact.id}`);
       } else {
         console.log(`[PackEvaluator] No intent artifact found or validation failed`);
       }
@@ -170,21 +179,29 @@ export class PackEvaluator {
     // These run BEFORE rule evaluation to detect drift and safety issues
     console.log('[PackEvaluator] Running auto-invoked comparators (cross-artifact + safety)...');
     const autoInvokedFindings = await runAutoInvokedComparators(context, usedComparators);
-    findings.push(...autoInvokedFindings);
+    // Cast is safe: AutoInvokedFinding.decisionOnFail includes 'info' for forward-compat but
+    // no current auto-invoked comparator uses 'info' (all use 'warn' or 'block').
+    findings.push(...(autoInvokedFindings as unknown as Finding[]));
 
     // P2-B: Surface ingestion failure as an explicit warn finding (not silent unknown)
+    // B3-FIX: ComparatorResult.status is 'pass'|'fail'|'unknown' — 'warn' is not a valid value.
+    // Use status:'fail' here (the comparator detected a problem); decisionOnFail:'warn' keeps
+    // the gate at warn-only severity so a DB outage doesn't block all PRs.
     if (artifactIngestionWarning) {
       findings.push({
         ruleId: 'auto-invoked-intent-artifact-ingestion',
         ruleName: 'Intent Artifact Ingestion',
         obligationIndex: -1,
         comparatorResult: {
-          status: 'warn',
+          comparatorId: 'INTENT_CAPABILITY_PARITY' as ComparatorId,
+          status: 'fail',
+          reasonCode: 'ARTIFACT_INGESTION_FAILED',
           message: `Intent artifact ingestion failed: ${artifactIngestionWarning}`,
+          evidence: [],
         },
         decisionOnFail: 'warn',
         evaluationStatus: 'evaluated',
-      } as Finding);
+      });
     }
     console.log(`[PackEvaluator] Auto-invoked comparators found ${autoInvokedFindings.length} findings`);
 
@@ -257,7 +274,6 @@ export class PackEvaluator {
         // Check if rule uses new pattern with requires/checks/decision
         const hasRequires = !!(ruleAny.requires);
         const hasChecks = !!(ruleAny.checks);
-        const hasDecision = !!(ruleAny.decision);
 
         if (hasRequires || hasChecks) {
           // Evaluate new pattern rules
@@ -272,7 +288,7 @@ export class PackEvaluator {
           ruleId: rule.id,
           ruleName: rule.name,
           obligationIndex: -1,
-          comparatorResult: { status: 'unknown', findingCode: 'APPROVAL_GATE' as FindingCode, evidence: [], meta: { approvalRule: true } },
+          comparatorResult: { comparatorId: 'INTENT_CAPABILITY_PARITY' as ComparatorId, status: 'unknown', reasonCode: 'APPROVAL_GATE', message: 'Approval gate — requires manual review (future work)', evidence: [] },
           decisionOnFail: (ruleAny.decision?.onViolation) || 'warn',
           decisionOnUnknown: (ruleAny.decision?.onMissingExternalEvidence) || 'warn',
           evaluationStatus: 'not_evaluable',
@@ -530,7 +546,7 @@ async function evaluateNewPatternRule(
             comparatorId: 'ARTIFACT_REQUIRED' as any,
             status: 'pass',
             reasonCode: 'PASS',
-            evidence: matchedFiles.map(f => ({ type: 'file', value: f })),
+            evidence: matchedFiles.map(f => ({ type: 'file' as const, path: f })),
             message: `Required artifact found: ${matchedFiles.join(', ')}`,
           },
           decisionOnFail,
@@ -581,7 +597,7 @@ async function evaluateNewPatternRule(
             comparatorId: 'ARTIFACT_REQUIRED' as any,
             status: 'pass',
             reasonCode: 'PASS',
-            evidence: foundPatterns.map(p => ({ type: 'file', value: p })),
+            evidence: foundPatterns.map(p => ({ type: 'file' as const, path: p })),
             message: `All required artifacts found: ${foundPatterns.join(', ')}`,
           },
           decisionOnFail,
@@ -1052,15 +1068,16 @@ function extractDetectedSurfaces(rule: any, context: PRContext): DetectedSurface
   }
 
   // Check for heuristic predicates (if available in context)
+  // detectedHeuristics is string[] — each entry is a heuristic ID string
   if (context.detectedHeuristics && Array.isArray(context.detectedHeuristics)) {
-    for (const heuristic of context.detectedHeuristics) {
+    for (const heuristicId of context.detectedHeuristics) {
       surfaces.push({
-        surfaceId: heuristic.id || 'unknown_heuristic',
-        description: heuristic.description || `Heuristic detected: ${heuristic.id}`,
-        files: heuristic.files || [],
-        confidence: heuristic.confidence || 0.8,
+        surfaceId: heuristicId,
+        description: `Heuristic detected: ${heuristicId}`,
+        files: [],
+        confidence: 0.8,
         detectionMethod: 'heuristic',
-        metadata: heuristic.metadata || {},
+        metadata: {},
       });
     }
   }
@@ -1145,7 +1162,7 @@ function extractEvaluatedObligations(findings: Finding[]): EvaluatedObligation[]
         status: comparatorResult.status,
         reasonCode: comparatorResult.reasonCode,
         message: comparatorResult.message,
-        ...(comparatorResult.metadata ? { metadata: comparatorResult.metadata } : {}),
+        ...((comparatorResult as any).metadata ? { metadata: (comparatorResult as any).metadata } : {}),
       };
 
       // Convert comparator evidence to EvidenceItem format
@@ -1306,10 +1323,11 @@ function buildInvariantFromFinding(finding: Finding): EvaluatedInvariant | null 
   for (const ev of comparatorResult.evidence || []) {
     if (ev.type === 'file') {
       // Heuristic: files with 'spec', 'schema', 'api' are often sources
-      if (ev.value.includes('spec') || ev.value.includes('schema') || ev.value.includes('api')) {
-        sourceFiles.push(ev.value);
+      const filePath = ev.path;
+      if (filePath.includes('spec') || filePath.includes('schema') || filePath.includes('api')) {
+        sourceFiles.push(filePath);
       } else {
-        targetFiles.push(ev.value);
+        targetFiles.push(filePath);
       }
     }
   }
