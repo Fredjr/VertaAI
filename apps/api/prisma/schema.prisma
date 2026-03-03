@@ -291,6 +291,9 @@ model DriftCluster {
   clusterSummary String?  @map("cluster_summary") @db.Text // Human-readable summary of cluster
   driftIds       String[] @default([]) @map("drift_ids") // Array of drift IDs in this cluster
 
+  // ATC Mode: materiality tier drives alert routing ('critical' | 'operational' | 'petty')
+  materialityTier String? @map("materiality_tier") // Worst tier across all undeclared items in this cluster
+
   // Bulk action tracking
   bulkActionStatus String?   @map("bulk_action_status") // 'approved', 'rejected', 'snoozed', null
   bulkActionAt     DateTime? @map("bulk_action_at") // When bulk action was taken

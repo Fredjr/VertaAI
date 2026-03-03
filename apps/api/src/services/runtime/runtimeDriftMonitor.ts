@@ -34,6 +34,11 @@ import { buildRemediationOptions } from './remediationGuide.js';
 import { getGitHubClient } from '../github-client.js';
 import { sendSlackMessage } from '../slack-client.js';
 import type { Capability } from '../../types/agentGovernance.js';
+import {
+  classifyMateriality,
+  computeClusterMaterialityTier,
+  type MaterialityTier,
+} from '../governance/materialityFilter.js';
 
 /**
  * Runtime drift detection result
@@ -305,19 +310,21 @@ async function detectDriftForService(
 
   console.log(`[RuntimeDriftMonitor] Service ${service}: ${drifts.length} drifts (${undeclaredUsage.length} undeclared, ${unusedDeclarations.length} unused), severity: ${severity}`);
 
-  // Step 6: Create DriftPlan if drift detected
-  const driftPlanCreated = await createDriftPlanForRuntimeDrift(
-    workspaceId,
-    service,
-    latestArtifact,
-    drifts,
-    correlatedServices,
-  );
+  // Step 6: Create/update DriftCluster and retrieve the materiality tier.
+  // The materiality tier (critical | operational | petty) drives all alert routing below.
+  const { created: driftPlanCreated, materialityTier: clusterMaterialityTier } =
+    await createDriftPlanForRuntimeDrift(
+      workspaceId,
+      service,
+      latestArtifact,
+      drifts,
+      correlatedServices,
+    );
 
-  // Step 7: Send PagerDuty alert for critical drift.
-  // Use effectiveSeverity (decay+confidence adjusted) for alerting thresholds —
-  // a critical observation from 6 days ago via a low-confidence source should
-  // not page on-call at 3 am with the same urgency as a fresh CloudTrail event.
+  // Step 7: Send PagerDuty alert — critical materiality + critical effective severity only.
+  // ATC rule: petty clusters never page on-call. operational clusters use Slack instead.
+  // Also uses effectiveSeverity (decay+confidence adjusted) so a stale low-confidence
+  // observation does not page at 3 am with the same urgency as a fresh CloudTrail event.
   const effectiveSeverityForAlert = undeclaredUsage.reduce<string>((worst, d: any) => {
     const s = d.effectiveSeverity ?? d.severity;
     if (s === 'critical') return 'critical';
@@ -325,19 +332,27 @@ async function detectDriftForService(
     return worst;
   }, 'medium');
 
-  const pagerdutyAlertSent = effectiveSeverityForAlert === 'critical'
-    ? await sendPagerDutyAlert(workspaceId, service, drifts)
+  const pagerdutyAlertSent =
+    effectiveSeverityForAlert === 'critical' && clusterMaterialityTier !== 'petty'
+      ? await sendPagerDutyAlert(workspaceId, service, drifts)
+      : false;
+
+  // Step 8: Post GitHub check-run — skip for petty clusters (ATC: no noise in PR UI).
+  const githubCheckPosted = clusterMaterialityTier !== 'petty'
+    ? await sendGitHubDriftCheck(workspaceId, service, latestArtifact, drifts, severity)
     : false;
 
-  // Step 8: Post GitHub check-run on the originating PR
-  const githubCheckPosted = await sendGitHubDriftCheck(
-    workspaceId, service, latestArtifact, drifts, severity,
-  );
+  // Step 9: Send Slack alert — critical/high effective severity AND not petty.
+  // Operational clusters still get a Slack alert (human decision needed), just no PD page.
+  const slackAlertSent =
+    (effectiveSeverityForAlert === 'critical' || effectiveSeverityForAlert === 'high') &&
+    clusterMaterialityTier !== 'petty'
+      ? await sendSlackDriftAlert(workspaceId, service, drifts, severity)
+      : false;
 
-  // Step 9: Send Slack alert for critical or high effective severity
-  const slackAlertSent = (effectiveSeverityForAlert === 'critical' || effectiveSeverityForAlert === 'high')
-    ? await sendSlackDriftAlert(workspaceId, service, drifts, severity)
-    : false;
+  if (clusterMaterialityTier === 'petty') {
+    console.log(`[RuntimeDriftMonitor] Service ${service}: materiality=petty — all alerts suppressed (ATC silent mode)`);
+  }
 
   return {
     workspaceId,
@@ -355,7 +370,10 @@ async function detectDriftForService(
 }
 
 /**
- * Create DriftCluster for runtime drift
+ * Create DriftCluster for runtime drift.
+ * Returns the created/updated status plus the computed cluster-level materiality tier
+ * so the caller can make alert-routing decisions without re-reading the cluster.
+ *
  * @param correlatedServices Other services with the same undeclared capability types this cycle.
  */
 async function createDriftPlanForRuntimeDrift(
@@ -364,7 +382,7 @@ async function createDriftPlanForRuntimeDrift(
   intentArtifact: any,
   drifts: any[],
   correlatedServices?: string[],
-): Promise<boolean> {
+): Promise<{ created: boolean; materialityTier: MaterialityTier }> {
   try {
     // Check if a pending DriftCluster already exists for this service's runtime drift
     const existingCluster = await prisma.driftCluster.findFirst({
@@ -497,6 +515,48 @@ async function createDriftPlanForRuntimeDrift(
       ? { changedFiles: agentTrace.filesModified as any[] ?? [] }
       : null;
 
+    // ── Phase 0: Materiality + Attribution pre-compute ────────────────────────
+    // Classify each undeclared capability into critical / operational / petty.
+    // We do this before building summaryPayload so the cluster-level tier is
+    // available for both the DB write and the caller's alert-routing decisions.
+    const materialityResultsList: Array<ReturnType<typeof classifyMateriality>> = [];
+    const undeclaredUsageWithMateriality = undeclaredUsageEnriched.map((d: any) => {
+      // Attribution confidence is only meaningful for cost/storage capabilities.
+      const attrConf = (d.capability === 'cost_increase' || d.capability === 's3_write')
+        ? deriveAttributionConfidence(d.capability, d.target, buildContext)
+        : undefined;
+      const attrNote = (d.capability === 'cost_increase' || d.capability === 's3_write')
+        ? deriveAttributionNote(d.capability, d.target, buildContext)
+        : undefined;
+
+      const matResult = classifyMateriality({
+        capabilityType: d.capability,
+        capabilityTarget: d.target,
+        severity: d.severity as 'critical' | 'high' | 'medium' | 'low',
+        observationCount: d.observationCount,
+        sources: d.sources,
+        attributionConfidence: attrConf,
+        scopeDetails: d.scopeDetails,
+      });
+      materialityResultsList.push(matResult);
+
+      return {
+        ...d,
+        // P1-B: flag whether the gate predicted this undeclared capability
+        gatePredicted: gateFlaggedTypes.has(d.capability),
+        // Gap C: attribution confidence + explanation
+        attributionConfidence: attrConf,
+        attributionNote: attrNote,
+        // Phase 0: per-item materiality (drives UI badge + operator copy)
+        materialityTier: matResult.tier,
+        materialityReason: matResult.reason,
+      };
+    });
+
+    // Cluster-level tier: worst tier across all undeclared items.
+    // One critical item makes the whole cluster critical.
+    const clusterMaterialityTier: MaterialityTier = computeClusterMaterialityTier(materialityResultsList);
+
     // Build the summary object (used for both create and update)
     const summaryPayload = {
       intentArtifactId: intentArtifact.id,
@@ -527,19 +587,10 @@ async function createDriftPlanForRuntimeDrift(
       gatePredictedCount: gateFlaggedTypes.size,
       severity,
       severityRationale,
+      // Phase 0: cluster-level materiality tier (drives alert routing)
+      materialityTier: clusterMaterialityTier,
       driftsDetected: drifts.length,
-      undeclaredUsage: undeclaredUsageEnriched.map((d: any) => ({
-        ...d,
-        // P1-B: flag whether the gate predicted this undeclared capability
-        gatePredicted: gateFlaggedTypes.has(d.capability),
-        // Gap C: attribution confidence — causal if changed files suggest the capability, else correlated
-        attributionConfidence: d.capability === 'cost_increase' || d.capability === 's3_write'
-          ? deriveAttributionConfidence(d.capability, d.target, buildContext)
-          : undefined,
-        attributionNote: d.capability === 'cost_increase' || d.capability === 's3_write'
-          ? deriveAttributionNote(d.capability, d.target, buildContext)
-          : undefined,
-      })),
+      undeclaredUsage: undeclaredUsageWithMateriality,
       unusedDeclarations: unusedDeclarations.map((d: any) => ({
         capability: d.capabilityType,
         target: d.capabilityTarget,
@@ -571,10 +622,14 @@ async function createDriftPlanForRuntimeDrift(
       // Refresh the clusterSummary with latest observations (keeps data current)
       await prisma.driftCluster.update({
         where: { workspaceId_id: { workspaceId: existingCluster.workspaceId, id: existingCluster.id } },
-        data: { clusterSummary: JSON.stringify(summaryPayload), driftCount: drifts.length },
+        data: {
+          clusterSummary: JSON.stringify(summaryPayload),
+          driftCount: drifts.length,
+          materialityTier: clusterMaterialityTier,
+        },
       });
-      console.log(`[RuntimeDriftMonitor] Updated existing DriftCluster for service ${service}`);
-      return false;
+      console.log(`[RuntimeDriftMonitor] Updated existing DriftCluster for service ${service} (materiality: ${clusterMaterialityTier})`);
+      return { created: false, materialityTier: clusterMaterialityTier };
     }
 
     // R4-FIX: driftIds should reference real DB records, not synthetic strings.
@@ -600,14 +655,16 @@ async function createDriftPlanForRuntimeDrift(
         driftCount: drifts.length,
         clusterSummary: JSON.stringify(summaryPayload),
         driftIds: realDriftIds,
+        materialityTier: clusterMaterialityTier,
       },
     });
 
-    console.log(`[RuntimeDriftMonitor] Created DriftCluster ${cluster.id} for service ${service}`);
-    return true;
+    console.log(`[RuntimeDriftMonitor] Created DriftCluster ${cluster.id} for service ${service} (materiality: ${clusterMaterialityTier})`);
+    return { created: true, materialityTier: clusterMaterialityTier };
   } catch (error: any) {
     console.error(`[RuntimeDriftMonitor] Error creating DriftCluster:`, error.message);
-    return false;
+    // Default to operational so callers still fire non-critical alerts on error
+    return { created: false, materialityTier: 'operational' as MaterialityTier };
   }
 }
 
@@ -962,4 +1019,27 @@ function deriveAttributionNote(
       : `File changes in this PR match ${capabilityType} patterns — likely causal.`;
   }
   return `No direct code anchor found for ${target}. ${capabilityType} may be correlated with this deployment window rather than caused by specific changes.`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1: Real-time drift check entry point
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Check drift for a single service and create/update a DriftCluster as needed.
+ *
+ * This is the lightweight entry point called by observationIngestion after each new
+ * observation is persisted. Unlike the full batch monitor loop, it:
+ *   - Processes only the one service that just received a new observation
+ *   - Does not build the cross-workspace correlation index (correlatedServices = undefined)
+ *   - Is debounced per (workspaceId, service) in the caller to avoid hammering the DB
+ *
+ * The batch monitor loop (runRuntimeDriftMonitor) remains the reconciliation sweep
+ * that fills in cross-service correlation signals every hour.
+ */
+export async function checkDriftForService(
+  workspaceId: string,
+  service: string,
+): Promise<RuntimeDriftResult | null> {
+  return detectDriftForService(workspaceId, service, undefined);
 }

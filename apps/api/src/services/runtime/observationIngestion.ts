@@ -25,6 +25,49 @@ import { prisma } from '../../lib/db.js';
 import { mapCloudTrailEvent, mapGCPAuditLog, mapDatabaseQuery, mapCostExplorerEvent } from './capabilityMapper.js';
 import type { CloudTrailEvent, GCPAuditLogEntry, DatabaseQueryLog } from '../../types/runtimeObservation.js';
 import type { CostExplorerEvent } from './capabilityMapper.js';
+import { checkDriftForService } from './runtimeDriftMonitor.js';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 1: Real-time drift trigger
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-service debounce map. Prevents `checkDriftForService` from being called
+ * more than once every COOLDOWN_MS per (workspaceId, service) pair.
+ *
+ * Rationale: CloudTrail often delivers burst batches of events (e.g., 50 PutObject
+ * calls in 200 ms). Without debouncing, we'd launch 50 concurrent drift checks
+ * against the same service, all reading and writing the same DriftCluster row.
+ * One check every 30 s is sufficient for real-time alerting.
+ */
+const realtimeTriggerLastFired = new Map<string, number>();
+const REALTIME_COOLDOWN_MS = 30_000; // 30 seconds per service
+
+/**
+ * Fire-and-forget real-time drift check after a new observation is persisted.
+ * Debounced: if called again within REALTIME_COOLDOWN_MS, the call is a no-op.
+ * Errors are logged but never propagate — the ingestion pipeline must not fail
+ * because drift detection is temporarily unavailable.
+ */
+function triggerRealtimeDriftCheck(workspaceId: string, service: string): void {
+  const key = `${workspaceId}:${service}`;
+  const now = Date.now();
+  const lastFired = realtimeTriggerLastFired.get(key) ?? 0;
+
+  if (now - lastFired < REALTIME_COOLDOWN_MS) {
+    return; // Debounced — drift check already scheduled for this service recently
+  }
+
+  realtimeTriggerLastFired.set(key, now);
+
+  // Use setImmediate to yield the event loop before starting the drift check,
+  // ensuring the current observation's DB write is fully committed first.
+  setImmediate(() => {
+    checkDriftForService(workspaceId, service).catch((err: Error) => {
+      console.error(`[RuntimeObservation] Real-time drift check failed for ${service}:`, err.message);
+    });
+  });
+}
 
 /**
  * Ingest AWS CloudTrail event
@@ -67,8 +110,9 @@ export async function ingestCloudTrailEvent(
       metadata: mapping.metadata,
     },
   });
-  
+
   console.log(`[RuntimeObservation] Ingested CloudTrail event: ${event.eventID} → ${mapping.capabilityType}`);
+  triggerRealtimeDriftCheck(workspaceId, service);
   return observation.id;
 }
 
@@ -118,8 +162,9 @@ export async function ingestGCPAuditLog(
       metadata: mapping.metadata,
     },
   });
-  
+
   console.log(`[RuntimeObservation] Ingested GCP Audit log: ${eventId} → ${mapping.capabilityType}`);
+  triggerRealtimeDriftCheck(workspaceId, service);
   return observation.id;
 }
 
@@ -181,6 +226,7 @@ export async function ingestDatabaseQuery(
     },
   });
 
+  triggerRealtimeDriftCheck(workspaceId, service);
   return observation.id;
 }
 
@@ -227,5 +273,6 @@ export async function ingestCostExplorerEvent(
   });
 
   console.log(`[RuntimeObservation] Ingested Cost Explorer event: ${event.eventId} → cost_increase`);
+  triggerRealtimeDriftCheck(workspaceId, service);
   return observation.id;
 }
