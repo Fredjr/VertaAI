@@ -127,10 +127,13 @@ export async function runYAMLGatekeeper(
       labels: input.labels,
       baseBranch: input.baseBranch,
       headBranch: input.headBranch,
-      commits: input.commits,
+      // GatekeeperInput uses simplified shapes; cast at the API boundary.
+      // Comparators receive the actual data — the missing fields (sha, additions, etc.)
+      // are populated lazily via github.rest.pulls.get when a comparator needs them.
+      commits: input.commits as any,
       additions: input.additions,
       deletions: input.deletions,
-      files: input.files,
+      files: input.files as any,
       github: {
         rest: {
           pulls: {
@@ -150,7 +153,7 @@ export async function runYAMLGatekeeper(
       workspaceId: input.workspaceId,
       installationId: input.installationId,
       prAction,  // P0-A: carry action through so comparators can tag isFinalSnapshot
-      defaults,
+      defaults: defaults as any,  // workspaceDefaultsLoader returns a superset; cast at boundary
       budgets,
       cache: {
         approvals: undefined,

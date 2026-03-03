@@ -90,6 +90,8 @@ export interface PRContext {
   repo: string;
   prNumber: number;
   headSha: string;
+  /** A2-FIX: base branch tip SHA, resolved from pulls.get before pack evaluation. */
+  baseSha: string;
   baseBranch: string;
   headBranch: string;
 
