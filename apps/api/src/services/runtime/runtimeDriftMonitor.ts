@@ -189,9 +189,8 @@ async function getUndeclaredCapabilityTypes(
     }
   }
 
-  const mergedAt = recentArtifacts[0].createdAt instanceof Date
-    ? recentArtifacts[0].createdAt
-    : new Date(recentArtifacts[0].createdAt);
+  const first = recentArtifacts[0]!;
+  const mergedAt = first.createdAt instanceof Date ? first.createdAt : new Date(first.createdAt);
   const drifts = await detectCapabilityDrift(
     workspaceId, service, Array.from(capabilitySet.values()), 7, mergedAt,
   );
@@ -256,7 +255,7 @@ async function detectDriftForService(
   }
 
   // Use the most recent artifact for anchor/metadata
-  const latestArtifact = recentArtifacts[0];
+  const latestArtifact = recentArtifacts[0]!;
 
   // Step 3: Detect drift anchored to merge time (P1-A)
   const mergedAt = latestArtifact.createdAt instanceof Date
@@ -409,6 +408,8 @@ async function createDriftPlanForRuntimeDrift(
           sources: [...new Set(samples.map((s: any) => s.source))],
           severity: CRITICAL_CAPABILITIES.includes(d.capabilityType) ? 'critical'
             : HIGH_CAPABILITIES.includes(d.capabilityType) ? 'high' : 'medium',
+          // Gap D: resource scope parsed from capabilityTarget
+          scopeDetails: deriveResourceScope(d.capabilityType, d.capabilityTarget),
           evidence: samples.map((s: any) => {
             const meta = s.metadata as any;
             return {
@@ -416,8 +417,10 @@ async function createDriftPlanForRuntimeDrift(
               source: s.source,
               sourceEventId: s.sourceEventId ?? null,
               actor: meta?.userArn ?? meta?.principalEmail ?? meta?.user ?? 'unknown',
-              region: meta?.awsRegion ?? null,
+              region: meta?.awsRegion ?? meta?.region ?? null,
               rawEvent: meta?.eventName ?? meta?.methodName ?? meta?.operation ?? null,
+              // Gap B: deep link to source console for audit-grade evidence
+              evidenceLink: generateEvidenceLink(s.source, meta),
             };
           }),
         };
@@ -438,9 +441,17 @@ async function createDriftPlanForRuntimeDrift(
       (specBuildFindings?.violations ?? []).map((v: any) => String(v.capability ?? v.type ?? '')),
     );
     const specBuildViolated = gateFlaggedTypes.size > 0;
-    const mergedAtIso = intentArtifact.createdAt instanceof Date
-      ? intentArtifact.createdAt.toISOString()
-      : new Date(intentArtifact.createdAt).toISOString();
+    const mergedAtDate = intentArtifact.createdAt instanceof Date
+      ? intentArtifact.createdAt
+      : new Date(intentArtifact.createdAt);
+    const mergedAtIso = mergedAtDate.toISOString();
+
+    // Gap B: Compute observation window bounds (mirrors getServiceCapabilityUsage logic)
+    const obsWindowEnd = new Date();
+    const mergeAnchor = new Date(mergedAtDate.getTime() - 60 * 60 * 1000); // 1 h before merge
+    const maxLookback = new Date();
+    maxLookback.setDate(maxLookback.getDate() - 7);
+    const obsWindowStart = mergeAnchor > maxLookback ? mergeAnchor : maxLookback;
 
     // FIX(issue-6): confirmedCompliant — declared caps actually observed at runtime.
     const unusedCapabilityTypes = new Set(unusedDeclarations.map((d: any) => d.capabilityType));
@@ -491,6 +502,26 @@ async function createDriftPlanForRuntimeDrift(
       intentArtifactId: intentArtifact.id,
       // P1-A: expose merge anchor for UI display
       mergedAt: mergedAtIso,
+      // Gap B: audit-grade observation window (exact date range used for drift detection)
+      observationWindow: {
+        start: obsWindowStart.toISOString(),
+        end: obsWindowEnd.toISOString(),
+      },
+      // Gap B: gate provenance — when did the gate run and which policy pack applied
+      gateProvenance: {
+        gateRunAt: specBuildFindings?.checkedAt ?? null,
+        isFinalSnapshot: specBuildFindings?.isFinalSnapshot ?? false,
+        packName: specBuildFindings?.packName ?? null,
+        packVersion: specBuildFindings?.packVersion ?? null,
+      },
+      // Gap F: agent context from the originating intent artifact
+      agentContext: {
+        authorType: intentArtifact.authorType ?? null,
+        agentIdentity: tryParseJson(intentArtifact.agentIdentity),
+        traceId: intentArtifact.agentTraceId ?? null,
+        promptProvided: !!(intentArtifact as any).promptText,
+        claimSetProvided: !!(intentArtifact as any).claimSet,
+      },
       // P1-B: chain-of-custody
       specBuildViolated,
       gatePredictedCount: gateFlaggedTypes.size,
@@ -501,6 +532,13 @@ async function createDriftPlanForRuntimeDrift(
         ...d,
         // P1-B: flag whether the gate predicted this undeclared capability
         gatePredicted: gateFlaggedTypes.has(d.capability),
+        // Gap C: attribution confidence — causal if changed files suggest the capability, else correlated
+        attributionConfidence: d.capability === 'cost_increase' || d.capability === 's3_write'
+          ? deriveAttributionConfidence(d.capability, d.target, buildContext)
+          : undefined,
+        attributionNote: d.capability === 'cost_increase' || d.capability === 's3_write'
+          ? deriveAttributionNote(d.capability, d.target, buildContext)
+          : undefined,
       })),
       unusedDeclarations: unusedDeclarations.map((d: any) => ({
         capability: d.capabilityType,
@@ -519,10 +557,7 @@ async function createDriftPlanForRuntimeDrift(
       confirmedCompliant,
       // FIX(issue-1): build context from agent action trace
       buildContext,
-      // Cross-service correlation signal (principle #5):
-      // When multiple services in the same workspace show the same undeclared capability
-      // type simultaneously, this is surfaced here so operators understand the blast radius.
-      // A single IAM policy change touching 5 services = 1 correlated incident, not 5 separate ones.
+      // Cross-service correlation signal (principle #5)
       correlationSignal: correlatedServices && correlatedServices.length > 0
         ? {
             correlatedServices,
@@ -789,4 +824,142 @@ async function sendPagerDutyAlert(
     console.error(`[RuntimeDriftMonitor] Error sending PagerDuty alert:`, error.message);
     return false;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Governance Intelligence Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Safe JSON parse — returns null on error instead of throwing. */
+function tryParseJson(value: string | null | undefined): any {
+  if (!value) return null;
+  try { return JSON.parse(value); } catch { return null; }
+}
+
+/**
+ * Gap D: Derive resource scope from a capability type + target string.
+ * Parses S3 URIs, AWS ARNs, and detects environment tags.
+ */
+function deriveResourceScope(capabilityType: string, target: string): {
+  resourcePath: string | null;
+  environment: string | null;
+  isWildcard: boolean;
+  isExactResource: boolean;
+} {
+  const isWildcard = target === '*';
+  if (isWildcard) {
+    return { resourcePath: null, environment: null, isWildcard: true, isExactResource: false };
+  }
+
+  // Detect environment from naming conventions
+  const envMatch = target.match(/\b(prod|production|staging|stage|dev|development|test)\b/i);
+  const environment = envMatch ? envMatch[1]!.toLowerCase() : null;
+
+  // Parse S3 URIs: s3://bucket/prefix or bucket-name/prefix
+  if (capabilityType === 's3_write' || capabilityType === 's3_read' || capabilityType === 's3_delete') {
+    const s3Match = target.match(/^(?:s3:\/\/)?([^/]+)(?:\/(.*))?$/);
+    if (s3Match) {
+      const bucket = s3Match[1] ?? target;
+      const prefix = s3Match[2];
+      return {
+        resourcePath: prefix ? `${bucket}/${prefix}` : bucket,
+        environment,
+        isWildcard: false,
+        isExactResource: !!prefix,
+      };
+    }
+  }
+
+  // Generic: any non-wildcard target is at least a type-level resource
+  return {
+    resourcePath: target,
+    environment,
+    isWildcard: false,
+    isExactResource: target.includes('/') || target.includes(':'),
+  };
+}
+
+/**
+ * Gap B: Generate a deep link to the source audit console for a given observation.
+ * Returns null if insufficient metadata to construct the URL.
+ */
+function generateEvidenceLink(source: string, meta: Record<string, any> | null): string | null {
+  if (!meta) return null;
+  if (source === 'aws_cloudtrail') {
+    const region = meta.awsRegion ?? meta.region;
+    const eventName = meta.eventName;
+    if (region && eventName) {
+      return `https://console.aws.amazon.com/cloudtrail/home?region=${region}#/events?EventName=${encodeURIComponent(eventName)}`;
+    }
+    if (region) {
+      return `https://console.aws.amazon.com/cloudtrail/home?region=${region}#/events`;
+    }
+    return null;
+  }
+  if (source === 'gcp_audit_log') {
+    const methodName = meta.methodName;
+    if (methodName) {
+      return `https://console.cloud.google.com/logs/query;query=protoPayload.methodName%3D%22${encodeURIComponent(methodName)}%22`;
+    }
+    return null;
+  }
+  if (source === 'azure_activity_log') {
+    return `https://portal.azure.com/#view/Microsoft_Azure_MonitoringMetrics/AzureMonitoringBrowseBlade/~/activityLog`;
+  }
+  return null;
+}
+
+/**
+ * Gap C: Determine if a cost regression is causally linked to this PR's changes
+ * or merely correlated (temporal coincidence).
+ * Causal: changed files directly reference the capability's resource.
+ * Correlated: no code anchor found — may be a pre-existing trend.
+ */
+function deriveAttributionConfidence(
+  capabilityType: string,
+  target: string,
+  buildContext: { changedFiles?: Array<{ path: string }> } | null,
+): 'causal' | 'correlated' {
+  if (!buildContext?.changedFiles?.length) return 'correlated';
+  const files = buildContext.changedFiles.map(f => f.path.toLowerCase());
+  const targetLower = target.toLowerCase();
+
+  // s3_write: look for S3 client usage patterns in changed files
+  if (capabilityType === 's3_write' || capabilityType === 'cost_increase') {
+    const bucketName = targetLower.replace(/^s3:\/\//, '').split('/')[0] ?? '';
+    const s3Patterns = ['s3', 'putobject', 'upload', 'storage', bucketName].filter((p): p is string => !!p);
+    if (files.some(f => s3Patterns.some(p => f.includes(p)))) return 'causal';
+  }
+
+  // Generic: if any changed file mentions the target resource name
+  const resourceId = targetLower.split('/')[0]?.split(':').pop() ?? '';
+  if (resourceId && files.some(f => f.includes(resourceId))) return 'causal';
+
+  return 'correlated';
+}
+
+/**
+ * Gap C: Explain WHY the attribution confidence was assigned.
+ * Provides the operator with a code anchor (or lack thereof).
+ */
+function deriveAttributionNote(
+  capabilityType: string,
+  target: string,
+  buildContext: { changedFiles?: Array<{ path: string }> } | null,
+): string {
+  if (!buildContext?.changedFiles?.length) {
+    return 'No code changes found in this PR — cost regression may be pre-existing or from another deployment.';
+  }
+  const confidence = deriveAttributionConfidence(capabilityType, target, buildContext);
+  if (confidence === 'causal') {
+    const tl = target.toLowerCase().replace(/^s3:\/\//, '').split('/')[0] ?? '';
+    const matchingFile = buildContext.changedFiles.find(f => {
+      const fl = f.path.toLowerCase();
+      return fl.includes('s3') || fl.includes('upload') || fl.includes('storage') || (tl && fl.includes(tl));
+    });
+    return matchingFile
+      ? `Code anchor found: ${matchingFile.path} was modified in this PR and likely introduced the ${capabilityType} behavior.`
+      : `File changes in this PR match ${capabilityType} patterns — likely causal.`;
+  }
+  return `No direct code anchor found for ${target}. ${capabilityType} may be correlated with this deployment window rather than caused by specific changes.`;
 }

@@ -516,14 +516,19 @@ app.get('/api/workspaces/:id/drift-clusters', async (req: Request, res: Response
         id: string;
         prNumber: number;
         author: string;
+        authorType: string;
+        agentIdentity: string | null;
         repoFullName: string;
         affectedServices: string[];
         requestedCapabilities: unknown;
         specBuildFindings: string | null;
-        // FIX(issue-1): links + signature for BUILD column; createdAt for date display
         links: unknown;
         signature: unknown;
         createdAt: Date;
+        // Gap A: vibe coding provenance
+        promptText: string | null;
+        claimSet: unknown;
+        agentTraceId: string | null;
       } | null = null;
       const intentArtifactId = summary.intentArtifactId as string | undefined;
       if (intentArtifactId) {
@@ -533,6 +538,8 @@ app.get('/api/workspaces/:id/drift-clusters', async (req: Request, res: Response
             id: true,
             prNumber: true,
             author: true,
+            authorType: true,
+            agentIdentity: true,
             repoFullName: true,
             affectedServices: true,
             requestedCapabilities: true,
@@ -540,8 +547,11 @@ app.get('/api/workspaces/:id/drift-clusters', async (req: Request, res: Response
             links: true,
             signature: true,
             createdAt: true,
+            promptText: true,
+            claimSet: true,
+            agentTraceId: true,
           },
-        });
+        }) as any;
       }
 
       return { ...cluster, clusterSummary: summary, intentArtifact };

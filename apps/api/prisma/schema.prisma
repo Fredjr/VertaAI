@@ -1312,6 +1312,11 @@ model IntentArtifact {
   // Shape: { violations: [{capability, reason, type}], actualCapabilities: string[], checkedAt: string }
   specBuildFindings String? @map("spec_build_findings") @db.Text
 
+  // Vibe coding provenance — the "intent truth" layer (Gap A)
+  promptText   String? @map("prompt_text") @db.Text  // Raw prompt that produced this spec (from PR body, agent summary, etc.)
+  claimSet     Json?   @map("claim_set")             // { expectedOutcomes: string[], constraints: string[], nonGoals: string[] }
+  agentTraceId String? @map("agent_trace_id")        // External trace/run ID (Cursor session, OpenAI trace, etc.)
+
   // Links to external artifacts
   links Json? // { ticket, design_doc, prd, runbook }
 
