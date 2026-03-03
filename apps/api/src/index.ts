@@ -27,6 +27,7 @@ import policyPacksRouter from './routes/policyPacks.js';  // P2 Week 7: Unified 
 import adminRouter from './routes/admin.js';  // Admin routes for one-time operations
 import runtimeRouter from './routes/runtime/index.js';  // Agent Governance: Runtime observation webhooks
 import { initializeComparators } from './services/gatekeeper/yaml-dsl/comparators/index.js';  // YAML DSL Migration
+import { buildCompactSummary, type ParsedDriftCluster } from './services/governance/compactSummaryBuilder.js';  // Phase 2: Compact governance summary
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -560,6 +561,82 @@ app.get('/api/workspaces/:id/drift-clusters', async (req: Request, res: Response
     res.json({ success: true, data: enriched });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to fetch drift clusters' });
+  }
+});
+
+// Compact governance summary — Phase 2
+// Designed for injection into developer LLM sessions (Claude Code, Cursor) via
+// MCP resource subscription or CLAUDE.md injection.
+//
+// GET  /api/workspaces/:id/governance-summary/compact
+//      ?format=markdown (default) | json
+//
+// Response (markdown): text/markdown — terse LLM-ready governance state block
+// Response (json):     application/json — { success, data: CompactSummary }
+app.get('/api/workspaces/:id/governance-summary/compact', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const format = (req.query.format as string | undefined) ?? 'markdown';
+
+  try {
+    // Validate workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { name: true, slug: true },
+    });
+    if (!workspace) {
+      return res.status(404).json({ success: false, error: 'Workspace not found' });
+    }
+
+    // Fetch all pending drift clusters — includes materialityTier DB column
+    const clusters = await prisma.driftCluster.findMany({
+      where: { workspaceId: id, status: 'pending' },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Count distinct services that have ever had runtime observations
+    const observedServiceGroups = await prisma.runtimeCapabilityObservation.groupBy({
+      by: ['service'],
+      where: { workspaceId: id },
+      _count: { id: true },
+    });
+    const totalObservedServices = observedServiceGroups.length;
+
+    // Services with a non-petty pending cluster are "drifting"
+    const driftingServices = new Set(
+      clusters
+        .filter(c => (c.materialityTier ?? 'operational') !== 'petty')
+        .map(c => c.service),
+    );
+    const compliantServiceCount = Math.max(0, totalObservedServices - driftingServices.size);
+
+    // Parse clusterSummary JSON for each cluster
+    const parsed: ParsedDriftCluster[] = clusters.map(c => {
+      let summary: Record<string, any> = {};
+      try {
+        if (typeof c.clusterSummary === 'string' && c.clusterSummary.length > 0) {
+          summary = JSON.parse(c.clusterSummary) as Record<string, any>;
+        }
+      } catch { /* leave empty if malformed */ }
+      return {
+        id: c.id,
+        service: c.service,
+        materialityTier: c.materialityTier,
+        createdAt: c.createdAt,
+        clusterSummary: summary,
+      };
+    });
+
+    const result = buildCompactSummary({ id, name: workspace.name }, parsed, compliantServiceCount);
+
+    if (format === 'json') {
+      return res.json({ success: true, data: result });
+    }
+
+    // Default: serve as text/markdown for direct MCP/CLAUDE.md consumption
+    res.type('text/markdown').send(result.markdown);
+  } catch (error) {
+    console.error('[GovernanceSummary] Error building compact summary:', error);
+    res.status(500).json({ success: false, error: 'Failed to generate governance summary' });
   }
 });
 
