@@ -1,0 +1,61 @@
+{
+  "name": "vertaai-governance",
+  "displayName": "VertaAI Governance",
+  "description": "Real-time AI capability drift alerts embedded in your code editor. Works with Claude Code, Augment, Copilot, and any VSCode AI assistant.",
+  "version": "0.1.0",
+  "publisher": "vertaai",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["ai", "governance", "drift", "security", "vertaai"],
+  "icon": "assets/icon.png",
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vertaai.showGovernance",
+        "title": "VertaAI: Show Governance Status"
+      },
+      {
+        "command": "vertaai.refresh",
+        "title": "VertaAI: Refresh Governance Status"
+      }
+    ],
+    "configuration": {
+      "title": "VertaAI Governance",
+      "properties": {
+        "vertaai.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3001",
+          "description": "VertaAI API base URL (used when .claude/GOVERNANCE.md is not present)"
+        },
+        "vertaai.workspaceId": {
+          "type": "string",
+          "default": "",
+          "description": "VertaAI workspace ID (required for API polling fallback)"
+        },
+        "vertaai.notificationCooldownMinutes": {
+          "type": "number",
+          "default": 5,
+          "description": "Minimum minutes between governance alert notifications (prevents alert fatigue)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  }
+}
