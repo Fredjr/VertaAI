@@ -40,6 +40,7 @@ import {
   type MaterialityTier,
 } from '../governance/materialityFilter.js';
 import { writeGovernanceFile } from '../governance/claudeMdWriter.js';
+import { notifyDriftUpdated } from '@vertaai/mcp-server';
 
 /**
  * Runtime drift detection result
@@ -332,6 +333,13 @@ async function detectDriftForService(
         err.message,
       );
     });
+  }
+
+  // Phase 4: Push notifications/resources/updated to all active MCP sessions.
+  // Synchronous + fire-and-forget inside notifyDriftUpdated — never blocks detection.
+  // ATC rule: petty clusters produce no developer interruption (no MCP notification either).
+  if (clusterMaterialityTier !== 'petty') {
+    notifyDriftUpdated(workspaceId);
   }
 
   // Step 7: Send PagerDuty alert — critical materiality + critical effective severity only.

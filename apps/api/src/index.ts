@@ -28,6 +28,11 @@ import adminRouter from './routes/admin.js';  // Admin routes for one-time opera
 import runtimeRouter from './routes/runtime/index.js';  // Agent Governance: Runtime observation webhooks
 import { initializeComparators } from './services/gatekeeper/yaml-dsl/comparators/index.js';  // YAML DSL Migration
 import { buildCompactSummary, type ParsedDriftCluster } from './services/governance/compactSummaryBuilder.js';  // Phase 2: Compact governance summary
+import { buildWorkspaceGovernanceMarkdown } from './services/governance/claudeMdWriter.js';  // Phase 3+4: governance markdown builder
+import { createGovernanceMcpServer, registerSession, unregisterSession } from '@vertaai/mcp-server';  // Phase 4: MCP resource server
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';  // Phase 4: MCP transport
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';  // Phase 4: MCP session check
+import { randomUUID } from 'node:crypto';  // Phase 4: session ID generator
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -1244,6 +1249,90 @@ app.post('/api/test/trigger-drift', async (req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 4: MCP Resource Server — vertaai://governance/{workspaceId}
+//
+// Exposes real-time governance state as an MCP resource for Claude Code / Cursor.
+// Each Streamable HTTP session gets its own McpServer instance (required for
+// per-session resource subscriptions). After each non-petty drift detection,
+// runtimeDriftMonitor.ts calls notifyDriftUpdated() which pushes
+// notifications/resources/updated to all active sessions.
+//
+// Claude Code connection config (add to .claude/settings.json):
+//   { "mcpServers": { "vertaai": { "type": "http", "url": "http://localhost:3001/mcp" } } }
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Session registry: sessionId → transport (for request routing after init)
+const mcpSessions = new Map<string, StreamableHTTPServerTransport>();
+
+app.post('/mcp', async (req: Request, res: Response) => {
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+  // Route to an existing session
+  if (sessionId && mcpSessions.has(sessionId)) {
+    const transport = mcpSessions.get(sessionId)!;
+    await transport.handleRequest(req, res, req.body);
+    return;
+  }
+
+  // Initialize a new session
+  if (isInitializeRequest(req.body)) {
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+    });
+
+    // Create a fresh McpServer for this session with governance resource + tool
+    const mcpServer = createGovernanceMcpServer({
+      readGovernanceMarkdown: buildWorkspaceGovernanceMarkdown,
+      listWorkspaces: async () =>
+        prisma.workspace.findMany({ select: { id: true, name: true } }),
+    });
+
+    // Register for drift notifications; clean up on disconnect
+    transport.onclose = () => {
+      const sid = transport.sessionId;
+      if (sid) {
+        mcpSessions.delete(sid);
+        unregisterSession(sid);
+      }
+    };
+
+    await mcpServer.connect(transport);
+
+    const sid = transport.sessionId!;
+    mcpSessions.set(sid, transport);
+    registerSession(sid, mcpServer);
+
+    await transport.handleRequest(req, res, req.body);
+    return;
+  }
+
+  res.status(400).json({ error: 'No valid MCP session ID — send an initialize request first' });
+});
+
+// GET /mcp — SSE stream for server-to-client notifications (subscriptions, resource updates)
+app.get('/mcp', async (req: Request, res: Response) => {
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  if (!sessionId || !mcpSessions.has(sessionId)) {
+    res.status(400).json({ error: 'Unknown MCP session ID' });
+    return;
+  }
+  const transport = mcpSessions.get(sessionId)!;
+  await transport.handleRequest(req, res);
+});
+
+// DELETE /mcp — explicit session termination
+app.delete('/mcp', async (req: Request, res: Response) => {
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  if (sessionId && mcpSessions.has(sessionId)) {
+    const transport = mcpSessions.get(sessionId)!;
+    await transport.close();
+    mcpSessions.delete(sessionId);
+    unregisterSession(sessionId);
+  }
+  res.status(200).end();
 });
 
 // Graceful shutdown

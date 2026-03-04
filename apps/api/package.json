@@ -29,6 +29,8 @@
     "@slack/web-api": "^7.13.0",
     "@upstash/qstash": "^2.8.4",
     "@upstash/redis": "^1.36.1",
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "@vertaai/mcp-server": "workspace:*",
     "@vertaai/shared": "workspace:*",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",

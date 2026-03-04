@@ -130,14 +130,17 @@ export async function writeGovernanceFile(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal: build governance markdown from DB
+// Build governance markdown (exported for MCP server resource handler)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Build the compact governance markdown for a workspace.
  * Mirrors the DB query logic of `GET /api/workspaces/:id/governance-summary/compact`.
+ *
+ * Exported so the MCP resource handler in apps/api/src/index.ts can pass it
+ * as the `readGovernanceMarkdown` callback to createGovernanceMcpServer().
  */
-async function buildWorkspaceGovernanceMarkdown(workspaceId: string): Promise<string> {
+export async function buildWorkspaceGovernanceMarkdown(workspaceId: string): Promise<string> {
   // Workspace name for the header
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
