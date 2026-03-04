@@ -1279,18 +1279,34 @@ app.post('/mcp', async (req: Request, res: Response) => {
 
   // Initialize a new session
   if (isInitializeRequest(req.body)) {
+    // Optional: scope the session to a specific workspace for isolation.
+    // Claude Code users pass ?workspaceId=<id> in the MCP server URL.
+    // Example: "url": "https://api.vertaai.com/mcp?workspaceId=demo-workspace"
+    const scopedWorkspaceId = req.query['workspaceId'] as string | undefined;
+
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
     });
 
-    // Create a fresh McpServer for this session with governance resource + tool
+    // Create a fresh McpServer for this session with governance resource + tool.
+    // Workspace isolation: if scopedWorkspaceId is set, list/read/notify are scoped to it.
     const mcpServer = createGovernanceMcpServer({
       readGovernanceMarkdown: buildWorkspaceGovernanceMarkdown,
-      listWorkspaces: async () =>
-        prisma.workspace.findMany({ select: { id: true, name: true } }),
+      listWorkspaces: async () => {
+        if (scopedWorkspaceId) {
+          // Return only the session's workspace — prevents enumeration of other workspaces
+          const ws = await prisma.workspace.findUnique({
+            where: { id: scopedWorkspaceId },
+            select: { id: true, name: true },
+          });
+          return ws ? [ws] : [];
+        }
+        return prisma.workspace.findMany({ select: { id: true, name: true } });
+      },
+      workspaceId: scopedWorkspaceId,
     });
 
-    // Register for drift notifications; clean up on disconnect
+    // Register for drift notifications (workspace-scoped); clean up on disconnect
     transport.onclose = () => {
       const sid = transport.sessionId;
       if (sid) {
@@ -1303,7 +1319,7 @@ app.post('/mcp', async (req: Request, res: Response) => {
 
     const sid = transport.sessionId!;
     mcpSessions.set(sid, transport);
-    registerSession(sid, mcpServer);
+    registerSession(sid, mcpServer, scopedWorkspaceId);
 
     await transport.handleRequest(req, res, req.body);
     return;

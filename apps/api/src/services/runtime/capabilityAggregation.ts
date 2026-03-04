@@ -19,6 +19,18 @@
 import { prisma } from '../../lib/db.js';
 import type { CapabilityType, Capability } from '../../types/agentGovernance.js';
 import type { ServiceCapabilityUsage, CapabilityDrift, ObservationSource } from '../../types/runtimeObservation.js';
+
+// Exhaustive set of valid CapabilityType values — keeps the cast below type-safe
+// even if the DB contains stale/legacy values that predate the current union.
+const VALID_CAPABILITY_TYPES = new Set<string>([
+  'db_read', 'db_write', 'db_admin',
+  's3_read', 's3_write', 's3_delete',
+  'api_endpoint', 'iam_modify',
+  'infra_create', 'infra_modify', 'infra_delete',
+  'secret_read', 'secret_write',
+  'network_public', 'network_private',
+  'cost_increase', 'schema_modify', 'deployment_modify',
+]);
 import {
   calculateCapabilitySeverity,
   computeRecencyWeight,
@@ -99,10 +111,14 @@ export async function getServiceCapabilityUsage(
     sourcesMap.get(key)!.add(row.source as ObservationSource);
   }
 
-  const capabilities = grouped.map(g => {
+  const capabilities = grouped.flatMap(g => {
+    if (!VALID_CAPABILITY_TYPES.has(g.capabilityType)) {
+      console.warn(`[CapabilityAggregation] Unknown capability type "${g.capabilityType}" — skipping`);
+      return [];
+    }
     const lastSeen = g._max.observedAt!;
     const sources = Array.from(sourcesMap.get(`${g.capabilityType}:${g.capabilityTarget}`) ?? []);
-    return {
+    return [{
       type: g.capabilityType as CapabilityType,
       target: g.capabilityTarget,
       count: g._count.id,
@@ -113,7 +129,7 @@ export async function getServiceCapabilityUsage(
       // can modulate alert priority without re-querying the DB.
       recencyWeight: computeRecencyWeight(lastSeen),
       confidence: computeSourceConfidence(sources),
-    };
+    }];
   });
 
   return {

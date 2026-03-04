@@ -656,14 +656,36 @@ async function createDriftPlanForRuntimeDrift(
     // R4-FIX: driftIds should reference real DB records, not synthetic strings.
     // Since RuntimeCapabilityObservation records ARE the canonical drift evidence,
     // we store the IDs of the most recent observation per undeclared capability pair.
+    //
+    // Batch query: fetch the latest observation for every undeclared capability in one round-trip.
+    // Previous implementation used a sequential findFirst loop (N+1 queries).
+    const capabilityPairs = undeclaredUsage.map(d => ({
+      capabilityType: d.capabilityType,
+      capabilityTarget: d.capabilityTarget,
+    }));
+    const allRecentObs = capabilityPairs.length > 0
+      ? await prisma.runtimeCapabilityObservation.findMany({
+          where: {
+            workspaceId,
+            service,
+            OR: capabilityPairs.map(p => ({
+              capabilityType: p.capabilityType,
+              capabilityTarget: p.capabilityTarget,
+            })),
+          },
+          orderBy: { observedAt: 'desc' },
+          select: { id: true, capabilityType: true, capabilityTarget: true },
+        })
+      : [];
+    // Keep only the first (most recent) observation per capability pair
+    const seenPairs = new Set<string>();
     const realDriftIds: string[] = [];
-    for (const d of undeclaredUsage) {
-      const obs = await prisma.runtimeCapabilityObservation.findFirst({
-        where: { workspaceId, service, capabilityType: d.capabilityType, capabilityTarget: d.capabilityTarget },
-        orderBy: { observedAt: 'desc' },
-        select: { id: true },
-      });
-      if (obs) realDriftIds.push(obs.id);
+    for (const obs of allRecentObs) {
+      const key = `${obs.capabilityType}:${obs.capabilityTarget}`;
+      if (!seenPairs.has(key)) {
+        seenPairs.add(key);
+        realDriftIds.push(obs.id);
+      }
     }
 
     const cluster = await prisma.driftCluster.create({

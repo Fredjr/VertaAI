@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vertaai": {
+      "type": "http",
+      "url": "https://YOUR_API_URL/mcp?workspaceId=YOUR_WORKSPACE_ID"
+    }
+  }
+}

@@ -28,12 +28,19 @@
  * - GitHub Copilot, ChatGPT, others: VSCode notification is the signal;
  *   the developer pastes the governance snapshot into their prompt if needed.
  *
+ * SETUP WIZARD:
+ * - Run "VertaAI: Setup" from the command palette to configure workspaceId and apiUrl.
+ *   The wizard auto-generates .mcp.json for Claude Code and .augment/settings.json
+ *   for Augment in one step.
+ *
  * FALLBACK (no .claude/GOVERNANCE.md):
  * - If configured, polls GET /api/workspaces/:id/governance-summary/compact
  *   every 60 seconds as a fallback for repos that don't have GitHub integration.
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -42,6 +49,10 @@ import * as vscode from 'vscode';
 const GOVERNANCE_FILE_GLOB = '**/.claude/GOVERNANCE.md';
 const EXTENSION_NAME = 'VertaAI';
 const POLL_INTERVAL_MS = 60_000; // API polling fallback: 60 seconds
+
+// Headline regex: matches "**service** · `capability:target`" or "**service** — `capability:target`"
+// The separator can be · (middle dot U+00B7) or — (em dash U+2014).
+const HEADLINE_RE = /\*\*([^*]+)\*\*\s[·\u2014]\s(`[^`]+`)/u;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State
@@ -68,6 +79,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('vertaai.showGovernance', openGovernanceFile),
     vscode.commands.registerCommand('vertaai.refresh', refresh),
+    vscode.commands.registerCommand('vertaai.setup', runSetupWizard),
   );
 
   // File system watcher — triggers on write from claudeMdWriter.ts (Phase 3)
@@ -147,14 +159,12 @@ function parseGovernanceMarkdown(content: string): GovernanceState {
   const isClean = content.includes('✅ **No active drift alerts**');
 
   if (isCritical) {
-    // Extract first service + behavior from the critical section
-    // Format: **service-name** · `capability:target` · ...
-    const match = content.match(/\*\*([^*]+)\*\*\s·\s(`[^`]+`)/);
+    const match = content.match(HEADLINE_RE);
     const headline = match ? `${match[1]}: ${match[2]}` : 'critical capability drift detected';
     return { severity: 'critical', headline, content };
   }
   if (isOperational) {
-    const match = content.match(/\*\*([^*]+)\*\*\s·\s(`[^`]+`)/);
+    const match = content.match(HEADLINE_RE);
     const headline = match ? `${match[1]}: ${match[2]}` : 'operational drift detected';
     return { severity: 'operational', headline, content };
   }
@@ -211,7 +221,7 @@ function setStatusBar(
     default: // idle
       statusBarItem.text = '$(shield) VertaAI';
       statusBarItem.backgroundColor = undefined;
-      statusBarItem.tooltip = 'VertaAI: Waiting for governance data…\nRun the drift monitor or check your workspace ID.';
+      statusBarItem.tooltip = 'VertaAI: Waiting for governance data…\nRun "VertaAI: Setup" from the command palette to get started.';
   }
 }
 
@@ -271,10 +281,106 @@ async function openGovernanceFile(): Promise<void> {
         preview: true,
       });
     } else {
-      vscode.window.showInformationMessage(
-        `${EXTENSION_NAME}: No governance file found. Configure vertaai.workspaceId and vertaai.apiUrl to enable API fallback.`,
-      );
+      vscode.window
+        .showInformationMessage(
+          `${EXTENSION_NAME}: No governance file found. Run "VertaAI: Setup" to configure your workspace.`,
+          'Run Setup',
+        )
+        .then(action => {
+          if (action === 'Run Setup') vscode.commands.executeCommand('vertaai.setup');
+        });
     }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Setup wizard — one-step configuration for all three delivery channels
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function runSetupWizard(): Promise<void> {
+  const config = vscode.workspace.getConfiguration('vertaai');
+
+  // Step 1: API URL
+  const currentApiUrl = config.get<string>('apiUrl') ?? '';
+  const apiUrl = await vscode.window.showInputBox({
+    title: 'VertaAI Setup (1/2) — API URL',
+    prompt: 'Enter your VertaAI API base URL',
+    value: currentApiUrl || 'https://api.vertaai.com',
+    placeHolder: 'https://api.vertaai.com',
+    validateInput: v => (!v || !v.startsWith('http') ? 'Must be a valid http(s) URL' : null),
+  });
+  if (!apiUrl) return; // user cancelled
+
+  // Step 2: Workspace ID
+  const currentWsId = config.get<string>('workspaceId') ?? '';
+  const workspaceId = await vscode.window.showInputBox({
+    title: 'VertaAI Setup (2/2) — Workspace ID',
+    prompt: 'Enter your VertaAI workspace ID (find it in the VertaAI dashboard)',
+    value: currentWsId,
+    placeHolder: 'e.g. demo-workspace',
+    validateInput: v => (!v ? 'Workspace ID is required' : null),
+  });
+  if (!workspaceId) return;
+
+  // Persist into VSCode workspace settings (.vscode/settings.json)
+  await config.update('apiUrl', apiUrl, vscode.ConfigurationTarget.Workspace);
+  await config.update('workspaceId', workspaceId, vscode.ConfigurationTarget.Workspace);
+
+  const mcpUrl = `${apiUrl}/mcp?workspaceId=${workspaceId}`;
+
+  // Generate .mcp.json for Claude Code (Option A)
+  await writeConfigFile(
+    '.mcp.json',
+    JSON.stringify({ mcpServers: { vertaai: { type: 'http', url: mcpUrl } } }, null, 2),
+    'Claude Code (.mcp.json)',
+  );
+
+  // Generate .augment/settings.json for Augment (Option C)
+  await writeConfigFile(
+    path.join('.augment', 'settings.json'),
+    JSON.stringify({ mcpServers: { vertaai: { transport: 'http', url: mcpUrl } } }, null, 2),
+    'Augment (.augment/settings.json)',
+  );
+
+  // Trigger an immediate poll to verify API connectivity
+  await pollApiOnce();
+
+  vscode.window.showInformationMessage(
+    `✅ VertaAI configured for workspace "${workspaceId}". ` +
+    `Status bar will update when drift is detected. ` +
+    `Restart Claude Code / Augment to pick up the new MCP config.`,
+  );
+}
+
+/**
+ * Write a config file to the workspace root, prompting the user if the file already exists.
+ */
+async function writeConfigFile(relPath: string, content: string, label: string): Promise<void> {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return;
+
+  const root = folders[0]!.uri.fsPath;
+  const filePath = path.join(root, relPath);
+  const dirPath = path.dirname(filePath);
+
+  try {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+
+    if (fs.existsSync(filePath)) {
+      const choice = await vscode.window.showWarningMessage(
+        `${relPath} already exists. Overwrite with VertaAI ${label} config?`,
+        'Overwrite',
+        'Skip',
+      );
+      if (choice !== 'Overwrite') return;
+    }
+
+    fs.writeFileSync(filePath, content, 'utf-8');
+    console.log(`[${EXTENSION_NAME}] Wrote ${relPath} (${label})`);
+  } catch (err: any) {
+    console.warn(`[${EXTENSION_NAME}] Could not write ${relPath}:`, err.message);
   }
 }
 

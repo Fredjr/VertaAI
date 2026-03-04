@@ -15,12 +15,19 @@
   "contributes": {
     "commands": [
       {
+        "command": "vertaai.setup",
+        "title": "Setup",
+        "category": "VertaAI"
+      },
+      {
         "command": "vertaai.showGovernance",
-        "title": "VertaAI: Show Governance Status"
+        "title": "Show Governance Status",
+        "category": "VertaAI"
       },
       {
         "command": "vertaai.refresh",
-        "title": "VertaAI: Refresh Governance Status"
+        "title": "Refresh Governance Status",
+        "category": "VertaAI"
       }
     ],
     "configuration": {
