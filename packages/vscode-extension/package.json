@@ -4,7 +4,6 @@
   "description": "Real-time AI capability drift alerts embedded in your code editor. Works with Claude Code, Augment, Copilot, and any VSCode AI assistant.",
   "version": "0.1.0",
   "publisher": "vertaai",
-  "private": true,
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -54,7 +53,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.0.0",
+    "@vscode/vsce": "^2.26.0",
     "esbuild": "^0.20.0",
     "typescript": "^5.4.0"
   }

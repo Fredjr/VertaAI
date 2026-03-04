@@ -38,3 +38,4 @@ coverage
 prisma/*.db
 prisma/*.db-journal
 
+*.vsix
