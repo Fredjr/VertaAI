@@ -26,6 +26,7 @@ import contractPoliciesRouter from './routes/contractPolicies.js';  // Week 5-6:
 import policyPacksRouter from './routes/policyPacks.js';  // P2 Week 7: Unified WorkspacePolicyPack Management
 import adminRouter from './routes/admin.js';  // Admin routes for one-time operations
 import runtimeRouter from './routes/runtime/index.js';  // Agent Governance: Runtime observation webhooks
+import { registerSseClient, unregisterSseClient, notifyGovernanceSse, activeSseClientCount } from './lib/governanceSse.js';  // Track 1: real-time SSE push
 import { initializeComparators } from './services/gatekeeper/yaml-dsl/comparators/index.js';  // YAML DSL Migration
 import { buildCompactSummary, type ParsedDriftCluster } from './services/governance/compactSummaryBuilder.js';  // Phase 2: Compact governance summary
 import { buildWorkspaceGovernanceMarkdown } from './services/governance/claudeMdWriter.js';  // Phase 3+4: governance markdown builder
@@ -643,6 +644,37 @@ app.get('/api/workspaces/:id/governance-summary/compact', async (req: Request, r
     console.error('[GovernanceSummary] Error building compact summary:', error);
     res.status(500).json({ success: false, error: 'Failed to generate governance summary' });
   }
+});
+
+// ── Track 1: Real-time governance SSE stream ──────────────────────────────────
+// VSCode extension and lightweight clients connect here instead of polling.
+// Events: connected (on open), drift_updated (on new drift cluster), :ping (heartbeat).
+//
+// Workspace isolation: each client connects to its own workspaceId stream.
+// The endpoint does NOT require auth — workspaceId scoping is the isolation primitive.
+// (Same security model as the compact governance markdown endpoint above.)
+app.get('/api/governance/events/:workspaceId', (req: Request, res: Response) => {
+  const { workspaceId } = req.params;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // prevent nginx from buffering SSE
+
+  // Send initial connected event so client knows the stream is live
+  res.write(`event: connected\ndata: ${JSON.stringify({ workspaceId, connectedAt: new Date().toISOString() })}\n\n`);
+
+  registerSseClient(workspaceId, res);
+
+  // Heartbeat every 25s to prevent proxies from closing idle connections
+  const heartbeat = setInterval(() => {
+    try { res.write(':ping\n\n'); } catch { clearInterval(heartbeat); }
+  }, 25_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unregisterSseClient(workspaceId, res);
+  });
 });
 
 // Create or update an integration for a workspace

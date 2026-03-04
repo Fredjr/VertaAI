@@ -41,6 +41,7 @@ import {
 } from '../governance/materialityFilter.js';
 import { writeGovernanceFile } from '../governance/claudeMdWriter.js';
 import { notifyDriftUpdated } from '@vertaai/mcp-server';
+import { notifyGovernanceSse } from '../../lib/governanceSse.js';
 
 /**
  * Runtime drift detection result
@@ -385,7 +386,8 @@ async function detectDriftForService(
   // Synchronous + fire-and-forget inside notifyDriftUpdated — never blocks detection.
   // ATC rule: petty clusters produce no developer interruption (no MCP notification either).
   if (clusterMaterialityTier !== 'petty') {
-    notifyDriftUpdated(workspaceId);
+    notifyDriftUpdated(workspaceId);    // MCP push → Claude Code / Augment sessions
+    notifyGovernanceSse(workspaceId);  // SSE push → VSCode extension
   }
 
   // Step 7: Send PagerDuty alert — critical materiality + critical effective severity only.

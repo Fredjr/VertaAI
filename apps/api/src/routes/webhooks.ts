@@ -1,8 +1,10 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
+import path from 'node:path';
 import { Octokit } from 'octokit';
 import { prisma } from '../lib/db.js';
 import { extractPRInfo, getInstallationOctokit, getPRDiff as getLegacyPRDiff, getPRFiles as getLegacyPRFiles } from '../lib/github.js';
+import { checkDriftForService } from '../services/runtime/runtimeDriftMonitor.js';
 import { verifyWebhookSignature as legacyVerifySignature } from '../lib/github.js';
 import {
   getGitHubClient,
@@ -250,6 +252,13 @@ router.post('/github/:workspaceId', async (req: Request, res: Response) => {
   // Handle pull_request event
   if (event === 'pull_request') {
     return handlePullRequestEventV2(req.body, workspaceId, res);
+  }
+
+  // Handle push event — Track A lightweight scan on branch push (pre-PR)
+  // Triggers immediate runtime drift check for any services linked to this repo.
+  // Does NOT require a PR: fires on every git push to any branch.
+  if (event === 'push') {
+    return handlePushEvent(req.body, workspaceId, res);
   }
 
   // Ignore other events
@@ -1254,6 +1263,143 @@ async function handlePullRequestEventLegacy(payload: any, res: Response) {
     console.error('[Webhook] Error processing PR:', error);
     return res.status(500).json({ error: 'Failed to process PR' });
   }
+}
+
+// ============================================================================
+// Push Event Handler — Track A lightweight pre-PR capability scan
+// Fires on every git push to any branch (not just PRs).
+// ============================================================================
+
+/**
+ * File name patterns that suggest a specific capability type may be in use.
+ * Used for fast filename-based heuristic (no file content fetch required).
+ */
+const PUSH_CAPABILITY_FILE_HINTS: Array<{ re: RegExp; types: string[] }> = [
+  { re: /s3|bucket|upload|storage|blob/i, types: ['s3_write', 's3_read'] },
+  { re: /iam|role|policy|permission|access/i, types: ['iam_modify'] },
+  { re: /secret|vault|credential|keystore/i, types: ['secret_read', 'secret_write'] },
+  { re: /(?:db|database|migration|schema|prisma|knex|sequelize)/i, types: ['db_write', 'db_admin'] },
+  { re: /(?:infra|terraform|cdk|pulumi|cloudformation|helm)/i, types: ['infra_create', 'infra_modify'] },
+  { re: /deploy|release|cd-pipeline|github-actions/i, types: ['deployment_modify'] },
+  { re: /network|vpc|subnet|firewall|security-group/i, types: ['network_private', 'network_public'] },
+];
+
+async function handlePushEvent(payload: any, workspaceId: string, res: Response): Promise<Response> {
+  const ref = (payload.ref as string) ?? '';
+  const headSha = (payload.after as string) ?? '';
+  const repoFullName = (payload.repository?.full_name as string) ?? '';
+  const branch = ref.replace('refs/heads/', '');
+
+  // Skip tag pushes and delete pushes (after === '0000...0000')
+  if (!ref.startsWith('refs/heads/') || headSha.startsWith('000000')) {
+    return res.json({ message: 'Skipped (tag push or branch delete)' });
+  }
+
+  console.log(`[Webhook] Push: ${repoFullName}@${branch} (${headSha.slice(0, 7)})`);
+
+  // Collect all added/modified files across all commits in this push
+  const changedFiles: string[] = [];
+  for (const commit of (payload.commits ?? []) as any[]) {
+    changedFiles.push(...(commit.added ?? []), ...(commit.modified ?? []));
+  }
+
+  // Filename-based capability heuristic — no file content fetch (fast)
+  const hintedTypes = new Set<string>();
+  for (const file of changedFiles) {
+    const basename = path.basename(file);
+    for (const { re, types } of PUSH_CAPABILITY_FILE_HINTS) {
+      if (re.test(basename) || re.test(file)) types.forEach(t => hintedTypes.add(t));
+    }
+  }
+
+  const detectedTypes = Array.from(hintedTypes);
+  console.log(`[Webhook] Push: ${changedFiles.length} files changed, hinted types: [${detectedTypes.join(', ')}]`);
+
+  // Post a GitHub commit status if capability-indicating files were touched
+  if (detectedTypes.length > 0 && repoFullName && headSha) {
+    try {
+      const integration = await prisma.integration.findFirst({
+        where: { workspaceId, type: 'github' },
+        select: { accessToken: true, installationId: true },
+      });
+
+      if (integration?.accessToken) {
+        const [owner, repo] = repoFullName.split('/') as [string, string];
+        const octokit = new Octokit({ auth: integration.accessToken });
+
+        await octokit.rest.repos.createCommitStatus({
+          owner, repo,
+          sha: headSha,
+          state: 'pending',
+          context: 'VertaAI / capability-governance',
+          description: `Capability types detected: ${detectedTypes.slice(0, 3).join(', ')}${detectedTypes.length > 3 ? '…' : ''} — drift verification running`,
+          target_url: process.env['APP_URL']
+            ? `${process.env['APP_URL']}/governance?workspace=${workspaceId}`
+            : undefined,
+        });
+        console.log(`[Webhook] Push: posted pending commit status on ${headSha.slice(0, 7)}`);
+      }
+    } catch (err: any) {
+      console.warn('[Webhook] Push: could not post commit status:', err.message);
+    }
+  }
+
+  // Trigger immediate drift detection for all services associated with this repo.
+  // Fire-and-forget — response is returned immediately; drift check runs in background.
+  // This is the same mechanism as CloudTrail/GCP observations: per-service, debounced 30s.
+  setImmediate(async () => {
+    try {
+      // Find all services for this workspace that have observed activity in this repo
+      const services = await prisma.runtimeCapabilityObservation.findMany({
+        where: { workspaceId },
+        select: { service: true },
+        distinct: ['service'],
+      });
+
+      for (const { service } of services) {
+        try {
+          await checkDriftForService(workspaceId, service);
+        } catch (err: any) {
+          console.error(`[Webhook] Push: drift check failed for ${service}:`, err.message);
+        }
+      }
+
+      // Update commit status with result (best-effort)
+      if (repoFullName && headSha) {
+        const integration = await prisma.integration.findFirst({
+          where: { workspaceId, type: 'github' },
+          select: { accessToken: true },
+        });
+        if (integration?.accessToken) {
+          const [owner, repo] = repoFullName.split('/') as [string, string];
+          const octokit = new Octokit({ auth: integration.accessToken });
+          // Check if any critical drifts now exist
+          const criticalDrift = await prisma.driftCluster.findFirst({
+            where: { workspaceId, status: 'pending', materialityTier: 'critical' },
+            select: { id: true, service: true },
+          });
+          await octokit.rest.repos.createCommitStatus({
+            owner, repo,
+            sha: headSha,
+            state: criticalDrift ? 'failure' : 'success',
+            context: 'VertaAI / capability-governance',
+            description: criticalDrift
+              ? `Critical drift on ${criticalDrift.service} — review required before merge`
+              : 'No critical governance issues detected',
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error('[Webhook] Push: background drift check failed:', err.message);
+    }
+  });
+
+  return res.json({
+    message: 'Push received — drift verification running',
+    branch,
+    filesChanged: changedFiles.length,
+    detectedCapabilityTypes: detectedTypes,
+  });
 }
 
 // Export the handler for use in test endpoint
