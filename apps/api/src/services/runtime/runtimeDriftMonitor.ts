@@ -39,6 +39,7 @@ import {
   computeClusterMaterialityTier,
   type MaterialityTier,
 } from '../governance/materialityFilter.js';
+import { writeGovernanceFile } from '../governance/claudeMdWriter.js';
 
 /**
  * Runtime drift detection result
@@ -320,6 +321,18 @@ async function detectDriftForService(
       drifts,
       correlatedServices,
     );
+
+  // Phase 3: Write governance snapshot to .claude/GOVERNANCE.md in the target repo.
+  // Fire-and-forget — file commit errors must not block or fail drift detection.
+  // ATC rule: only write for non-petty clusters (petty = no developer interruption).
+  if (clusterMaterialityTier !== 'petty' && latestArtifact.repoFullName) {
+    writeGovernanceFile(workspaceId, latestArtifact.repoFullName).catch((err: Error) => {
+      console.error(
+        `[RuntimeDriftMonitor] GOVERNANCE.md write failed for ${latestArtifact.repoFullName}:`,
+        err.message,
+      );
+    });
+  }
 
   // Step 7: Send PagerDuty alert — critical materiality + critical effective severity only.
   // ATC rule: petty clusters never page on-call. operational clusters use Slack instead.
