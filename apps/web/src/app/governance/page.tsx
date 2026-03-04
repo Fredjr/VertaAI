@@ -155,6 +155,8 @@ interface DriftCluster {
   status: string;
   driftCount: number;
   driftIds: string[];
+  /** DB column — 'critical' | 'operational' | 'petty' | null (old clusters default to 'operational') */
+  materialityTier?: string | null;
   clusterSummary: ClusterSummary | null;
   intentArtifact: IntentArtifact | null;
   createdAt: string;
@@ -240,8 +242,15 @@ function GovernanceContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  /** Materiality filter — 'non-petty' by default: ATC mode (petty signals suppressed). */
+  const [materialityFilter, setMaterialityFilter] = useState<'non-petty' | 'critical' | 'operational' | 'petty' | 'all'>('non-petty');
   const [expandedEvidence, setExpandedEvidence] = useState<string | null>(null);
   const [copiedClusterId, setCopiedClusterId] = useState<string | null>(null);
+
+  /** Resolve the effective materiality tier for a cluster.
+   *  Prefer the DB column (materialityTier) over the JSON blob field for accuracy. */
+  const resolvedTier = (c: DriftCluster): string =>
+    c.materialityTier ?? (c.clusterSummary as any)?.materialityTier ?? 'operational';
 
   const fetchClusters = async () => {
     setLoading(true);
@@ -264,6 +273,18 @@ function GovernanceContent() {
 
   useEffect(() => { fetchClusters(); }, [workspaceId, statusFilter]);
 
+  // ATC materiality counts (computed from loaded clusters)
+  const criticalCount = clusters.filter(c => resolvedTier(c) === 'critical').length;
+  const operationalCount = clusters.filter(c => resolvedTier(c) === 'operational').length;
+  const pettyCount = clusters.filter(c => resolvedTier(c) === 'petty').length;
+
+  // Client-side materiality filter — petty suppressed by default (ATC mode)
+  const displayedClusters = materialityFilter === 'all'
+    ? clusters
+    : materialityFilter === 'non-petty'
+      ? clusters.filter(c => resolvedTier(c) !== 'petty')
+      : clusters.filter(c => resolvedTier(c) === materialityFilter);
+
   return (
     <>
       <Navigation />
@@ -271,34 +292,62 @@ function GovernanceContent() {
         <div className="max-w-7xl mx-auto py-8 px-4">
           {/* Header */}
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">🔍 Runtime Governance</h1>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">🔍 Forensic Evidence Vault</h1>
             <p className="mt-2 text-gray-600 dark:text-gray-400">
-              Spec–Build–Run drift clusters for <span className="font-mono font-semibold">{workspaceId}</span>.
-              Each cluster groups runtime observations that deviate from the declared intent artifact.
+              Spec–Build–Run audit trail for <span className="font-mono font-semibold">{workspaceId}</span>.
+              ATC mode active — critical and operational signals surface; petty noise suppressed by default.
             </p>
           </div>
 
-          {/* Summary bar */}
-          <div className="grid grid-cols-3 gap-4 mb-8">
-            {[
-              { label: 'Total Clusters', value: clusters.length, color: 'text-gray-900 dark:text-white' },
-              { label: 'Pending Review', value: clusters.filter(c => c.status === 'pending').length, color: 'text-yellow-600' },
-              { label: 'Total Drifts', value: clusters.reduce((s, c) => s + c.driftCount, 0), color: 'text-red-600' },
-            ].map(stat => (
-              <div key={stat.label} className="bg-white dark:bg-gray-900 rounded-lg shadow p-4 text-center">
-                <div className={`text-3xl font-bold ${stat.color}`}>{stat.value}</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">{stat.label}</div>
-              </div>
-            ))}
+          {/* Summary bar — ATC materiality breakdown */}
+          <div className="grid grid-cols-4 gap-4 mb-8">
+            <button
+              onClick={() => setMaterialityFilter(materialityFilter === 'critical' ? 'non-petty' : 'critical')}
+              className={`rounded-lg shadow p-4 text-center transition-all border-2 ${materialityFilter === 'critical' ? 'border-red-500 bg-red-50 dark:bg-red-950' : 'border-transparent bg-white dark:bg-gray-900 hover:border-red-300'}`}
+            >
+              <div className="text-3xl font-bold text-red-600">{criticalCount}</div>
+              <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">🚨 Critical</div>
+            </button>
+            <button
+              onClick={() => setMaterialityFilter(materialityFilter === 'operational' ? 'non-petty' : 'operational')}
+              className={`rounded-lg shadow p-4 text-center transition-all border-2 ${materialityFilter === 'operational' ? 'border-amber-500 bg-amber-50 dark:bg-amber-950' : 'border-transparent bg-white dark:bg-gray-900 hover:border-amber-300'}`}
+            >
+              <div className="text-3xl font-bold text-amber-600">{operationalCount}</div>
+              <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">⚠️ Operational</div>
+            </button>
+            <button
+              onClick={() => setMaterialityFilter(materialityFilter === 'petty' ? 'non-petty' : 'petty')}
+              className={`rounded-lg shadow p-4 text-center transition-all border-2 ${materialityFilter === 'petty' ? 'border-gray-500 bg-gray-100 dark:bg-gray-800' : 'border-transparent bg-white dark:bg-gray-900 hover:border-gray-300'}`}
+            >
+              <div className="text-3xl font-bold text-gray-400">{pettyCount}</div>
+              <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">🔇 Petty (suppressed)</div>
+            </button>
+            <div className="bg-white dark:bg-gray-900 rounded-lg shadow p-4 text-center border-2 border-transparent">
+              <div className="text-3xl font-bold text-gray-900 dark:text-white">{clusters.length}</div>
+              <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">Total Clusters</div>
+            </div>
           </div>
 
-          {/* Filter */}
-          <div className="mb-6 flex gap-3 items-center">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Filter:</span>
+          {/* Filters */}
+          <div className="mb-6 flex flex-wrap gap-3 items-center">
+            <span className="text-sm font-medium text-gray-500 dark:text-gray-400">Status:</span>
             {['all', 'pending', 'notified', 'closed'].map(s => (
               <button key={s} onClick={() => setStatusFilter(s)}
                 className={`px-3 py-1 rounded-full text-sm font-medium border transition-colors ${statusFilter === s ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-indigo-400'}`}>
                 {s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+            <span className="text-sm font-medium text-gray-500 dark:text-gray-400 ml-2">Materiality:</span>
+            {([
+              { value: 'non-petty', label: 'Critical + Operational', activeClass: 'bg-indigo-600 text-white border-indigo-600' },
+              { value: 'critical',  label: '🚨 Critical only',        activeClass: 'bg-red-600 text-white border-red-600' },
+              { value: 'operational', label: '⚠️ Operational only',   activeClass: 'bg-amber-500 text-white border-amber-500' },
+              { value: 'petty',     label: '🔇 Petty (hidden)',        activeClass: 'bg-gray-500 text-white border-gray-500' },
+              { value: 'all',       label: 'All tiers',                activeClass: 'bg-gray-700 text-white border-gray-700' },
+            ] as const).map(opt => (
+              <button key={opt.value} onClick={() => setMaterialityFilter(opt.value)}
+                className={`px-3 py-1 rounded-full text-sm font-medium border transition-colors ${materialityFilter === opt.value ? opt.activeClass : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:border-indigo-400'}`}>
+                {opt.label}
               </button>
             ))}
             <button onClick={fetchClusters} className="ml-auto px-3 py-1 text-sm bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
@@ -310,15 +359,21 @@ function GovernanceContent() {
 
           {loading ? (
             <div className="text-center py-16 text-gray-500 dark:text-gray-400">Loading drift clusters…</div>
-          ) : clusters.length === 0 ? (
+          ) : displayedClusters.length === 0 ? (
             <div className="bg-white dark:bg-gray-900 rounded-lg shadow p-12 text-center">
-              <div className="text-5xl mb-4">✅</div>
-              <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">No drift clusters found</h3>
-              <p className="text-gray-600 dark:text-gray-400">Run the drift monitor or adjust the status filter.</p>
+              <div className="text-5xl mb-4">{clusters.length === 0 ? '✅' : '🔇'}</div>
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+                {clusters.length === 0 ? 'No drift clusters found' : 'All signals suppressed by current filter'}
+              </h3>
+              <p className="text-gray-600 dark:text-gray-400">
+                {clusters.length === 0
+                  ? 'Run the drift monitor or adjust the status filter.'
+                  : `${clusters.length} cluster(s) exist but are hidden by the active materiality filter. Use "All tiers" to see everything.`}
+              </p>
             </div>
           ) : (
             <div className="space-y-6">
-              {clusters.map(cluster => {
+              {displayedClusters.map(cluster => {
                 const summary = cluster.clusterSummary;
                 const severity = summary?.severity || 'unknown';
                 const severityRationale = summary?.severityRationale || null;
@@ -880,6 +935,21 @@ function GovernanceContent() {
                   </div>
                 );
               })}
+
+              {/* ATC petty suppression footer — mirrors compact summary format */}
+              {pettyCount > 0 && materialityFilter !== 'petty' && materialityFilter !== 'all' && (
+                <div className="mt-4 px-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg flex items-center justify-between">
+                  <span className="text-sm text-gray-500 dark:text-gray-400">
+                    🔇 <strong>{pettyCount}</strong> low-signal observation{pettyCount !== 1 ? 's' : ''} suppressed — below materiality threshold (ATC silent mode)
+                  </span>
+                  <button
+                    onClick={() => setMaterialityFilter('petty')}
+                    className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 underline ml-4 shrink-0"
+                  >
+                    Show petty signals
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
