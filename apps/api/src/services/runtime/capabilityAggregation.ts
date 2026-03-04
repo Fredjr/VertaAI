@@ -16,6 +16,7 @@
  * ```
  */
 
+import { minimatch } from 'minimatch';
 import { prisma } from '../../lib/db.js';
 import type { CapabilityType, Capability } from '../../types/agentGovernance.js';
 import type { ServiceCapabilityUsage, CapabilityDrift, ObservationSource } from '../../types/runtimeObservation.js';
@@ -155,43 +156,77 @@ export async function detectCapabilityDrift(
   const usage = await getServiceCapabilityUsage(workspaceId, service, windowDays, mergedAt);
   const drifts: CapabilityDrift[] = [];
 
-  // Build declared capability map.
-  // Supports wildcard target '*' (e.g. requestedCapabilities string array converted to Capability-like objects).
-  // Key is `type:target`; a key of `type:*` acts as a type-level wildcard.
-  const declaredMap = new Map<string, { type: CapabilityType; target: string }>();
+  // Build declared capability map: type → declared target strings for that type.
+  // Grouped by type so matching can iterate declared targets without a full cross-product.
+  const declaredByType = new Map<CapabilityType, string[]>();
   for (const cap of declaredCapabilities) {
     const capAny = cap as any;
     const target: string = capAny.target ?? capAny.resource ?? '*';
-    const key = `${cap.type}:${target}`;
-    declaredMap.set(key, { type: cap.type, target });
+    const list = declaredByType.get(cap.type) ?? [];
+    list.push(target);
+    declaredByType.set(cap.type, list);
   }
 
   // Build observed capability map
   const observedMap = new Map<string, typeof usage.capabilities[0]>();
   for (const cap of usage.capabilities) {
-    const key = `${cap.type}:${cap.target}`;
-    observedMap.set(key, cap);
+    observedMap.set(`${cap.type}:${cap.target}`, cap);
   }
 
   /**
-   * Helper: check whether an observed key is covered by a declared entry.
-   * - Exact match: `db_read:production.users` declared
-   * - Wildcard match: `db_read:*` declared (covers all targets for that type)
+   * Semantic capability target matching.
+   *
+   * Handles four cases in priority order:
+   *   1. Exact match                 — `users_table` === `users_table`
+   *   2. Type-level wildcard         — declared `*` covers any observed target
+   *   3. Glob pattern                — declared `user-uploads/*` covers `user-uploads/avatars/123.jpg`
+   *                                    declared `arn:aws:s3:::bucket-*` covers `arn:aws:s3:::bucket-prod`
+   *                                    (uses minimatch, already in deps)
+   *   4. Directory prefix            — declared `bucket/prefix/` covers `bucket/prefix/sub/file`
+   *                                    (trailing slash = prefix namespace match)
+   *
+   * This eliminates false-positive undeclared_usage drifts where the declared scope
+   * is broader than the exact observed path (e.g., declared `*` but flagged anyway).
    */
-  function isDeclared(observedType: CapabilityType, observedTarget: string): boolean {
-    if (declaredMap.has(`${observedType}:${observedTarget}`)) return true;
-    if (declaredMap.has(`${observedType}:*`)) return true;
+  function capabilityTargetMatches(declaredTarget: string, observedTarget: string): boolean {
+    if (declaredTarget === observedTarget) return true;
+    if (declaredTarget === '*') return true;
+    // Glob pattern: minimatch handles *, **, ?, character classes
+    if (declaredTarget.includes('*') || declaredTarget.includes('?')) {
+      return minimatch(observedTarget, declaredTarget, { dot: true, nocase: false });
+    }
+    // Directory prefix: declared ends with '/' → observed must start with it
+    if (declaredTarget.endsWith('/') && observedTarget.startsWith(declaredTarget)) return true;
     return false;
   }
 
   /**
-   * Helper: check whether a declared entry has at least one matching observation.
-   * - Exact: look for `type:target` key in observedMap
-   * - Wildcard (`target === '*'`): look for any observed key starting with `type:`
+   * Check whether an observed (type, target) is covered by any declared entry of the same type.
+   */
+  function isDeclared(observedType: CapabilityType, observedTarget: string): boolean {
+    const declaredTargets = declaredByType.get(observedType);
+    if (!declaredTargets) return false;
+    return declaredTargets.some(dt => capabilityTargetMatches(dt, observedTarget));
+  }
+
+  /**
+   * Check whether a declared (type, target) has at least one matching observation.
+   * Mirrors capabilityTargetMatches but from the declared perspective:
+   *   a declared `user-uploads/*` is "observed" if any observation matches that glob.
    */
   function isObserved(declaredType: CapabilityType, declaredTarget: string): boolean {
-    if (declaredTarget !== '*') return observedMap.has(`${declaredType}:${declaredTarget}`);
-    return Array.from(observedMap.keys()).some(k => k.startsWith(`${declaredType}:`));
+    // For wildcard declarations: any observation of the same type suffices
+    if (declaredTarget === '*') {
+      return Array.from(observedMap.keys()).some(k => k.startsWith(`${declaredType}:`));
+    }
+    // For specific or glob declarations: check each observation
+    for (const [key, obs] of observedMap) {
+      if (obs.type !== declaredType) continue;
+      if (capabilityTargetMatches(declaredTarget, obs.target)) return true;
+      // Also handle the reverse: if the observed target is a sub-path of a glob declared target
+      if (key === `${declaredType}:${obs.target}` && capabilityTargetMatches(declaredTarget, obs.target)) return true;
+    }
+    return false;
   }
 
   // Detect undeclared usage (observed but not covered by any declared capability)
@@ -216,30 +251,32 @@ export async function detectCapabilityDrift(
         effectiveSeverity,               // decay+confidence adjusted — for alerting
         recencyWeight: observed.recencyWeight,
         confidence: observed.confidence,
-        evidence: [{
-          source: observed.sources[0],
+        evidence: observed.sources.length > 0 ? [{
+          source: observed.sources[0] as ObservationSource,
           timestamp: observed.lastSeen,
           metadata: { count: observed.count, sources: observed.sources },
-        }],
+        }] : [],
       });
     }
   }
 
   // Detect unused declarations (declared but not observed at runtime)
   // P2-A: tag observationReason to distinguish a data-coverage gap from a genuine "not seen"
-  for (const [, declared] of declaredMap) {
-    if (!isObserved(declared.type, declared.target)) {
-      drifts.push({
-        service,
-        driftType: 'unused_declaration',
-        capabilityType: declared.type,
-        capabilityTarget: declared.target,
-        severity: 'low', // Unused declarations are low severity
-        evidence: [],
-        observationReason: SOURCE_COVERED_CAPABILITIES.has(declared.type)
-          ? 'not_observed_in_window'
-          : 'source_coverage_gap',
-      });
+  for (const [declaredType, declaredTargets] of declaredByType) {
+    for (const declaredTarget of declaredTargets) {
+      if (!isObserved(declaredType, declaredTarget)) {
+        drifts.push({
+          service,
+          driftType: 'unused_declaration',
+          capabilityType: declaredType,
+          capabilityTarget: declaredTarget,
+          severity: 'low',
+          evidence: [],
+          observationReason: SOURCE_COVERED_CAPABILITIES.has(declaredType)
+            ? 'not_observed_in_window'
+            : 'source_coverage_gap',
+        });
+      }
     }
   }
 

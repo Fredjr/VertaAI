@@ -18,6 +18,8 @@ import databaseQueryLogRouter from './databaseQueryLog.js';
 import driftMonitorRouter from './driftMonitor.js';
 import setupRouter from './setup.js';
 import costExplorerRouter from './costExplorer.js';
+import servicesRouter from './services.js';
+import deploymentsRouter from './deployments.js';
 
 const router = Router();
 
@@ -35,6 +37,12 @@ router.use('/setup', setupRouter);
 // Mount Cost Explorer / Budget Alert webhook
 router.use('/cost-explorer', costExplorerRouter);
 
+// Mount service criticality registry (WorkspaceService CRUD)
+router.use('/services', servicesRouter);
+
+// Mount deployment event webhook (DeploymentEvent)
+router.use('/deployments', deploymentsRouter);
+
 // Health check for all runtime webhooks
 router.get('/health', (req, res) => {
   res.status(200).json({
@@ -46,6 +54,8 @@ router.get('/health', (req, res) => {
       databaseQueryLog: '/api/runtime/database-query-log',
       driftMonitor: '/api/runtime/drift-monitor',
       costExplorer: '/api/runtime/cost-explorer',
+      services: '/api/runtime/services/:workspaceId',
+      deployments: '/api/runtime/deployments',
       setup: {
         testConnection: '/api/runtime/setup/test-connection',
         status: '/api/runtime/setup/status/:workspaceId',

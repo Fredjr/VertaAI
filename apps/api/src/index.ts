@@ -1303,6 +1303,69 @@ app.post('/mcp', async (req: Request, res: Response) => {
         }
         return prisma.workspace.findMany({ select: { id: true, name: true } });
       },
+      checkCapabilityIntent: async (workspaceId, service, requestedCapabilities) => {
+        // Fetch the latest IntentArtifact for this service to get declared capabilities
+        const artifact = await prisma.intentArtifact.findFirst({
+          where: { workspaceId, service, status: { in: ['active', 'merged'] } },
+          orderBy: { createdAt: 'desc' },
+          select: { capabilities: true },
+        });
+
+        // Parse declared capabilities from the artifact (capabilities is a JSON array)
+        const declared: Array<{ type: string; target: string }> = [];
+        if (artifact?.capabilities) {
+          const caps = Array.isArray(artifact.capabilities) ? artifact.capabilities : [];
+          for (const c of caps as any[]) {
+            declared.push({ type: String(c.type ?? ''), target: String(c.target ?? c.resource ?? '*') });
+          }
+        }
+
+        // Build declared set for fast lookup
+        const declaredSet = new Set(declared.map(c => `${c.type}:${c.target}`));
+
+        // Check each requested capability against declared set (exact + wildcard)
+        const undeclaredRequested: Array<{ type: string; target: string; reason: string }> = [];
+        for (const req of requestedCapabilities) {
+          const reqTarget = req.target ?? '*';
+          // Exact match or wildcard declared covers any target
+          const isCovered = declaredSet.has(`${req.type}:${reqTarget}`)
+            || declaredSet.has(`${req.type}:*`)
+            || declared.some(d => d.type === req.type && (d.target === '*' || d.target === reqTarget));
+          if (!isCovered) {
+            undeclaredRequested.push({
+              type: req.type,
+              target: reqTarget,
+              reason: declared.length === 0
+                ? 'No IntentArtifact found — capability is implicitly undeclared'
+                : `Not found in current spec (${declared.filter(d => d.type === req.type).length} ${req.type} declaration(s) exist)`,
+            });
+          }
+        }
+
+        // Fetch active drift clusters for this service
+        const driftClusters = await prisma.driftCluster.findMany({
+          where: { workspaceId, service, status: 'pending' },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+          select: { id: true, severity: true, clusterSummary: true, createdAt: true, driftIds: true },
+        });
+
+        const activeDrifts = driftClusters.map(d => {
+          const summary = d.clusterSummary as any;
+          return {
+            id: d.id,
+            severity: d.severity,
+            materialityTier: summary?.materialityTier ?? 'unknown',
+            driftCount: d.driftIds?.length ?? 0,
+            createdAt: d.createdAt.toISOString(),
+          };
+        });
+
+        const hasCriticalDrift = activeDrifts.some(d => d.materialityTier === 'critical');
+        const allowed = undeclaredRequested.length === 0 && !hasCriticalDrift;
+
+        return { allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service };
+      },
       workspaceId: scopedWorkspaceId,
     });
 

@@ -41,6 +41,25 @@ import { z } from 'zod';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Result returned by the checkCapabilityIntent callback. */
+export interface CapabilityIntentCheckResult {
+  /** True only if all requested capabilities are declared and no critical drifts exist. */
+  allowed: boolean;
+  /** Requested capabilities that are NOT in the current IntentArtifact declaration. */
+  undeclaredRequested: Array<{ type: string; target: string; reason: string }>;
+  /** Active (pending) drift clusters for this service at time of check. */
+  activeDrifts: Array<{
+    id: string;
+    severity: string;
+    materialityTier: string;
+    driftCount: number;
+    createdAt: string;
+  }>;
+  /** Capabilities declared in the latest IntentArtifact for this service. */
+  declaredCapabilities: Array<{ type: string; target: string }>;
+  service: string;
+}
+
 export interface GovernanceMcpOpts {
   /**
    * Fetch the compact governance markdown for a workspace.
@@ -52,6 +71,16 @@ export interface GovernanceMcpOpts {
    * If the session has a fixed workspaceId, this should return only that workspace.
    */
   listWorkspaces: () => Promise<Array<{ id: string; name: string }>>;
+  /**
+   * Pre-flight capability check: given capabilities a developer intends to use,
+   * verify they are declared and no blocking drifts exist.
+   * Optional — tool is omitted from the server if not provided.
+   */
+  checkCapabilityIntent?: (
+    workspaceId: string,
+    service: string,
+    capabilities: Array<{ type: string; target?: string }>,
+  ) => Promise<CapabilityIntentCheckResult>;
   /**
    * Optional workspace this session is scoped to.
    * If set, notifications are filtered and the resource list is scoped to this workspace.
@@ -222,6 +251,98 @@ export function createGovernanceMcpServer(opts: GovernanceMcpOpts): McpServer {
       };
     },
   );
+
+  // ── Tool: check_capability_intent ────────────────────────────────────────
+  // Pre-flight governance check. Developer tells the AI which capabilities they
+  // intend to use; the tool verifies they are declared and no blocking drifts exist.
+  // Enables Track 0: prompt-time governance before code is written.
+  if (opts.checkCapabilityIntent) {
+    mcpServer.registerTool(
+      'check_capability_intent',
+      {
+        description:
+          'Pre-flight governance check: before writing code that uses a capability (e.g. s3_write, ' +
+          'iam_modify, db_write), verify it is declared in the current IntentArtifact and no blocking ' +
+          'drift clusters exist. Returns allowed/blocked status, any undeclared capabilities, and ' +
+          'active drift alerts. Call this before implementing any new infrastructure access.',
+        inputSchema: {
+          service: z.string().describe('The service name to check (e.g. "user-service", "payment-api").'),
+          capabilities: z.array(z.object({
+            type: z.string().describe(
+              'Capability type: db_read|db_write|db_admin|s3_read|s3_write|s3_delete|' +
+              'api_endpoint|iam_modify|infra_create|infra_modify|infra_delete|' +
+              'secret_read|secret_write|network_public|network_private|cost_increase|' +
+              'schema_modify|deployment_modify',
+            ),
+            target: z.string().optional().describe('Specific resource (e.g. "users_table", "s3://my-bucket/*"). Defaults to "*".'),
+          })).describe('The capabilities you intend to use.'),
+          workspaceId: z.string().optional().describe('Workspace ID. Defaults to the session workspace.'),
+        },
+      },
+      async ({ service, capabilities, workspaceId }) => {
+        const wsId = workspaceId ?? opts.workspaceId;
+        if (!wsId) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: '# Error\n\nNo workspace ID. Pass `workspaceId` or initialize the session with `?workspaceId=<id>`.',
+            }],
+          };
+        }
+        if (opts.workspaceId && opts.workspaceId !== wsId) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `# Access denied\n\nThis session is scoped to workspace \`${opts.workspaceId}\`.`,
+            }],
+          };
+        }
+
+        const result = await opts.checkCapabilityIntent!(wsId, service, capabilities);
+
+        const lines: string[] = [];
+        const statusIcon = result.allowed ? '✅' : '🚫';
+        lines.push(`# ${statusIcon} Capability Pre-Flight: \`${service}\``);
+        lines.push('');
+
+        if (result.allowed) {
+          lines.push('**All requested capabilities are declared and no blocking drifts exist. Safe to proceed.**');
+        } else {
+          lines.push('**One or more capabilities require governance action before proceeding.**');
+        }
+        lines.push('');
+
+        if (result.undeclaredRequested.length > 0) {
+          lines.push('## ⚠ Undeclared capabilities');
+          lines.push('These capabilities are NOT in the current IntentArtifact. Add them to the spec before shipping:');
+          for (const u of result.undeclaredRequested) {
+            lines.push(`- \`${u.type}:${u.target}\` — ${u.reason}`);
+          }
+          lines.push('');
+        }
+
+        if (result.activeDrifts.length > 0) {
+          lines.push('## 🔴 Active drift alerts');
+          for (const d of result.activeDrifts) {
+            lines.push(`- Cluster \`${d.id.slice(0, 8)}\` — severity: **${d.severity}**, materiality: ${d.materialityTier}, ${d.driftCount} drift(s) since ${d.createdAt.slice(0, 10)}`);
+          }
+          lines.push('');
+        }
+
+        if (result.declaredCapabilities.length > 0) {
+          lines.push('## ✅ Currently declared capabilities');
+          for (const c of result.declaredCapabilities) {
+            lines.push(`- \`${c.type}:${c.target}\``);
+          }
+        } else {
+          lines.push('## ℹ No capabilities declared yet');
+          lines.push('No IntentArtifact found for this service. All capabilities are undeclared by default.');
+        }
+
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+      },
+    );
+  }
 
   return mcpServer;
 }

@@ -272,6 +272,52 @@ async function detectDriftForService(
 
   // R7-FIX: Auto-close cluster when undeclared usage has fully resolved.
   const undeclaredUsage = drifts.filter(d => d.driftType === 'undeclared_usage');
+
+  // Baseline learning: upsert one RuntimeCapabilityBaseline record per undeclared capability.
+  // On each cycle we increment driftCount + update lastCheckedAt.
+  // After BASELINE_THRESHOLD_DAYS of continuous observation without a declaration,
+  // promote isBaseline = true — this suppresses the capability to `petty` materiality
+  // tier (stable legacy drift that predates VertaAI rollout or is accepted config drift).
+  if (undeclaredUsage.length > 0) {
+    const BASELINE_THRESHOLD_DAYS = 30;
+    const baselineThreshold = new Date();
+    baselineThreshold.setDate(baselineThreshold.getDate() - BASELINE_THRESHOLD_DAYS);
+
+    await Promise.all(undeclaredUsage.map(async d => {
+      await prisma.runtimeCapabilityBaseline.upsert({
+        where: {
+          workspaceId_service_capabilityType_capabilityTarget: {
+            workspaceId, service,
+            capabilityType: d.capabilityType,
+            capabilityTarget: d.capabilityTarget,
+          },
+        },
+        create: {
+          workspaceId, service,
+          capabilityType: d.capabilityType,
+          capabilityTarget: d.capabilityTarget,
+          firstSeenAt: d.observedAt ?? new Date(),
+          driftCount: 1,
+          isBaseline: false,
+        },
+        update: {
+          driftCount: { increment: 1 },
+          lastCheckedAt: new Date(),
+        },
+      });
+    }));
+
+    // Promote to baseline: capabilities that have been observed undeclared for >= 30 days.
+    await prisma.runtimeCapabilityBaseline.updateMany({
+      where: {
+        workspaceId, service,
+        isBaseline: false,
+        firstSeenAt: { lte: baselineThreshold },
+      },
+      data: { isBaseline: true, stableAsOf: new Date() },
+    });
+  }
+
   if (undeclaredUsage.length === 0) {
     const openCluster = await prisma.driftCluster.findFirst({
       where: {
@@ -536,6 +582,36 @@ async function createDriftPlanForRuntimeDrift(
       ? { changedFiles: agentTrace.filesModified as any[] ?? [] }
       : null;
 
+    // ── Phase 0a: Service criticality registry lookup ─────────────────────────
+    // Pull the workspace-defined materiality floor for this service (if any).
+    // A tier1 service with floor='operational' silently elevates petty drifts
+    // to operational so critical services never suppress alerts on weak signals.
+    const serviceRegistry = await prisma.workspaceService.findUnique({
+      where: { workspaceId_serviceName: { workspaceId, serviceName: service } },
+      select: { tier: true, materialityFloor: true, owningTeam: true },
+    });
+    const serviceMaterialityFloor = (serviceRegistry?.materialityFloor ?? 'petty') as MaterialityTier;
+    const serviceTier = serviceRegistry?.tier ?? null;
+
+    // ── Phase 0b: Latest deployment event lookup ───────────────────────────────
+    // Pull the most recent deployment for this service so we can surface
+    // "first seen after deploy X" in the cluster summary for operator context.
+    const latestDeployment = await prisma.deploymentEvent.findFirst({
+      where: { workspaceId, service },
+      orderBy: { deployedAt: 'desc' },
+      select: { deployedAt: true, version: true, deployedBy: true, source: true, environment: true },
+    });
+
+    // ── Phase 0c: Capability baseline set lookup ───────────────────────────────
+    // Baselined capabilities have been observed undeclared for >= 30 days.
+    // They are suppressed to `petty` materiality (unless critical type) to avoid
+    // alert fatigue from stable legacy drift that predates the VertaAI rollout.
+    const capabilityBaselines = await prisma.runtimeCapabilityBaseline.findMany({
+      where: { workspaceId, service, isBaseline: true },
+      select: { capabilityType: true, capabilityTarget: true },
+    });
+    const baselineSet = new Set(capabilityBaselines.map(b => `${b.capabilityType}:${b.capabilityTarget}`));
+
     // ── Phase 0: Materiality + Attribution pre-compute ────────────────────────
     // Classify each undeclared capability into critical / operational / petty.
     // We do this before building summaryPayload so the cluster-level tier is
@@ -550,7 +626,7 @@ async function createDriftPlanForRuntimeDrift(
         ? deriveAttributionNote(d.capability, d.target, buildContext)
         : undefined;
 
-      const matResult = classifyMateriality({
+      let matResult = classifyMateriality({
         capabilityType: d.capability,
         capabilityTarget: d.target,
         severity: d.severity as 'critical' | 'high' | 'medium' | 'low',
@@ -559,6 +635,19 @@ async function createDriftPlanForRuntimeDrift(
         attributionConfidence: attrConf,
         scopeDetails: d.scopeDetails,
       });
+      // Baseline suppression: if this capability is a known stable baseline
+      // (observed undeclared for >= 30 days) AND is not a critical type,
+      // floor it to petty — reduces noise from pre-rollout legacy drift.
+      const baselineKey = `${d.capability}:${d.target}`;
+      if (baselineSet.has(baselineKey) && !CRITICAL_CAPABILITIES.includes(d.capability)) {
+        matResult = {
+          ...matResult,
+          tier: 'petty',
+          suppressAlerts: true,
+          reason: 'Stable learned baseline — observed undeclared for ≥30 days; suppressed to petty to reduce legacy drift noise',
+        };
+      }
+
       materialityResultsList.push(matResult);
 
       return {
@@ -571,12 +660,21 @@ async function createDriftPlanForRuntimeDrift(
         // Phase 0: per-item materiality (drives UI badge + operator copy)
         materialityTier: matResult.tier,
         materialityReason: matResult.reason,
+        // Baseline flag: surface in UI so operator knows why this was suppressed
+        isBaselined: baselineSet.has(baselineKey),
       };
     });
 
     // Cluster-level tier: worst tier across all undeclared items.
     // One critical item makes the whole cluster critical.
-    const clusterMaterialityTier: MaterialityTier = computeClusterMaterialityTier(materialityResultsList);
+    let clusterMaterialityTier: MaterialityTier = computeClusterMaterialityTier(materialityResultsList);
+
+    // Apply service registry floor: if this service has materialityFloor='operational'
+    // and we computed 'petty', elevate to 'operational'. Never downgrade.
+    const FLOOR_ORDER: MaterialityTier[] = ['petty', 'operational', 'critical'];
+    if (FLOOR_ORDER.indexOf(serviceMaterialityFloor) > FLOOR_ORDER.indexOf(clusterMaterialityTier)) {
+      clusterMaterialityTier = serviceMaterialityFloor;
+    }
 
     // Build the summary object (used for both create and update)
     const summaryPayload = {
@@ -603,6 +701,16 @@ async function createDriftPlanForRuntimeDrift(
         promptProvided: !!(intentArtifact as any).promptText,
         claimSetProvided: !!(intentArtifact as any).claimSet,
       },
+      // Service registry context — tier and materiality floor from WorkspaceService table
+      serviceRegistry: serviceTier ? { tier: serviceTier, materialityFloor: serviceMaterialityFloor } : null,
+      // Latest deployment event — anchors "first observed after deploy X" attribution
+      latestDeployment: latestDeployment ? {
+        deployedAt: latestDeployment.deployedAt.toISOString(),
+        version: latestDeployment.version ?? null,
+        deployedBy: latestDeployment.deployedBy ?? null,
+        source: latestDeployment.source,
+        environment: latestDeployment.environment,
+      } : null,
       // P1-B: chain-of-custody
       specBuildViolated,
       gatePredictedCount: gateFlaggedTypes.size,

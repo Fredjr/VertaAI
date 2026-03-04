@@ -73,6 +73,9 @@ model Workspace {
   intentArtifacts                IntentArtifact[] // NEW: Agent Governance - Intent artifacts
   agentActionTraces              AgentActionTrace[] // NEW: Agent Governance - Agent action traces
   runtimeCapabilityObservations  RuntimeCapabilityObservation[] // NEW: Agent Governance - Runtime capability observations
+  workspaceServices              WorkspaceService[] // Service criticality registry
+  deploymentEvents               DeploymentEvent[] // Deployment event log
+  runtimeCapabilityBaselines     RuntimeCapabilityBaseline[] // Capability baseline learning
 
   @@map("workspaces")
 }
@@ -1399,6 +1402,99 @@ model RuntimeCapabilityObservation {
   @@index([workspaceId, observedAt(sort: Desc)])
   @@index([workspaceId, service, observedAt(sort: Desc)])
   @@map("runtime_capability_observations")
+}
+
+// Service Criticality Registry
+// Maps service names to business tiers so materiality is calibrated per service.
+// A `petty` drift on a tier1 (prod-critical) service is floor-elevated to `operational`.
+model WorkspaceService {
+  id          String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  serviceName String @map("service_name")
+
+  // Business criticality tier
+  // tier1 = production-critical (auth, payments, data pipelines)
+  // tier2 = customer-facing but not mission-critical
+  // tier3 = internal tooling
+  // internal = developer-only / staging
+  tier String @default("tier2") // "tier1" | "tier2" | "tier3" | "internal"
+
+  // Minimum materiality floor for ANY drift on this service.
+  // Petty drifts are silently elevated to this floor before alert routing.
+  // Default 'petty' = no floor (normal ATC rules apply).
+  materialityFloor String @default("petty") @map("materiality_floor") // "petty" | "operational" | "critical"
+
+  owningTeam String? @map("owning_team")  // Slack handle or team name for routing
+  notes      String? @db.Text             // Free-text description
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, serviceName])
+  @@index([workspaceId])
+  @@map("workspace_services")
+}
+
+// Deployment Event
+// Records when a service was deployed so drift detection can pinpoint which
+// deployment introduced a new capability observation.
+model DeploymentEvent {
+  id          String @id @default(uuid())
+  workspaceId String @map("workspace_id")
+  service     String
+
+  deployedAt  DateTime  @map("deployed_at")
+  version     String?                       // semver, git SHA, image tag, etc.
+  deployedBy  String?   @map("deployed_by") // username or CI bot
+  source      String    @default("manual")  // "github_actions" | "argocd" | "manual" | "helm" | "terraform"
+  environment String    @default("prod")    // "prod" | "staging" | "dev"
+  notes       String?   @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, service, deployedAt(sort: Desc)])
+  @@index([workspaceId, deployedAt(sort: Desc)])
+  @@map("deployment_events")
+}
+
+// Runtime Capability Baseline
+// Tracks capabilities that have been consistently observed for a long time
+// even though they were never formally declared.
+// Purpose: reduce false-positive noise for "legacy undeclared" capabilities
+// that predate the VertaAI rollout or are stable configuration drift.
+//
+// A capability enters the baseline when it has been continuously observed
+// for >= BASELINE_THRESHOLD_DAYS (default 30) without ever being declared.
+// Baselined capabilities are classified as `petty` instead of their normal tier.
+model RuntimeCapabilityBaseline {
+  id               String @id @default(uuid())
+  workspaceId      String @map("workspace_id")
+  service          String
+  capabilityType   String @map("capability_type")
+  capabilityTarget String @map("capability_target")
+
+  firstSeenAt  DateTime  @map("first_seen_at")   // When we first observed this capability
+  stableAsOf   DateTime? @map("stable_as_of")    // Set when first promoted to baseline (>= 30 days observed)
+  isBaseline   Boolean   @default(false) @map("is_baseline")
+
+  // How many drift cycles has this capability drifted and then been declared, then drifted again?
+  // High recurrence → escalate even if baseline (chronic drift signal)
+  driftCount   Int @default(0) @map("drift_count")
+
+  lastCheckedAt DateTime  @default(now()) @map("last_checked_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt      @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, service, capabilityType, capabilityTarget])
+  @@index([workspaceId, service])
+  @@index([workspaceId, isBaseline])
+  @@map("runtime_capability_baselines")
 }
 
 // ======================================================================
