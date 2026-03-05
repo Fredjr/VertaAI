@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 
 type Section = 'platform' | 'howitworks' | 'integrations' | 'security' | 'solutions';
 type Persona = 'tl' | 'em' | 'ciso';
@@ -9,6 +8,7 @@ type Persona = 'tl' | 'em' | 'ciso';
 export default function MarketingPage() {
   const [section, setSection] = useState<Section>('platform');
   const [persona, setPersona] = useState<Persona>('tl');
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <>
@@ -159,6 +159,11 @@ export default function MarketingPage() {
         .persona-tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 2rem; }
         .persona-tab { padding: 0.5rem 1.1rem; border-radius: 7px; font-size: 0.875rem; font-weight: 600; cursor: pointer; background: var(--surface); border: 1px solid var(--border); color: var(--muted); transition: all 0.15s; }
         .persona-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+        /* MOBILE HAMBURGER + MENU */
+        .mkt-hamburger { display: none; align-items: center; justify-content: center; width: 36px; height: 36px; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: 1.15rem; cursor: pointer; flex-shrink: 0; }
+        .mkt-mobile-menu { position: fixed; top: 60px; left: 0; right: 0; background: rgba(10,12,15,0.97); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border2); z-index: 99; padding: 0.5rem; display: flex; flex-direction: column; }
+        .mkt-mobile-menu button { text-align: left; padding: 0.85rem 1rem; border-radius: 8px; font-size: 0.95rem; font-weight: 500; color: var(--muted); background: none; border: none; cursor: pointer; transition: color 0.15s, background 0.15s; }
+        .mkt-mobile-menu button.active, .mkt-mobile-menu button:hover { color: var(--text); background: var(--surface2); }
         /* FOOTER */
         .mkt-footer { border-top: 1px solid var(--border); padding: 2.5rem 1.5rem; text-align: center; color: var(--muted); font-size: 0.85rem; }
         .mkt-footer a { color: var(--muted); text-decoration: none; }
@@ -198,6 +203,8 @@ export default function MarketingPage() {
         @media (max-width: 640px) {
           .mkt-nav { padding: 0 1rem; }
           .mkt-nav-links { display: none; }
+          .mkt-hamburger { display: flex; }
+          .stats-bar { display: none; }
           .hero { padding: 2rem 1rem 2rem; min-height: auto; padding-top: calc(60px + 2rem); }
           .hero-sub { gap: 0.4rem; }
           .track-pill { font-size: 0.62rem; padding: 0.15rem 0.55rem; }
@@ -232,8 +239,19 @@ export default function MarketingPage() {
               </li>
             ))}
           </ul>
-          <Link href="/policy-packs?workspace=demo-workspace" className="mkt-nav-cta">Open Dashboard →</Link>
+          <button className="mkt-hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Menu">
+            {menuOpen ? '✕' : '☰'}
+          </button>
         </nav>
+        {menuOpen && (
+          <div className="mkt-mobile-menu">
+            {(['platform','howitworks','integrations','security','solutions'] as Section[]).map(s => (
+              <button key={s} className={section === s ? 'active' : ''} onClick={() => { setSection(s); setMenuOpen(false); }}>
+                {{ platform:'Platform', howitworks:'How It Works', integrations:'Integrations', security:'Security', solutions:'Solutions' }[s]}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* ══════════════ PLATFORM ══════════════ */}
         {section === 'platform' && (
@@ -247,7 +265,7 @@ export default function MarketingPage() {
                 <span className="track-pill track-b">Track B · Runtime</span>
               </div>
               <h1>Stop runaway AI agents<br /><span className="gradient-text">before they ship.</span></h1>
-              <p className="lead hero-desc">VertaAI enforces your engineering policies at every stage of the AI coding workflow — before an agent writes code, at PR review, in production, and back in the editor. Four tracks. One closed loop. Five editors.</p>
+              <p className="lead hero-desc">Permission envelope before writing. Live alerts while coding. Policy gate at PR. Production audit after deploy. Four tracks. Five editors.</p>
               <div className="hero-actions">
                 <a href="mailto:hello@vertaai.io" className="btn-primary">Request Early Access</a>
                 <button className="btn-secondary" onClick={() => setSection('howitworks')}>See How It Works →</button>
