@@ -1320,12 +1320,13 @@ async function handlePushEvent(payload: any, workspaceId: string, res: Response)
     try {
       const integration = await prisma.integration.findFirst({
         where: { workspaceId, type: 'github' },
-        select: { accessToken: true, installationId: true },
+        select: { config: true },
       });
+      const accessToken = (integration?.config as any)?.accessToken as string | undefined;
 
-      if (integration?.accessToken) {
+      if (accessToken) {
         const [owner, repo] = repoFullName.split('/') as [string, string];
-        const octokit = new Octokit({ auth: integration.accessToken });
+        const octokit = new Octokit({ auth: accessToken });
 
         await octokit.rest.repos.createCommitStatus({
           owner, repo,
@@ -1368,11 +1369,12 @@ async function handlePushEvent(payload: any, workspaceId: string, res: Response)
       if (repoFullName && headSha) {
         const integration = await prisma.integration.findFirst({
           where: { workspaceId, type: 'github' },
-          select: { accessToken: true },
+          select: { config: true },
         });
-        if (integration?.accessToken) {
+        const accessToken2 = (integration?.config as any)?.accessToken as string | undefined;
+        if (accessToken2) {
           const [owner, repo] = repoFullName.split('/') as [string, string];
-          const octokit = new Octokit({ auth: integration.accessToken });
+          const octokit = new Octokit({ auth: accessToken2 });
           // Check if any critical drifts now exist
           const criticalDrift = await prisma.driftCluster.findFirst({
             where: { workspaceId, status: 'pending', materialityTier: 'critical' },

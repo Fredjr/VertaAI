@@ -81,6 +81,27 @@ router.get('/:workspaceId/setup-status', async (req: Request, res: Response) => 
       where: { workspaceId }
     });
 
+    // Check runtime observation sources — real-time data from past 7 days
+    // This powers the Runtime Observations (Advanced) section in the onboarding UI
+    const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const [cloudtrailObs, gcpObs, dbObs] = await Promise.all([
+      prisma.runtimeCapabilityObservation.findFirst({
+        where: { workspaceId, source: 'aws_cloudtrail', observedAt: { gte: since7d } },
+        orderBy: { observedAt: 'desc' },
+        select: { observedAt: true },
+      }),
+      prisma.runtimeCapabilityObservation.findFirst({
+        where: { workspaceId, source: 'gcp_audit_log', observedAt: { gte: since7d } },
+        orderBy: { observedAt: 'desc' },
+        select: { observedAt: true },
+      }),
+      prisma.runtimeCapabilityObservation.findFirst({
+        where: { workspaceId, source: 'db_query_log', observedAt: { gte: since7d } },
+        orderBy: { observedAt: 'desc' },
+        select: { observedAt: true },
+      }),
+    ]);
+
     return res.json({
       workspace: {
         id: workspace.id,
@@ -88,6 +109,20 @@ router.get('/:workspaceId/setup-status', async (req: Request, res: Response) => 
         slug: workspace.slug,
       },
       integrations,
+      runtimeObservations: {
+        cloudtrail: {
+          connected: cloudtrailObs !== null,
+          lastObservation: cloudtrailObs?.observedAt.toISOString() ?? undefined,
+        },
+        gcpAudit: {
+          connected: gcpObs !== null,
+          lastObservation: gcpObs?.observedAt.toISOString() ?? undefined,
+        },
+        databaseLogs: {
+          connected: dbObs !== null,
+          lastObservation: dbObs?.observedAt.toISOString() ?? undefined,
+        },
+      },
       progress: {
         connected: connectedCount,
         required: totalRequired,

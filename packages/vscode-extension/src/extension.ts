@@ -27,7 +27,9 @@
  * COMPATIBILITY:
  *   Claude Code: MCP resource + CLAUDE.md rules (Track 0 + Track 1)
  *   Augment:     MCP resource via augment settings (Track 1)
- *   Copilot/others: VSCode notification + inline diagnostics (Track 1)
+ *   Copilot:     VSCode Language Model Tool (vscode.lm.registerTool) + .github/copilot-instructions.md (Track 0)
+ *   Cursor:      .cursor/mcp.json (Track 0 via MCP)
+ *   VS Code MCP: .vscode/mcp.json (Track 0 via native MCP, VS Code 1.99+)
  */
 
 import * as vscode from 'vscode';
@@ -127,6 +129,27 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('vertaai.setup', runSetupWizard),
   );
 
+  // ── First-run detection ───────────────────────────────────────────────────
+  // If this is a new install (no workspaceId configured), prompt the developer
+  // to run Setup so they know the extension is active and needs configuration.
+  const cfg = vscode.workspace.getConfiguration('vertaai');
+  if (!cfg.get<string>('workspaceId')) {
+    // Only show once per VS Code session to avoid being annoying on every window open
+    const shownKey = 'vertaai.setupPromptShown';
+    if (!context.globalState.get<boolean>(shownKey)) {
+      context.globalState.update(shownKey, true);
+      vscode.window
+        .showInformationMessage(
+          '$(shield) VertaAI Governance is installed. Run setup to activate real-time drift alerts.',
+          'Run Setup Now',
+          'Later',
+        )
+        .then(action => {
+          if (action === 'Run Setup Now') vscode.commands.executeCommand('vertaai.setup');
+        });
+    }
+  }
+
   // ── Signal 1: GOVERNANCE.md file watcher ─────────────────────────────────
   const watcher = vscode.workspace.createFileSystemWatcher(GOVERNANCE_FILE_GLOB);
   watcher.onDidChange(uri => readGovernanceFile(uri));
@@ -166,6 +189,29 @@ export function activate(context: vscode.ExtensionContext): void {
       setStatusBar('idle');
     }
   });
+
+  // ── Track 0: VSCode Language Model Tool ──────────────────────────────────
+  // Registers check_capability_intent as a vscode.lm tool so Copilot (and any
+  // future LM-connected assistant in VS Code) can call it as a pre-flight check.
+  // The tool declaration in package.json contributes.languageModelTools makes VS Code
+  // surface it to the LM. The handler here executes it via the REST API.
+  if (vscode.lm && typeof vscode.lm.registerTool === 'function') {
+    context.subscriptions.push(
+      vscode.lm.registerTool<{ service: string; capabilities: Array<{ type: string; target?: string }> }>(
+        'vertaai_check_capability_intent',
+        {
+          invoke: async (options, _token) => {
+            const { service, capabilities } = options.input;
+            const resultText = await callCapabilityIntentCheckApi(service, capabilities);
+            return new vscode.LanguageModelToolResult([
+              new vscode.LanguageModelTextPart(resultText),
+            ]);
+          },
+        },
+      ),
+    );
+    console.log(`[${EXTENSION_NAME}] VSCode LM Tool registered — Track 0 active for Copilot`);
+  }
 
   // ── Signal 2: SSE stream (if configured) ─────────────────────────────────
   // Connect after a short delay to let the workspace fully initialize.
@@ -506,6 +552,29 @@ async function runSetupWizard(): Promise<void> {
     'Claude Code governance rules (.claude/CLAUDE.md)',
   );
 
+  // Track 0: Write .github/copilot-instructions.md — Copilot's equivalent of CLAUDE.md.
+  // GitHub Copilot reads this as workspace-level custom instructions for every chat session.
+  await writeConfigFile(
+    path.join('.github', 'copilot-instructions.md'),
+    buildCopilotInstructions(workspaceId, apiUrl),
+    'Copilot governance rules (.github/copilot-instructions.md)',
+  );
+
+  // Track 0: Write .cursor/mcp.json — Cursor MCP config.
+  // Cursor picks this up and exposes the VertaAI MCP server to the AI assistant.
+  await writeConfigFile(
+    path.join('.cursor', 'mcp.json'),
+    JSON.stringify({ mcpServers: { vertaai: { type: 'http', url: mcpUrl } } }, null, 2),
+    'Cursor MCP config (.cursor/mcp.json)',
+  );
+
+  // Track 0: Write .vscode/mcp.json — VS Code 1.99+ native MCP support.
+  await writeConfigFile(
+    path.join('.vscode', 'mcp.json'),
+    JSON.stringify({ servers: { vertaai: { type: 'http', url: mcpUrl } } }, null, 2),
+    'VS Code MCP config (.vscode/mcp.json)',
+  );
+
   // Connect SSE stream with the new config
   disconnectSseStream();
   setTimeout(() => connectSseStream(), 500);
@@ -514,7 +583,8 @@ async function runSetupWizard(): Promise<void> {
 
   vscode.window.showInformationMessage(
     `✅ VertaAI configured for "${workspaceId}". ` +
-    `Real-time drift alerts active. Restart Claude Code to pick up .claude/CLAUDE.md.`,
+    `Track 0 active for Claude Code, Copilot, Cursor, and Augment. ` +
+    `Real-time drift alerts active via SSE. Restart your AI assistants to pick up new configs.`,
   );
 }
 
@@ -571,6 +641,55 @@ function buildClaudeMd(workspaceId: string, apiUrl: string): string {
   ].join('\n');
 }
 
+/**
+ * Build the .github/copilot-instructions.md content — Copilot's equivalent of CLAUDE.md.
+ * GitHub Copilot reads this as workspace-level custom instructions for every chat session,
+ * making the governance pre-flight check automatic for Copilot users (Track 0).
+ * The VSCode LM Tool (registered above) handles the actual execution when Copilot calls it.
+ */
+function buildCopilotInstructions(workspaceId: string, apiUrl: string): string {
+  return [
+    '# VertaAI Governance — Active',
+    '',
+    'This workspace is governed by **VertaAI** runtime capability governance.',
+    `Workspace ID: \`${workspaceId}\``,
+    '',
+    '## MANDATORY pre-flight rule',
+    '',
+    'Before writing any code that uses the capabilities below, call the',
+    '`vertaai_check_capability_intent` tool to verify governance clearance.',
+    'If the tool returns **BLOCKED**, do not write the code — ask the developer to',
+    'declare the capability in the IntentArtifact first.',
+    '',
+    '| Capability | Triggered by |',
+    '|---|---|',
+    '| `db_write` | `prisma.*.create/update/delete/upsert`, INSERT/UPDATE/DELETE |',
+    '| `db_read` | `prisma.*.findMany/findFirst`, SELECT |',
+    '| `db_admin` | `prisma.$executeRaw`, CREATE/ALTER/DROP TABLE |',
+    '| `s3_write` | `s3.putObject`, `s3.upload`, `PutObjectCommand` |',
+    '| `s3_read` | `s3.getObject`, `GetObjectCommand` |',
+    '| `s3_delete` | `s3.deleteObject`, `DeleteObjectCommand` |',
+    '| `iam_modify` | `iam.createRole`, `iam.putRolePolicy`, `AttachRolePolicyCommand` |',
+    '| `secret_read` | `secretsManager.getSecretValue`, `ssm.getParameter` |',
+    '| `secret_write` | `secretsManager.putSecretValue`, `secretsManager.createSecret` |',
+    '| `api_endpoint` | New external HTTP endpoints, `fetch()`, `axios`, `http.request` |',
+    '| `infra_create` | CDK `new Stack()`, Terraform resources |',
+    '',
+    '## How to call the tool',
+    '',
+    '```json',
+    '{',
+    '  "service": "<service-name>",',
+    '  "capabilities": [{ "type": "s3_write", "target": "bucket-name/*" }]',
+    '}',
+    '```',
+    '',
+    '## Live governance',
+    `- Dashboard: ${apiUrl.replace('/api', '')}/governance?workspace=${workspaceId}`,
+    '- Local file: `.claude/GOVERNANCE.md` (updated seconds after production events)',
+  ].join('\n');
+}
+
 async function writeConfigFile(relPath: string, content: string, label: string): Promise<void> {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) return;
@@ -621,4 +740,77 @@ async function pollApiOnce(): Promise<void> {
   if (governanceFileFound) return;
   const content = await fetchApiContent();
   if (content) processGovernanceMarkdown(content, 'api');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Track 0: Capability intent check — called by VSCode LM Tool (Copilot, etc.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Calls POST /api/workspaces/:workspaceId/capability-intent-check and returns
+ * a markdown string suitable for returning to the calling LLM.
+ */
+async function callCapabilityIntentCheckApi(
+  service: string,
+  capabilities: Array<{ type: string; target?: string }>,
+): Promise<string> {
+  const config = vscode.workspace.getConfiguration('vertaai');
+  const workspaceId = config.get<string>('workspaceId');
+  const apiUrl = config.get<string>('apiUrl');
+
+  if (!workspaceId || !apiUrl) {
+    return '⚠️ VertaAI: Not configured. Run "VertaAI: Setup" to set workspace ID and API URL.';
+  }
+
+  try {
+    const url = `${apiUrl}/api/workspaces/${workspaceId}/capability-intent-check`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service, capabilities }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!response.ok) {
+      const err = await response.text().catch(() => response.statusText);
+      return `⚠️ VertaAI: Governance check failed (HTTP ${response.status}): ${err}`;
+    }
+
+    const data = await response.json() as {
+      allowed: boolean;
+      undeclaredRequested: Array<{ type: string; target?: string }>;
+      activeDrifts: number;
+      declaredCapabilities: Array<{ capabilityType: string; capabilityTarget: string }>;
+      service: string;
+    };
+
+    if (data.allowed) {
+      return [
+        `✅ **VertaAI: Governance check PASSED** for \`${data.service}\``,
+        '',
+        `All ${capabilities.length} requested ${capabilities.length === 1 ? 'capability is' : 'capabilities are'} declared in the IntentArtifact.`,
+        data.activeDrifts > 0
+          ? `\n⚠️ Note: ${data.activeDrifts} active drift ${data.activeDrifts === 1 ? 'cluster' : 'clusters'} exist for this service — review .claude/GOVERNANCE.md.`
+          : '\nNo active drift clusters. Safe to proceed.',
+      ].join('\n');
+    } else {
+      const undeclaredList = data.undeclaredRequested
+        .map(c => `- \`${c.type}${c.target && c.target !== '*' ? `:${c.target}` : ''}\``)
+        .join('\n');
+      return [
+        `🚫 **VertaAI: Governance check BLOCKED** for \`${data.service}\``,
+        '',
+        `**${data.undeclaredRequested.length} undeclared ${data.undeclaredRequested.length === 1 ? 'capability' : 'capabilities'}:**`,
+        undeclaredList,
+        '',
+        'Ask the developer to declare these capabilities in the IntentArtifact before proceeding.',
+        'Do not implement code that uses undeclared capabilities.',
+        data.activeDrifts > 0
+          ? `\n⚠️ ${data.activeDrifts} active drift ${data.activeDrifts === 1 ? 'cluster' : 'clusters'} also exist for this service.`
+          : '',
+      ].join('\n');
+    }
+  } catch (err: any) {
+    return `⚠️ VertaAI: Could not reach governance API — ${err.message}. Proceed with caution.`;
+  }
 }

@@ -677,6 +677,66 @@ app.get('/api/governance/events/:workspaceId', (req: Request, res: Response) => 
   });
 });
 
+// ── Track 0: REST capability intent check (VSCode LM Tool + REST clients) ────
+// Mirrors the MCP check_capability_intent tool but accessible via plain HTTP.
+// Called by the VSCode extension's vscode.lm.registerTool handler (Copilot) and
+// any other REST client that needs a pre-flight governance check.
+//
+// POST /api/workspaces/:id/capability-intent-check
+// Body: { service: string, capabilities: Array<{ type: string, target?: string }> }
+app.post('/api/workspaces/:id/capability-intent-check', async (req: Request, res: Response) => {
+  const workspaceId = req.params.id;
+  const { service, capabilities: requestedCapabilities } = req.body as {
+    service: string;
+    capabilities: Array<{ type: string; target?: string }>;
+  };
+
+  if (!service || !Array.isArray(requestedCapabilities)) {
+    return res.status(400).json({ success: false, error: 'service (string) and capabilities (array) are required' });
+  }
+
+  try {
+    // Fetch the most recent IntentArtifact that lists this service as an affected service
+    const artifact = await prisma.intentArtifact.findFirst({
+      where: { workspaceId, affectedServices: { has: service } },
+      orderBy: { createdAt: 'desc' },
+      select: { requestedCapabilities: true },
+    });
+
+    const declared: Array<{ capabilityType: string; capabilityTarget: string }> = [];
+    if (artifact?.requestedCapabilities) {
+      const caps = Array.isArray(artifact.requestedCapabilities) ? artifact.requestedCapabilities : [];
+      for (const c of caps as any[]) {
+        declared.push({
+          capabilityType: String(c.type ?? ''),
+          capabilityTarget: String(c.target ?? c.resource ?? '*'),
+        });
+      }
+    }
+
+    // Check each requested capability against declared set (exact + wildcard)
+    const undeclaredRequested: Array<{ type: string; target: string }> = [];
+    for (const reqCap of requestedCapabilities) {
+      const reqTarget = reqCap.target ?? '*';
+      const isCovered =
+        declared.some(d => d.capabilityType === reqCap.type && (d.capabilityTarget === '*' || d.capabilityTarget === reqTarget));
+      if (!isCovered) undeclaredRequested.push({ type: reqCap.type, target: reqTarget });
+    }
+
+    // Fetch active drift cluster count for this service
+    const activeDrifts = await prisma.driftCluster.count({
+      where: { workspaceId, service, status: 'pending' },
+    });
+
+    const allowed = undeclaredRequested.length === 0;
+
+    return res.json({ success: true, allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service });
+  } catch (err: any) {
+    console.error('[CapabilityIntentCheck] Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Create or update an integration for a workspace
 app.put('/api/workspaces/:id/integrations/:type', async (req: Request, res: Response) => {
   const workspaceId = req.params.id;
@@ -1336,17 +1396,17 @@ app.post('/mcp', async (req: Request, res: Response) => {
         return prisma.workspace.findMany({ select: { id: true, name: true } });
       },
       checkCapabilityIntent: async (workspaceId, service, requestedCapabilities) => {
-        // Fetch the latest IntentArtifact for this service to get declared capabilities
+        // Fetch the most recent IntentArtifact that lists this service as an affected service
         const artifact = await prisma.intentArtifact.findFirst({
-          where: { workspaceId, service, status: { in: ['active', 'merged'] } },
+          where: { workspaceId, affectedServices: { has: service } },
           orderBy: { createdAt: 'desc' },
-          select: { capabilities: true },
+          select: { requestedCapabilities: true },
         });
 
-        // Parse declared capabilities from the artifact (capabilities is a JSON array)
+        // Parse declared capabilities from the artifact
         const declared: Array<{ type: string; target: string }> = [];
-        if (artifact?.capabilities) {
-          const caps = Array.isArray(artifact.capabilities) ? artifact.capabilities : [];
+        if (artifact?.requestedCapabilities) {
+          const caps = Array.isArray(artifact.requestedCapabilities) ? artifact.requestedCapabilities : [];
           for (const c of caps as any[]) {
             declared.push({ type: String(c.type ?? ''), target: String(c.target ?? c.resource ?? '*') });
           }
@@ -1379,15 +1439,15 @@ app.post('/mcp', async (req: Request, res: Response) => {
           where: { workspaceId, service, status: 'pending' },
           orderBy: { createdAt: 'desc' },
           take: 10,
-          select: { id: true, severity: true, clusterSummary: true, createdAt: true, driftIds: true },
+          select: { id: true, materialityTier: true, clusterSummary: true, createdAt: true, driftIds: true },
         });
 
         const activeDrifts = driftClusters.map(d => {
           const summary = d.clusterSummary as any;
           return {
             id: d.id,
-            severity: d.severity,
-            materialityTier: summary?.materialityTier ?? 'unknown',
+            severity: summary?.severity ?? d.materialityTier ?? 'unknown',
+            materialityTier: d.materialityTier ?? summary?.materialityTier ?? 'unknown',
             driftCount: d.driftIds?.length ?? 0,
             createdAt: d.createdAt.toISOString(),
           };

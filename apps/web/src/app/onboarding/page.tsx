@@ -237,6 +237,9 @@ function OnboardingContent() {
           />
         </div>
 
+        {/* Editor Extension — Install VertaAI in the developer's code editor */}
+        <EditorExtensionSection workspaceId={workspaceId} apiUrl={API_URL} />
+
         {/* Runtime Observations (Advanced) */}
         <div className="mt-8 p-6 bg-purple-50 dark:bg-purple-950/30 rounded-xl border border-purple-200 dark:border-purple-800">
           <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
@@ -630,6 +633,102 @@ function ActiveWorkflowsSummary({ status }: { status: SetupStatus }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * EditorExtensionSection — marketplace install CTA on the onboarding page
+ */
+function EditorExtensionSection({ workspaceId, apiUrl }: { workspaceId: string | null; apiUrl: string }) {
+  const [copiedId, setCopiedId] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
+
+  const publicApiUrl = apiUrl.startsWith('http://localhost') ? 'https://api.vertaai.com' : apiUrl;
+
+  const copy = async (text: string, set: (v: boolean) => void) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      set(true);
+      setTimeout(() => set(false), 2000);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="mt-8 p-6 bg-indigo-50 dark:bg-indigo-950/30 rounded-xl border border-indigo-200 dark:border-indigo-800">
+      <h3 className="font-semibold text-lg mb-1 flex items-center gap-2">
+        <span>🧩</span> Install Editor Extension
+      </h3>
+      <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
+        Get real-time governance alerts in your code editor. Works with VS Code, Cursor, Windsurf, Gitpod, and any VS Code-compatible editor.
+      </p>
+
+      {/* Marketplace install buttons */}
+      <div className="flex flex-wrap gap-3 mb-6">
+        <a
+          href="https://marketplace.visualstudio.com/items?itemName=vertaai.vertaai-governance"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
+        >
+          Install — VS Code &amp; Cursor
+        </a>
+        <a
+          href="https://open-vsx.org/extension/vertaai/vertaai-governance"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition"
+        >
+          Install — Windsurf &amp; Gitpod
+        </a>
+      </div>
+
+      {/* Credentials for the setup wizard */}
+      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+        After installing, run <strong>VertaAI: Setup</strong> and enter these values:
+      </p>
+      <div className="space-y-2 mb-5">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500 w-24 shrink-0">API URL</span>
+          <code className="flex-1 px-3 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono overflow-x-auto">
+            {publicApiUrl}
+          </code>
+          <button
+            onClick={() => copy(publicApiUrl, setCopiedUrl)}
+            className={`px-3 py-1.5 rounded text-xs font-medium transition ${copiedUrl ? 'bg-green-600 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200'}`}
+          >
+            {copiedUrl ? '✓' : 'Copy'}
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500 w-24 shrink-0">Workspace ID</span>
+          <code className="flex-1 px-3 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono overflow-x-auto">
+            {workspaceId ?? '(not set)'}
+          </code>
+          <button
+            onClick={() => copy(workspaceId ?? '', setCopiedId)}
+            disabled={!workspaceId}
+            className={`px-3 py-1.5 rounded text-xs font-medium transition ${copiedId ? 'bg-green-600 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 disabled:opacity-40'}`}
+          >
+            {copiedId ? '✓' : 'Copy'}
+          </button>
+        </div>
+      </div>
+
+      {/* Manual install fallback */}
+      <details className="text-sm">
+        <summary className="cursor-pointer text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 select-none">
+          Manual install (download .vsix)
+        </summary>
+        <div className="mt-3 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg space-y-2 font-mono text-xs text-gray-700 dark:text-gray-300">
+          <p className="text-gray-500 font-sans"># Cursor</p>
+          <p>/Applications/Cursor.app/Contents/Resources/app/bin/code --install-extension vertaai-governance-*.vsix</p>
+          <p className="text-gray-500 font-sans mt-2"># Windsurf</p>
+          <p>/Applications/Windsurf.app/Contents/Resources/app/bin/windsurf --install-extension vertaai-governance-*.vsix</p>
+          <p className="text-gray-500 font-sans mt-2"># VS Code</p>
+          <p>code --install-extension vertaai-governance-*.vsix</p>
+        </div>
+      </details>
     </div>
   );
 }

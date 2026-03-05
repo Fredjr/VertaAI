@@ -1,15 +1,28 @@
 {
   "name": "vertaai-governance",
   "displayName": "VertaAI Governance",
-  "description": "Real-time AI capability drift alerts embedded in your code editor. Works with Claude Code, Augment, Copilot, and any VSCode AI assistant.",
+  "description": "Real-time AI capability drift alerts embedded in your code editor. Works with Claude Code, Augment, Copilot, Cursor, Windsurf, and any VS Code AI assistant.",
   "version": "0.1.0",
   "publisher": "vertaai",
-  "engines": {
-    "vscode": "^1.85.0"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vertaai/vertaai"
   },
-  "categories": ["Other"],
-  "keywords": ["ai", "governance", "drift", "security", "vertaai"],
+  "homepage": "https://vertaai.com",
+  "bugs": {
+    "url": "https://github.com/vertaai/vertaai/issues"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other", "Linters"],
+  "keywords": ["ai", "governance", "drift", "security", "vertaai", "copilot", "claude", "augment", "cursor"],
   "icon": "assets/icon.png",
+  "galleryBanner": {
+    "color": "#0F172A",
+    "theme": "dark"
+  },
   "activationEvents": ["onStartupFinished"],
   "main": "./dist/extension.js",
   "contributes": {
@@ -28,6 +41,43 @@
         "command": "vertaai.refresh",
         "title": "Refresh Governance Status",
         "category": "VertaAI"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "vertaai_check_capability_intent",
+        "displayName": "VertaAI: Check Capability Intent",
+        "modelDescription": "Pre-flight governance check. Before writing code that uses a capability (e.g. s3_write, iam_modify, db_write), call this tool to verify the capability is declared in the current IntentArtifact and no blocking drift clusters exist. Returns allowed/blocked status with specific undeclared capabilities and active drift alerts. Call this BEFORE implementing any new database access, cloud storage, IAM changes, secrets access, or infrastructure code.",
+        "icon": "assets/icon.png",
+        "tags": ["governance", "security", "drift", "capability"],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "service": {
+              "type": "string",
+              "description": "The service name to check (e.g. 'user-service', 'payment-api', 'data-pipeline')"
+            },
+            "capabilities": {
+              "type": "array",
+              "description": "The capabilities you intend to use",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "description": "Capability type: db_read|db_write|db_admin|s3_read|s3_write|s3_delete|api_endpoint|iam_modify|infra_create|infra_modify|infra_delete|secret_read|secret_write|network_public|network_private|cost_increase|schema_modify|deployment_modify"
+                  },
+                  "target": {
+                    "type": "string",
+                    "description": "Specific resource (e.g. 'users_table', 's3://my-bucket/*'). Defaults to '*'"
+                  }
+                },
+                "required": ["type"]
+              }
+            }
+          },
+          "required": ["service", "capabilities"]
+        }
       }
     ],
     "configuration": {
@@ -55,11 +105,12 @@
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --watch",
     "typecheck": "tsc --noEmit",
-    "package": "vsce package"
+    "package": "vsce package",
+    "install-local": "npm run build && vsce package && code --install-extension vertaai-governance-0.1.0.vsix"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^2.26.0",
     "esbuild": "^0.20.0",
     "typescript": "^5.4.0"

@@ -1,0 +1,98 @@
+name: Publish VS Code Extension
+
+# Triggers:
+# - Manually via workflow_dispatch (for releasing any version)
+# - On version tag push: git tag v0.2.0 && git push --tags
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 0.2.0). Leave empty to use package.json version.'
+        required: false
+  push:
+    tags:
+      - 'ext-v*'   # e.g. ext-v0.2.0
+
+jobs:
+  publish:
+    name: Build & Publish Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install extension dependencies
+        working-directory: packages/vscode-extension
+        run: npm install
+
+      - name: Set version (if provided via workflow_dispatch)
+        if: github.event.inputs.version != ''
+        working-directory: packages/vscode-extension
+        run: npm version ${{ github.event.inputs.version }} --no-git-tag-version
+
+      - name: Build extension
+        working-directory: packages/vscode-extension
+        run: npm run build
+
+      - name: Package extension (.vsix)
+        working-directory: packages/vscode-extension
+        run: npx @vscode/vsce package --no-dependencies
+
+      - name: Upload VSIX artifact (available for direct download)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vertaai-governance-vsix
+          path: packages/vscode-extension/*.vsix
+          retention-days: 90
+
+      # ── VS Code Marketplace ──────────────────────────────────────────────────
+      # Requires: VSCE_PAT secret (Personal Access Token from marketplace.visualstudio.com)
+      # Create at: https://marketplace.visualstudio.com/manage/publishers/vertaai
+      - name: Publish to VS Code Marketplace
+        working-directory: packages/vscode-extension
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx @vscode/vsce publish --no-dependencies --pat $VSCE_PAT
+        # Covers: VS Code, Cursor (uses VS Code Marketplace), GitHub Codespaces
+
+      # ── Open VSX Registry (Windsurf, Gitpod, Eclipse Theia, open-source forks) ──
+      # Requires: OVSX_PAT secret from https://open-vsx.org/user-settings/tokens
+      - name: Publish to Open VSX Registry
+        working-directory: packages/vscode-extension
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish *.vsix --pat $OVSX_PAT
+        # Covers: Windsurf, Gitpod, Theia, any non-Microsoft VS Code fork
+
+      # ── GitHub Release with VSIX attachment ──────────────────────────────────
+      # Users who can't use marketplaces can download and install manually:
+      # cursor --install-extension vertaai-governance-0.x.x.vsix
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/vscode-extension/*.vsix
+          body: |
+            ## VertaAI Governance Extension ${{ github.ref_name }}
+
+            ### Install from marketplace (recommended)
+            Search **"VertaAI Governance"** in your editor's Extensions panel.
+
+            ### Manual install (fallback)
+            Download the `.vsix` file below and run:
+            ```bash
+            # Cursor
+            /Applications/Cursor.app/Contents/Resources/app/bin/code --install-extension vertaai-governance-*.vsix
+
+            # Windsurf
+            /Applications/Windsurf.app/Contents/Resources/app/bin/windsurf --install-extension vertaai-governance-*.vsix
+
+            # VS Code
+            code --install-extension vertaai-governance-*.vsix
+            ```
+          generate_release_notes: true

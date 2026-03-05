@@ -1,0 +1,23 @@
+# Exclude everything by default, then include only what's needed
+**
+
+# Include the compiled output
+!dist/extension.js
+
+# Include assets
+!assets/
+!assets/**
+
+# Include metadata files
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+
+# Keep node_modules excluded (bundled via esbuild)
+node_modules
+src
+tsconfig.json
+*.vsix
+.vscode
+.cursor
