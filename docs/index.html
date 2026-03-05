@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VertaAI — AI Agent Governance for Engineering Teams</title>
+  <meta name="description" content="VertaAI enforces policy at every stage of the AI coding workflow — before an agent writes code, at PR review, and in production runtime. Purpose-built for engineering teams deploying AI coding agents at scale." />
+  <meta property="og:title" content="VertaAI — AI Agent Governance for Engineering Teams" />
+  <meta property="og:description" content="Policy-first AI coding governance. Block runaway agents before they ship. Works with Claude Code, Copilot, Cursor, Windsurf, and Augment." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://vertaai.io" />
+  <link rel="canonical" href="https://vertaai.io" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0a0c0f;
+      --surface:   #111318;
+      --surface2:  #181c24;
+      --border:    #1f2533;
+      --border2:   #2a3347;
+      --text:      #e8eaf0;
+      --muted:     #8090a8;
+      --accent:    #6366f1;   /* indigo */
+      --accent2:   #818cf8;
+      --amber:     #f59e0b;
+      --amber2:    #fcd34d;
+      --green:     #10b981;
+      --red:       #ef4444;
+      --blue:      #3b82f6;
+      --purple:    #a855f7;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 2rem;
+      height: 60px;
+      background: rgba(10,12,15,0.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .nav-logo span { color: var(--accent2); }
+
+    .nav-links {
+      display: flex; gap: 0.25rem; list-style: none;
+    }
+    .nav-links a {
+      display: block; padding: 0.4rem 0.75rem;
+      font-size: 0.875rem; color: var(--muted); text-decoration: none;
+      border-radius: 6px; transition: color 0.15s, background 0.15s;
+    }
+    .nav-links a:hover, .nav-links a.active { color: var(--text); background: var(--surface2); }
+
+    .nav-cta {
+      background: var(--accent); color: #fff;
+      padding: 0.4rem 1.1rem;
+      font-size: 0.875rem; font-weight: 600;
+      border: none; border-radius: 7px;
+      cursor: pointer; text-decoration: none;
+      transition: background 0.15s;
+    }
+    .nav-cta:hover { background: var(--accent2); }
+
+    /* ── PAGES ── */
+    .page { display: none; padding-top: 60px; min-height: 100vh; }
+    .page.active { display: block; }
+
+    /* ── SECTIONS ── */
+    section { padding: 5rem 1.5rem; max-width: 1100px; margin: 0 auto; }
+
+    h1 { font-size: clamp(2.2rem, 5vw, 3.6rem); font-weight: 800; letter-spacing: -0.03em; line-height: 1.1; }
+    h2 { font-size: clamp(1.6rem, 3vw, 2.2rem); font-weight: 700; letter-spacing: -0.02em; }
+    h3 { font-size: 1.1rem; font-weight: 600; }
+
+    .label {
+      display: inline-block;
+      font-size: 0.7rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--accent2); background: rgba(99,102,241,0.12);
+      padding: 0.2rem 0.6rem; border-radius: 4px; margin-bottom: 1rem;
+    }
+
+    .gradient-text {
+      background: linear-gradient(135deg, #818cf8 0%, #a78bfa 50%, #6ee7b7 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .muted { color: var(--muted); }
+    .lead { font-size: 1.15rem; color: var(--muted); max-width: 640px; line-height: 1.7; }
+
+    /* ── GRID HELPERS ── */
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem; }
+
+    /* ── CARDS ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+    .card:hover { border-color: var(--border2); }
+
+    .card-icon {
+      width: 40px; height: 40px;
+      background: var(--surface2);
+      border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.3rem;
+      margin-bottom: 1rem;
+    }
+
+    /* ── TERMINAL ── */
+    .terminal {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 0.82rem;
+    }
+    .terminal-bar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 0.6rem 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .terminal-dot {
+      width: 11px; height: 11px; border-radius: 50%;
+    }
+    .terminal-body { padding: 1.25rem; line-height: 1.7; }
+    .t-prompt { color: var(--green); }
+    .t-cmd    { color: var(--text); }
+    .t-out    { color: var(--muted); }
+    .t-ok     { color: var(--green); }
+    .t-warn   { color: var(--amber); }
+    .t-block  { color: var(--red); }
+    .t-dim    { color: #4a5568; }
+
+    /* ── BADGE ── */
+    .badge {
+      display: inline-block; font-size: 0.72rem; font-weight: 600;
+      padding: 0.15rem 0.55rem; border-radius: 20px;
+    }
+    .badge-green  { background: rgba(16,185,129,0.12); color: var(--green); }
+    .badge-amber  { background: rgba(245,158,11,0.12);  color: var(--amber); }
+    .badge-red    { background: rgba(239,68,68,0.12);   color: var(--red);  }
+    .badge-blue   { background: rgba(59,130,246,0.12);  color: var(--blue); }
+    .badge-purple { background: rgba(168,85,247,0.12);  color: var(--purple); }
+
+    /* ── TRACK PILLS ── */
+    .track-0  { background: rgba(168,85,247,0.15); color: #c4b5fd; border: 1px solid rgba(168,85,247,0.3); }
+    .track-a  { background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); }
+    .track-b  { background: rgba(16,185,129,0.15); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.3); }
+    .track-pill { display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; padding: 0.2rem 0.7rem; border-radius: 20px; }
+
+    /* ── HERO SECTION ── */
+    .hero {
+      min-height: calc(100vh - 60px);
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 4rem 1.5rem 3rem;
+      max-width: 1100px; margin: 0 auto;
+    }
+
+    .hero-sub {
+      display: flex; align-items: center; gap: 0.75rem;
+      margin-bottom: 1.75rem;
+      flex-wrap: wrap;
+    }
+
+    .hero-desc { margin: 1.5rem 0 2rem; }
+
+    .hero-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+
+    .btn-primary {
+      background: var(--accent); color: #fff;
+      padding: 0.7rem 1.4rem; font-size: 0.95rem; font-weight: 600;
+      border: none; border-radius: 8px; cursor: pointer;
+      text-decoration: none; display: inline-block;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: var(--accent2); }
+
+    .btn-secondary {
+      background: var(--surface); color: var(--text);
+      padding: 0.7rem 1.4rem; font-size: 0.95rem; font-weight: 600;
+      border: 1px solid var(--border2); border-radius: 8px; cursor: pointer;
+      text-decoration: none; display: inline-block;
+      transition: border-color 0.15s;
+    }
+    .btn-secondary:hover { border-color: var(--accent); }
+
+    /* ── EDITOR STRIP ── */
+    .editor-strip {
+      display: flex; gap: 0.5rem; flex-wrap: wrap;
+      margin: 1.5rem 0 0;
+    }
+    .editor-chip {
+      display: flex; align-items: center; gap: 0.4rem;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 0.35rem 0.75rem; border-radius: 20px;
+      font-size: 0.8rem; color: var(--muted);
+    }
+    .editor-chip span { font-size: 1rem; }
+
+    /* ── STAT BAR ── */
+    .stats-bar {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden;
+      margin-top: 4rem;
+    }
+    .stat {
+      background: var(--surface);
+      padding: 1.5rem;
+      text-align: center;
+    }
+    .stat-num { font-size: 2rem; font-weight: 800; color: var(--accent2); letter-spacing: -0.04em; }
+    .stat-label { font-size: 0.8rem; color: var(--muted); margin-top: 0.2rem; }
+
+    /* ── TRACK OVERVIEW CARDS ── */
+    .track-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 2rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .track-card::before {
+      content: ''; position: absolute;
+      top: 0; left: 0; right: 0; height: 3px;
+    }
+    .track-card.t0::before { background: linear-gradient(90deg, #a855f7, #7c3aed); }
+    .track-card.ta::before { background: linear-gradient(90deg, #6366f1, #4f46e5); }
+    .track-card.tb::before { background: linear-gradient(90deg, #10b981, #059669); }
+
+    .track-title { font-size: 1.1rem; font-weight: 700; margin: 0.75rem 0 0.5rem; }
+    .track-desc  { font-size: 0.9rem; color: var(--muted); line-height: 1.6; }
+    .track-bullets {
+      list-style: none; margin-top: 1rem;
+    }
+    .track-bullets li {
+      font-size: 0.85rem; color: var(--muted);
+      padding: 0.2rem 0;
+      display: flex; align-items: flex-start; gap: 0.5rem;
+    }
+    .track-bullets li::before { content: '→'; color: var(--accent2); flex-shrink: 0; }
+
+    /* ── HOW IT WORKS TIMELINE ── */
+    .timeline { position: relative; }
+    .timeline-item {
+      display: grid; grid-template-columns: 48px 1fr;
+      gap: 1.25rem; margin-bottom: 2.5rem;
+    }
+    .timeline-number {
+      width: 48px; height: 48px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.1rem; font-weight: 800;
+      flex-shrink: 0;
+    }
+    .tn-0 { background: rgba(168,85,247,0.2); color: #c4b5fd; }
+    .tn-a { background: rgba(99,102,241,0.2); color: #a5b4fc; }
+    .tn-b { background: rgba(16,185,129,0.2); color: #6ee7b7; }
+
+    .timeline-content { padding-top: 0.6rem; }
+    .timeline-content h3 { font-size: 1.1rem; margin-bottom: 0.35rem; }
+    .timeline-content p  { color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem; }
+
+    /* ── PERMISSION GRID ── */
+    .perm-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0.75rem; margin-top: 1.5rem;
+    }
+    .perm-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 0.9rem 1rem;
+    }
+    .perm-card .perm-cap {
+      font-family: 'SF Mono', monospace; font-size: 0.78rem;
+      color: var(--text); margin-bottom: 0.35rem;
+    }
+    .perm-card .perm-level { font-size: 0.72rem; }
+
+    /* ── INTEGRATION ICONS ── */
+    .int-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 1rem; margin-top: 2rem;
+    }
+    .int-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 1.25rem;
+      display: flex; flex-direction: column; gap: 0.5rem;
+    }
+    .int-icon { font-size: 1.8rem; }
+    .int-name { font-weight: 600; font-size: 0.9rem; }
+    .int-desc { font-size: 0.8rem; color: var(--muted); }
+
+    /* ── AUDIT TRAIL ── */
+    .audit-row {
+      display: flex; gap: 1rem; align-items: flex-start;
+      padding: 0.9rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    .audit-row:last-child { border-bottom: none; }
+    .audit-time { color: var(--muted); font-family: monospace; white-space: nowrap; min-width: 130px; }
+    .audit-msg  { color: var(--text); flex: 1; }
+
+    /* ── PERSONA TABS ── */
+    .persona-tabs {
+      display: flex; gap: 0.5rem; flex-wrap: wrap;
+      margin-bottom: 2rem;
+    }
+    .persona-tab {
+      padding: 0.5rem 1.1rem; border-radius: 7px;
+      font-size: 0.875rem; font-weight: 600; cursor: pointer;
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--muted); transition: all 0.15s;
+    }
+    .persona-tab.active {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+    }
+    .persona-content { display: none; }
+    .persona-content.active { display: block; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--text); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 640px) {
+      nav { padding: 0 1rem; }
+      .nav-links { display: none; }
+      section { padding: 3rem 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════ NAV ═══════════════════════════════════ -->
+<nav>
+  <a class="nav-logo" href="#" onclick="showPage('platform')">Verta<span>AI</span></a>
+  <ul class="nav-links">
+    <li><a href="#" onclick="showPage('platform')"   id="nav-platform"   class="active">Platform</a></li>
+    <li><a href="#" onclick="showPage('howitworks')" id="nav-howitworks">How It Works</a></li>
+    <li><a href="#" onclick="showPage('integrations')" id="nav-integrations">Integrations</a></li>
+    <li><a href="#" onclick="showPage('security')"   id="nav-security">Security</a></li>
+    <li><a href="#" onclick="showPage('solutions')"  id="nav-solutions">Solutions</a></li>
+  </ul>
+  <a class="nav-cta" href="mailto:hello@vertaai.io">Get Early Access</a>
+</nav>
+
+
+<!-- ═══════════════════════════════════ PAGE: PLATFORM ═══════════════════════════════════ -->
+<div id="page-platform" class="page active">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-sub">
+      <span class="label">AI Agent Governance</span>
+      <span class="track-pill track-0">Track 0 · Pre-flight</span>
+      <span class="track-pill track-a">Track A · PR Gate</span>
+      <span class="track-pill track-b">Track B · Runtime</span>
+    </div>
+
+    <h1>Stop runaway AI agents<br><span class="gradient-text">before they ship.</span></h1>
+
+    <p class="lead hero-desc">
+      VertaAI enforces your engineering policies at every stage of the AI coding workflow — before an agent writes code, at PR review, and in production. One platform. Five editors. Full audit trail.
+    </p>
+
+    <div class="hero-actions">
+      <a href="mailto:hello@vertaai.io" class="btn-primary">Request Early Access</a>
+      <a href="#" onclick="showPage('howitworks')" class="btn-secondary">See How It Works →</a>
+    </div>
+
+    <div class="editor-strip">
+      <span class="muted" style="font-size:0.8rem; align-self:center;">Works with:</span>
+      <div class="editor-chip"><span>🤖</span> Claude Code</div>
+      <div class="editor-chip"><span>🐙</span> GitHub Copilot</div>
+      <div class="editor-chip"><span>⚡</span> Cursor</div>
+      <div class="editor-chip"><span>🌊</span> Windsurf</div>
+      <div class="editor-chip"><span>🔮</span> Augment</div>
+    </div>
+
+    <div class="stats-bar">
+      <div class="stat"><div class="stat-num">12</div><div class="stat-label">Capability types governed</div></div>
+      <div class="stat"><div class="stat-num">5</div><div class="stat-label">AI coding editors supported</div></div>
+      <div class="stat"><div class="stat-num">3</div><div class="stat-label">Enforcement layers</div></div>
+      <div class="stat"><div class="stat-num">60s</div><div class="stat-label">Permission cache TTL</div></div>
+    </div>
+  </div>
+
+  <!-- PROBLEM -->
+  <section>
+    <div class="label">The Problem</div>
+    <h2>Your AI agents have no idea what your policies say.</h2>
+    <p class="lead" style="margin-top: 1rem; margin-bottom: 3rem;">
+      GitHub Copilot, Cursor, Claude Code, Windsurf — each one operates in isolation. They don't know your IAM policy. They don't know which services are off-limits. They can't see your security runbook. And when they write code that creates an S3 bucket, modifies a schema, or calls a cloud API, there's no gate stopping them.
+    </p>
+
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-icon">🔑</div>
+        <h3>Capability Sprawl</h3>
+        <p style="font-size:0.875rem; color:var(--muted); margin-top:0.5rem;">Agents request IAM roles, write secrets, and modify infrastructure without any pre-flight check against your policy.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🕵️</div>
+        <h3>Zero Provenance</h3>
+        <p style="font-size:0.875rem; color:var(--muted); margin-top:0.5rem;">When an incident hits, you have no way to trace which AI agent wrote the code, under what context, or with what declared intent.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📊</div>
+        <h3>Drift Blindness</h3>
+        <p style="font-size:0.875rem; color:var(--muted); margin-top:0.5rem;">What agents declare they need and what they actually call in production are two different things — and no one is watching the gap.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- THREE TRACKS -->
+  <section>
+    <div class="label">The VertaAI Platform</div>
+    <h2>Three tracks. One source of truth.</h2>
+    <p class="lead" style="margin-top: 1rem; margin-bottom: 2.5rem;">
+      VertaAI intercepts the AI coding workflow at three distinct moments — giving your team control without slowing developers down.
+    </p>
+
+    <div class="grid-3">
+      <div class="track-card t0">
+        <span class="track-pill track-0">Track 0</span>
+        <div class="track-title">Pre-flight Permission Envelope</div>
+        <div class="track-desc">Before any code is written, the agent receives a permission envelope compiled from your active Policy Packs. Blocked capabilities are off the table from keystroke one.</div>
+        <ul class="track-bullets">
+          <li>Compiled from workspace Policy Packs</li>
+          <li>Injected into every editor's config files</li>
+          <li>5 blocked + 7 declaration-required capabilities</li>
+          <li>Session budgets (max files, max abstractions)</li>
+        </ul>
+      </div>
+
+      <div class="track-card ta">
+        <span class="track-pill track-a">Track A</span>
+        <div class="track-title">YAML Policy Gate at PR Review</div>
+        <div class="track-desc">At pull request time, VertaAI runs 5 automated comparators against the PR context, declared intent, and policy packs. Results post as a GitHub Check.</div>
+        <ul class="track-bullets">
+          <li>Intent ↔ capability parity check</li>
+          <li>Duplicate abstraction risk scoring</li>
+          <li>Churn + complexity threshold enforcement</li>
+          <li>Over-permissioned import detection</li>
+        </ul>
+      </div>
+
+      <div class="track-card tb">
+        <span class="track-pill track-b">Track B</span>
+        <div class="track-title">Runtime Drift Detection</div>
+        <div class="track-desc">In production, VertaAI continuously monitors CloudTrail, GCP Audit Logs, and DB query logs for capability usage that was never declared in the intent artifact.</div>
+        <ul class="track-bullets">
+          <li>AWS CloudTrail + GCP Audit Log ingestion</li>
+          <li>Decay-weighted severity scoring</li>
+          <li>PagerDuty + Slack alerting</li>
+          <li>Auto-close when drift resolves</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>© 2026 VertaAI &nbsp;·&nbsp; <a href="mailto:hello@vertaai.io">hello@vertaai.io</a> &nbsp;·&nbsp; <a href="https://github.com/vertaai" target="_blank">GitHub</a></p>
+  </footer>
+</div>
+
+
+<!-- ═══════════════════════════════════ PAGE: HOW IT WORKS ═══════════════════════════════════ -->
+<div id="page-howitworks" class="page">
+
+  <section>
+    <div class="label">How It Works</div>
+    <h2>From intent declaration to runtime audit — in three enforced steps.</h2>
+    <p class="lead" style="margin-top:1rem; margin-bottom:3rem;">
+      Every AI-generated code change flows through the VertaAI governance pipeline. Here's what happens at each stage.
+    </p>
+
+    <div class="timeline">
+
+      <!-- TRACK 0 -->
+      <div class="timeline-item">
+        <div class="timeline-number tn-0">0</div>
+        <div class="timeline-content">
+          <span class="track-pill track-0" style="margin-bottom:0.5rem; display:inline-block;">Track 0 · Pre-flight</span>
+          <h3>Permission envelope compiled and injected</h3>
+          <p>Before a developer opens their editor, VertaAI compiles a permission envelope from all active Policy Packs in the workspace. The envelope is delivered to Claude Code (via CLAUDE.md), GitHub Copilot (via copilot-instructions.md), Cursor (via .cursor/rules/vertaai-permissions.mdc), Windsurf (via .windsurfrules), and Augment (via .augment/settings.json) — automatically, on setup and on every policy change.</p>
+
+          <div class="terminal">
+            <div class="terminal-bar">
+              <div class="terminal-dot" style="background:#ff5f57"></div>
+              <div class="terminal-dot" style="background:#febc2e"></div>
+              <div class="terminal-dot" style="background:#28c840"></div>
+              <span style="color:var(--muted); font-size:0.78rem; margin-left:0.5rem;">.cursor/rules/vertaai-permissions.mdc</span>
+            </div>
+            <div class="terminal-body">
+<span class="t-dim">---</span>
+<span class="t-dim">alwaysApply: true</span>
+<span class="t-dim">---</span>
+<span class="t-dim"># VertaAI Agent Permission Envelope</span>
+<span class="t-dim"># Compiled from workspace policy packs · Auto-updated</span>
+<span class="t-out"> </span>
+<span class="t-block">🚫 BLOCKED (do not generate code using these capabilities):</span>
+<span class="t-block">   iam_modify · secret_write · db_admin · infra_delete · deployment_modify</span>
+<span class="t-out"> </span>
+<span class="t-warn">⚠️  DECLARE BEFORE USE (add to intent artifact):</span>
+<span class="t-warn">   s3_delete · s3_write · schema_modify · network_public</span>
+<span class="t-warn">   infra_create · infra_modify · secret_read</span>
+<span class="t-out"> </span>
+<span class="t-ok">📋 SESSION BUDGETS:</span>
+<span class="t-ok">   Max files changed per session: 20</span>
+<span class="t-ok">   Max new abstractions per session: 3</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRACK A -->
+      <div class="timeline-item">
+        <div class="timeline-number tn-a">A</div>
+        <div class="timeline-content">
+          <span class="track-pill track-a" style="margin-bottom:0.5rem; display:inline-block;">Track A · PR Gate</span>
+          <h3>YAML policy evaluated at pull request time</h3>
+          <p>When a PR is opened, VertaAI's policy evaluator runs five comparators against the code changes, the declared intent artifact, and your active Policy Packs. Results post as a GitHub Check that can block merge.</p>
+
+          <div class="terminal">
+            <div class="terminal-bar">
+              <div class="terminal-dot" style="background:#ff5f57"></div>
+              <div class="terminal-dot" style="background:#febc2e"></div>
+              <div class="terminal-dot" style="background:#28c840"></div>
+              <span style="color:var(--muted); font-size:0.78rem; margin-left:0.5rem;">GitHub Check · VertaAI Policy Gate</span>
+            </div>
+            <div class="terminal-body">
+<span class="t-ok">✓ INTENT_CAPABILITY_PARITY</span>
+<span class="t-out">  Declared: [s3_write, schema_modify]</span>
+<span class="t-out">  Detected: [s3_write, schema_modify]</span>
+<span class="t-out">  Undeclared: none · PASS</span>
+<span class="t-out"> </span>
+<span class="t-ok">✓ CHURN_COMPLEXITY_RISK</span>
+<span class="t-out">  Lines changed: 847  Complexity delta: +12</span>
+<span class="t-out">  Threshold (pack: security-baseline): 1200 / +25 · PASS</span>
+<span class="t-out"> </span>
+<span class="t-warn">⚠ DUPLICATE_ABSTRACTION_RISK</span>
+<span class="t-out">  Similarity score: 0.78 with UserAuthService.ts</span>
+<span class="t-out">  Risk: medium · flagged for review (non-blocking)</span>
+<span class="t-out"> </span>
+<span class="t-ok">✓ OVERPERMISSIONED_IMPORT  ✓ INFRA_OWNERSHIP_PARITY</span>
+<span class="t-out"> </span>
+<span class="t-ok">Result: PASS  ·  Merge allowed</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRACK B -->
+      <div class="timeline-item">
+        <div class="timeline-number tn-b">B</div>
+        <div class="timeline-content">
+          <span class="track-pill track-b" style="margin-bottom:0.5rem; display:inline-block;">Track B · Runtime</span>
+          <h3>Continuous capability drift detection in production</h3>
+          <p>Post-deploy, VertaAI ingests AWS CloudTrail events, GCP Audit Logs, and database query logs. Any capability usage that wasn't declared in the intent artifact surfaces as a DriftCluster with decay-weighted severity scoring.</p>
+
+          <div class="terminal">
+            <div class="terminal-bar">
+              <div class="terminal-dot" style="background:#ff5f57"></div>
+              <div class="terminal-dot" style="background:#febc2e"></div>
+              <div class="terminal-dot" style="background:#28c840"></div>
+              <span style="color:var(--muted); font-size:0.78rem; margin-left:0.5rem;">Runtime drift monitor · user-service</span>
+            </div>
+            <div class="terminal-body">
+<span class="t-block">🚨 DRIFT DETECTED · user-service</span>
+<span class="t-out">  Capability:   iam_modify</span>
+<span class="t-out">  Source:       AWS CloudTrail (confidence: 0.95)</span>
+<span class="t-out">  First seen:   2026-03-05T14:22:11Z (3 hours ago)</span>
+<span class="t-out">  Occurrences:  47 events across 2 services</span>
+<span class="t-out"> </span>
+<span class="t-warn">  Base severity:      CRITICAL</span>
+<span class="t-warn">  Recency weight:     1.0  (≤24h)</span>
+<span class="t-warn">  Source confidence:  0.95 (cloudtrail)</span>
+<span class="t-warn">  Effective severity: CRITICAL</span>
+<span class="t-out"> </span>
+<span class="t-out">  Remediation A: Remove IAM policy attachment from role</span>
+<span class="t-out">  Remediation B: Restrict via permission boundary</span>
+<span class="t-out">  Remediation C: Declare in intent artifact and get approval</span>
+<span class="t-out"> </span>
+<span class="t-out">  Correlation: shared iam_modify across [user-service, auth-service]</span>
+<span class="t-out">  PagerDuty incident: PD-291847 · Slack: #ai-governance</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- CODELENS -->
+    <div style="margin-top:4rem;">
+      <div class="label">Provenance Debugging</div>
+      <h2>Trace every line back to the agent that wrote it.</h2>
+      <p class="lead" style="margin-top:1rem; margin-bottom:1.5rem;">
+        VertaAI's VSCode/Cursor CodeLens shows the AI author, PR number, and governance quality score inline — right above the function. When an incident hits, you know exactly who (or what) wrote the code.
+      </p>
+
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="terminal-dot" style="background:#ff5f57"></div>
+          <div class="terminal-dot" style="background:#febc2e"></div>
+          <div class="terminal-dot" style="background:#28c840"></div>
+          <span style="color:var(--muted); font-size:0.78rem; margin-left:0.5rem;">userService.ts — CodeLens (VertaAI)</span>
+        </div>
+        <div class="terminal-body">
+<span class="t-ok" style="font-size:0.78rem;">🤖 agent · PR #142 | Quality: 84/100  [view governance report]</span>
+<span class="t-out">export async function createUser(data: CreateUserInput) {</span>
+<span class="t-out">  const user = await db.user.create({ data });</span>
+<span class="t-out">  await mailer.sendWelcome(user.email);</span>
+<span class="t-out">  return user;</span>
+<span class="t-out">}</span>
+        </div>
+      </div>
+
+      <p style="font-size:0.85rem; color:var(--muted); margin-top:1rem;">Quality score is a 0–100 composite of 5 governance dimensions: abstraction safety, test coverage intent, churn risk, import hygiene, and capability declaration accuracy.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>© 2026 VertaAI &nbsp;·&nbsp; <a href="mailto:hello@vertaai.io">hello@vertaai.io</a></p>
+  </footer>
+</div>
+
+
+<!-- ═══════════════════════════════════ PAGE: INTEGRATIONS ═══════════════════════════════════ -->
+<div id="page-integrations" class="page">
+
+  <section>
+    <div class="label">Integrations</div>
+    <h2>Every editor. Every cloud. Every alert channel.</h2>
+    <p class="lead" style="margin-top:1rem; margin-bottom:2.5rem;">
+      VertaAI meets your team where they work — injecting governance into the tools already open on your developers' screens.
+    </p>
+
+    <h3 style="color:var(--muted); text-transform:uppercase; font-size:0.72rem; letter-spacing:0.1em; margin-bottom:1rem;">AI Coding Editors</h3>
+    <div class="int-grid">
+      <div class="int-card">
+        <div class="int-icon">🤖</div>
+        <div class="int-name">Claude Code</div>
+        <div class="int-desc">Permission envelope via <code style="font-size:0.75rem; color:var(--accent2);">.claude/CLAUDE.md</code>. MCP tool available for in-session governance queries.</div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">🐙</div>
+        <div class="int-name">GitHub Copilot</div>
+        <div class="int-desc">Inline instructions via <code style="font-size:0.75rem; color:var(--accent2);">.github/copilot-instructions.md</code> with permission envelope appended automatically.</div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">⚡</div>
+        <div class="int-name">Cursor</div>
+        <div class="int-desc">Auto-applied rules via <code style="font-size:0.75rem; color:var(--accent2);">.cursor/rules/vertaai-permissions.mdc</code> (alwaysApply: true). CodeLens provenance available.</div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">🌊</div>
+        <div class="int-name">Windsurf</div>
+        <div class="int-desc">Project-level rules via <code style="font-size:0.75rem; color:var(--accent2);">.windsurfrules</code> + MCP server for live governance queries.</div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">🔮</div>
+        <div class="int-name">Augment</div>
+        <div class="int-desc">Inline guidelines via <code style="font-size:0.75rem; color:var(--accent2);">.augment/settings.json</code> guidelines field + MCP transport.</div>
+      </div>
+    </div>
+
+    <h3 style="color:var(--muted); text-transform:uppercase; font-size:0.72rem; letter-spacing:0.1em; margin-top:3rem; margin-bottom:1rem;">Runtime Observation Sources</h3>
+    <div class="int-grid">
+      <div class="int-card">
+        <div class="int-icon">☁️</div>
+        <div class="int-name">AWS CloudTrail</div>
+        <div class="int-desc">High-confidence (0.95) event ingestion with dedup and cross-service correlation.</div>
+        <div style="margin-top:0.5rem;"><span class="badge badge-green">Confidence: 0.95</span></div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">🌐</div>
+        <div class="int-name">GCP Audit Logs</div>
+        <div class="int-desc">GCP Audit Log ingestion with insertId-based global deduplication.</div>
+        <div style="margin-top:0.5rem;"><span class="badge badge-green">Confidence: 0.95</span></div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">🗄️</div>
+        <div class="int-name">Database Query Logs</div>
+        <div class="int-desc">DB query log ingestion with 1-hour time-bucket deduplication.</div>
+        <div style="margin-top:0.5rem;"><span class="badge badge-amber">Confidence: 0.75</span></div>
+      </div>
+    </div>
+
+    <h3 style="color:var(--muted); text-transform:uppercase; font-size:0.72rem; letter-spacing:0.1em; margin-top:3rem; margin-bottom:1rem;">Alerting</h3>
+    <div class="int-grid" style="grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));">
+      <div class="int-card">
+        <div class="int-icon">🔔</div>
+        <div class="int-name">PagerDuty</div>
+        <div class="int-desc">Events API v2. CRITICAL drift creates incidents automatically. Effective severity (decay + confidence adjusted) gates alert creation.</div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">💬</div>
+        <div class="int-name">Slack</div>
+        <div class="int-desc">Rich drift notifications to your #ai-governance channel with capability details, service name, remediation links, and correlation signals.</div>
+      </div>
+      <div class="int-card">
+        <div class="int-icon">🐙</div>
+        <div class="int-name">GitHub Checks</div>
+        <div class="int-desc">Track A policy gate posts a blocking GitHub Check to every PR. Supports multi-pack evaluation with conflict resolution (most-restrictive-wins).</div>
+      </div>
+    </div>
+
+    <div style="margin-top:3rem;">
+      <div class="label">MCP Protocol</div>
+      <h3>Model Context Protocol — available to all MCP-compatible agents</h3>
+      <p style="color:var(--muted); font-size:0.9rem; margin-top:0.5rem; margin-bottom:1.5rem;">
+        Any agent that supports MCP (Claude, Cursor, Windsurf) can call VertaAI's governance tools directly, in-session.
+      </p>
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="terminal-dot" style="background:#ff5f57"></div>
+          <div class="terminal-dot" style="background:#febc2e"></div>
+          <div class="terminal-dot" style="background:#28c840"></div>
+          <span style="color:var(--muted); font-size:0.78rem; margin-left:0.5rem;">MCP tools exposed by VertaAI</span>
+        </div>
+        <div class="terminal-body">
+<span class="t-ok">check_capability_intent</span>
+<span class="t-out">  → Pre-flight check: is this capability allowed under current policy?</span>
+<span class="t-out"> </span>
+<span class="t-ok">get_governance_status</span>
+<span class="t-out">  → Returns full workspace governance markdown: active packs,</span>
+<span class="t-out">    blocked capabilities, session budgets, recent drift alerts</span>
+<span class="t-out"> </span>
+<span class="t-ok">report_capability_usage</span>
+<span class="t-out">  → Ingest a capability observation from within an agent session</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>© 2026 VertaAI &nbsp;·&nbsp; <a href="mailto:hello@vertaai.io">hello@vertaai.io</a></p>
+  </footer>
+</div>
+
+
+<!-- ═══════════════════════════════════ PAGE: SECURITY ═══════════════════════════════════ -->
+<div id="page-security" class="page">
+
+  <section>
+    <div class="label">Security Model</div>
+    <h2>A permission model built for the capabilities that matter.</h2>
+    <p class="lead" style="margin-top:1rem; margin-bottom:2rem;">
+      VertaAI's permission envelope is organized around 12 real cloud and infrastructure capability types — not vague categories. Every capability has a default enforcement level that operators can tighten through Policy Packs.
+    </p>
+
+    <h3 style="margin-bottom:1rem;">Blocked by Default (CRITICAL)</h3>
+    <p style="color:var(--muted); font-size:0.875rem; margin-bottom:1rem;">AI agents may not generate code using these capabilities without explicit workspace-level approval. Attempts are surfaced as Track A findings.</p>
+    <div class="perm-grid">
+      <div class="perm-card">
+        <div class="perm-cap">iam_modify</div>
+        <div class="perm-level"><span class="badge badge-red">BLOCKED</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">secret_write</div>
+        <div class="perm-level"><span class="badge badge-red">BLOCKED</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">db_admin</div>
+        <div class="perm-level"><span class="badge badge-red">BLOCKED</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">infra_delete</div>
+        <div class="perm-level"><span class="badge badge-red">BLOCKED</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">deployment_modify</div>
+        <div class="perm-level"><span class="badge badge-red">BLOCKED</span></div>
+      </div>
+    </div>
+
+    <h3 style="margin-top:2.5rem; margin-bottom:1rem;">Require Declaration (HIGH)</h3>
+    <p style="color:var(--muted); font-size:0.875rem; margin-bottom:1rem;">Agents must declare these capabilities in the intent artifact before code referencing them is written. Undeclared use fails the Track A parity check.</p>
+    <div class="perm-grid">
+      <div class="perm-card">
+        <div class="perm-cap">s3_delete</div>
+        <div class="perm-level"><span class="badge badge-amber">DECLARE</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">s3_write</div>
+        <div class="perm-level"><span class="badge badge-amber">DECLARE</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">schema_modify</div>
+        <div class="perm-level"><span class="badge badge-amber">DECLARE</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">network_public</div>
+        <div class="perm-level"><span class="badge badge-amber">DECLARE</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">infra_create</div>
+        <div class="perm-level"><span class="badge badge-amber">DECLARE</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">infra_modify</div>
+        <div class="perm-level"><span class="badge badge-amber">DECLARE</span></div>
+      </div>
+      <div class="perm-card">
+        <div class="perm-cap">secret_read</div>
+        <div class="perm-level"><span class="badge badge-amber">DECLARE</span></div>
+      </div>
+    </div>
+
+    <div style="margin-top:3.5rem;">
+      <div class="label">Policy Pack Overrides</div>
+      <h3>Operators configure everything through Policy Packs.</h3>
+      <p style="color:var(--muted); font-size:0.9rem; margin-top:0.5rem; margin-bottom:1.5rem;">
+        The Agent Policy tab in the Policy Pack wizard lets operators add additional blocked capabilities, require human approval for specific ones, and set session budgets — all through a UI with no YAML hand-editing required. The most-restrictive policy wins across all active packs.
+      </p>
+
+      <div class="terminal">
+        <div class="terminal-bar">
+          <div class="terminal-dot" style="background:#ff5f57"></div>
+          <div class="terminal-dot" style="background:#febc2e"></div>
+          <div class="terminal-dot" style="background:#28c840"></div>
+          <span style="color:var(--muted); font-size:0.78rem; margin-left:0.5rem;">Policy Pack YAML · security-baseline</span>
+        </div>
+        <div class="terminal-body">
+<span class="t-dim">agentPolicy:</span>
+<span class="t-dim">  additionalBlocked:</span>
+<span class="t-dim">    - s3_write        # elevated to blocked for this pack</span>
+<span class="t-dim">    - infra_create</span>
+<span class="t-dim">  requireApproval:</span>
+<span class="t-dim">    - schema_modify   # needs human sign-off before merge</span>
+<span class="t-dim">  sessionBudgets:</span>
+<span class="t-dim">    maxFilesChanged: 15      # overrides workspace default of 20</span>
+<span class="t-dim">    maxNewAbstractions: 2    # overrides workspace default of 3</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:3.5rem;">
+      <div class="label">Chain of Custody</div>
+      <h3>Complete audit trail from intent to production.</h3>
+      <p style="color:var(--muted); font-size:0.9rem; margin-top:0.5rem; margin-bottom:1.5rem;">
+        Every AI-authored code change is linked to an intent artifact — a structured record of what the agent declared it would do, which capabilities it requested, and the governance quality score at merge time.
+      </p>
+
+      <div style="border: 1px solid var(--border); border-radius: 12px; overflow: hidden;">
+        <div style="background: var(--surface); padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border); font-size: 0.8rem; color: var(--muted); font-weight: 600;">Audit Trail</div>
+        <div style="padding: 0 1.25rem;">
+          <div class="audit-row">
+            <span class="audit-time">2026-03-05 14:05 UTC</span>
+            <span class="audit-msg"><span class="badge badge-purple">INTENT</span> &nbsp;IntentArtifact created — cursor/gpt-4o · declared: [s3_write, schema_modify]</span>
+          </div>
+          <div class="audit-row">
+            <span class="audit-time">2026-03-05 14:18 UTC</span>
+            <span class="audit-msg"><span class="badge badge-blue">PR GATE</span> &nbsp;Track A evaluation passed — 5/5 comparators · quality score: 84/100</span>
+          </div>
+          <div class="audit-row">
+            <span class="audit-time">2026-03-05 14:31 UTC</span>
+            <span class="audit-msg"><span class="badge badge-green">MERGED</span> &nbsp;PR #142 merged — specBuildFindings stored · merge anchor recorded</span>
+          </div>
+          <div class="audit-row">
+            <span class="audit-time">2026-03-05 17:44 UTC</span>
+            <span class="audit-msg"><span class="badge badge-amber">DRIFT</span> &nbsp;iam_modify observed in production — not in declared capabilities</span>
+          </div>
+          <div class="audit-row">
+            <span class="audit-time">2026-03-05 17:44 UTC</span>
+            <span class="audit-msg"><span class="badge badge-red">ALERT</span> &nbsp;PagerDuty PD-291847 created · Slack #ai-governance notified</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>© 2026 VertaAI &nbsp;·&nbsp; <a href="mailto:hello@vertaai.io">hello@vertaai.io</a></p>
+  </footer>
+</div>
+
+
+<!-- ═══════════════════════════════════ PAGE: SOLUTIONS ═══════════════════════════════════ -->
+<div id="page-solutions" class="page">
+
+  <section>
+    <div class="label">Solutions</div>
+    <h2>Built for the teams responsible for what AI agents ship.</h2>
+    <p class="lead" style="margin-top:1rem; margin-bottom:2.5rem;">
+      Whether you're worried about code quality, security incidents, or audit readiness — VertaAI speaks your language.
+    </p>
+
+    <div class="persona-tabs">
+      <div class="persona-tab active" onclick="showPersona('tl')">Tech Lead</div>
+      <div class="persona-tab" onclick="showPersona('em')">Engineering Manager</div>
+      <div class="persona-tab" onclick="showPersona('ciso')">CISO / Security</div>
+    </div>
+
+    <!-- TECH LEAD -->
+    <div id="persona-tl" class="persona-content active">
+      <div class="grid-2">
+        <div>
+          <h3 style="font-size:1.4rem; margin-bottom:1rem;">You ship faster with AI. You also own the blast radius.</h3>
+          <p style="color:var(--muted); font-size:0.95rem; margin-bottom:1.5rem;">
+            VertaAI gives tech leads the control layer they've been missing. Set capability budgets. Block the footguns. Get PR-level quality scores before code lands in main.
+          </p>
+          <ul style="list-style:none; display:flex; flex-direction:column; gap:0.75rem;">
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>CodeLens shows which agent wrote each function — PR number, quality score, governance findings inline</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>5 automated Track A comparators run on every AI-authored PR — no manual review required</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>Session budgets prevent agents from sprawling across 50 files when the ticket called for 5</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>Duplicate abstraction detection catches N+1 AI-generated utility functions before they accumulate</span>
+            </li>
+          </ul>
+        </div>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <div class="terminal-dot" style="background:#ff5f57"></div>
+            <div class="terminal-dot" style="background:#febc2e"></div>
+            <div class="terminal-dot" style="background:#28c840"></div>
+            <span style="color:var(--muted); font-size:0.78rem; margin-left:0.5rem;">Weekly governance digest</span>
+          </div>
+          <div class="terminal-body">
+<span class="t-ok">Team · AI Governance Week of Mar 3</span>
+<span class="t-out"> </span>
+<span class="t-out">PRs evaluated:         34</span>
+<span class="t-out">Track A pass rate:     91%  (↑ 4% vs last week)</span>
+<span class="t-out">Avg quality score:     79/100</span>
+<span class="t-out">Blocked by policy:     3 PRs</span>
+<span class="t-out"> </span>
+<span class="t-out">Top findings:</span>
+<span class="t-warn">  DUPLICATE_ABSTRACTION_RISK  ×8</span>
+<span class="t-warn">  INTENT_CAPABILITY_PARITY    ×3 (undeclared s3_write)</span>
+<span class="t-out"> </span>
+<span class="t-ok">Runtime drift:  0 open clusters  ✓</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ENGINEERING MANAGER -->
+    <div id="persona-em" class="persona-content">
+      <div class="grid-2">
+        <div>
+          <h3 style="font-size:1.4rem; margin-bottom:1rem;">You're accountable for what your team's AI agents do at scale.</h3>
+          <p style="color:var(--muted); font-size:0.95rem; margin-bottom:1.5rem;">
+            VertaAI gives engineering managers workspace-level visibility and policy controls — without needing to read every PR personally.
+          </p>
+          <ul style="list-style:none; display:flex; flex-direction:column; gap:0.75rem;">
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>Policy Packs let you define team-specific rules — churn limits, capability budgets, mandatory tests — in a UI, not code</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>Active Agent Permission Envelope shows exactly what every AI agent is currently allowed to do in this workspace</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>Exception waivers with expiry dates — temporary overrides with full audit trail</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>Works across your whole toolchain — no need to standardize on a single AI editor</span>
+            </li>
+          </ul>
+        </div>
+        <div class="card" style="align-self:start;">
+          <h3 style="margin-bottom:1rem; font-size:0.9rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted);">Active Agent Permission Envelope</h3>
+          <div style="font-size:0.82rem; line-height:2;">
+            <div style="display:flex; justify-content:space-between; border-bottom:1px solid var(--border); padding-bottom:0.5rem; margin-bottom:0.5rem;">
+              <span style="color:var(--muted);">Compiled from packs</span>
+              <span>security-baseline, pci-scope</span>
+            </div>
+            <div><span class="badge badge-red">5 blocked</span> &nbsp; iam_modify, secret_write, db_admin, infra_delete, deployment_modify</div>
+            <div style="margin-top:0.5rem;"><span class="badge badge-amber">7 declare</span> &nbsp; s3_delete, s3_write, schema_modify, network_public…</div>
+            <div style="margin-top:0.5rem;"><span class="badge badge-green">Session limit</span> &nbsp; max 15 files · max 2 abstractions</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CISO -->
+    <div id="persona-ciso" class="persona-content">
+      <div class="grid-2">
+        <div>
+          <h3 style="font-size:1.4rem; margin-bottom:1rem;">AI agents are now part of your attack surface. Time to govern them.</h3>
+          <p style="color:var(--muted); font-size:0.95rem; margin-bottom:1.5rem;">
+            VertaAI gives security teams the visibility, controls, and audit trail needed to govern AI coding agents under SOC 2, ISO 27001, and internal security policy.
+          </p>
+          <ul style="list-style:none; display:flex; flex-direction:column; gap:0.75rem;">
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>5 critical capabilities (iam_modify, secret_write, db_admin, infra_delete, deployment_modify) blocked by default — zero configuration required</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>Runtime drift detection identifies undeclared IAM, secrets, and infra usage in production within minutes via CloudTrail + GCP Audit</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>Chain-of-custody: every AI code change linked to intent artifact → PR gate findings → runtime observations</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>PagerDuty integration for CRITICAL drift — effective severity gated by source confidence and recency decay</span>
+            </li>
+            <li style="display:flex; gap:0.75rem; font-size:0.9rem;">
+              <span style="color:var(--green);">✓</span>
+              <span>Human approval gate: schema_modify and other HIGH capabilities can require explicit sign-off before merge</span>
+            </li>
+          </ul>
+        </div>
+        <div class="card" style="align-self:start;">
+          <h3 style="margin-bottom:1rem; font-size:0.9rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted);">Severity Intelligence</h3>
+          <p style="font-size:0.8rem; color:var(--muted); margin-bottom:1rem;">Effective severity is modulated by recency and source confidence — reducing noise from stale or low-confidence signals.</p>
+          <div style="font-size:0.82rem; line-height:2.2;">
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:var(--muted);">≤ 24h old</span>
+              <span>Recency weight <strong>1.0×</strong></span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:var(--muted);">1–5 days old</span>
+              <span>Recency weight <strong>0.7×</strong></span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:var(--muted)">&gt; 5 days old</span>
+              <span>Recency weight <strong>0.3×</strong></span>
+            </div>
+            <div style="border-top:1px solid var(--border); margin-top:0.5rem; padding-top:0.5rem; display:flex; justify-content:space-between;">
+              <span style="color:var(--muted);">CloudTrail / GCP</span>
+              <span>Confidence <strong>0.95</strong></span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:var(--muted);">DB query logs</span>
+              <span>Confidence <strong>0.75</strong></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <div style="margin-top:5rem; text-align:center; padding:3rem; background:var(--surface); border:1px solid var(--border); border-radius:16px;">
+      <div class="label" style="margin-bottom:1rem;">Early Access</div>
+      <h2 style="margin-bottom:1rem;">Ready to govern your AI coding agents?</h2>
+      <p style="color:var(--muted); font-size:1rem; margin-bottom:2rem;">
+        VertaAI is in private early access. We're onboarding engineering teams who are already deploying AI coding agents and want real governance controls — not just usage dashboards.
+      </p>
+      <a href="mailto:hello@vertaai.io" class="btn-primary" style="font-size:1rem; padding:0.8rem 2rem;">
+        Request Early Access →
+      </a>
+    </div>
+  </section>
+
+  <footer>
+    <p>© 2026 VertaAI &nbsp;·&nbsp; <a href="mailto:hello@vertaai.io">hello@vertaai.io</a></p>
+  </footer>
+</div>
+
+
+<!-- ═══════════════════════════════════ SCRIPTS ═══════════════════════════════════ -->
+<script>
+  function showPage(name) {
+    // hide all pages
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    // deactivate all nav links
+    document.querySelectorAll('.nav-links a').forEach(a => a.classList.remove('active'));
+    // show target
+    document.getElementById('page-' + name).classList.add('active');
+    document.getElementById('nav-' + name).classList.add('active');
+    window.scrollTo(0, 0);
+    return false;
+  }
+
+  function showPersona(name) {
+    document.querySelectorAll('.persona-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.persona-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('persona-' + name).classList.add('active');
+    event.target.classList.add('active');
+  }
+</script>
+
+</body>
+</html>
