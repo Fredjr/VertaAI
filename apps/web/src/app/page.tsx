@@ -82,7 +82,7 @@ export default function MarketingPage() {
         /* ── HERO ── */
         .hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 7rem 1.5rem 5rem; max-width: 1100px; margin: 0 auto; position: relative; }
         .hero-glow { position: absolute; top: -20px; left: 50%; transform: translateX(-50%); width: 900px; height: 500px; background: radial-gradient(circle, rgba(99,102,241,0.18) 0%, transparent 65%); pointer-events: none; z-index: 0; }
-        .hero > * { position: relative; z-index: 1; }
+        .hero > *:not(.hero-glow) { position: relative; z-index: 1; }
         .hero-sub { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-bottom: 2rem; flex-wrap: wrap; }
         .hero-desc { margin: 1.75rem auto 2.25rem; }
         .hero-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
