@@ -14,7 +14,7 @@ import { ComparatorId, FindingCode } from '../types.js';
 import type { ObligationResult, EvidenceItem } from '../../ir/types.js';
 import { CrossArtifactMessages, RemediationMessages } from '../../ir/messageCatalog.js';
 import { prisma } from '../../../../../lib/db.js';
-import { inferCapabilitiesFromFileChanges } from '../../../../agentGovernance/ingestion/agentSummaryParser.js';
+import { inferCapabilitiesFromFileChanges, detectOverpermissionedImports } from '../../../../agentGovernance/ingestion/agentSummaryParser.js';
 import type { Capability, Constraints, FileChange } from '../../../../../types/agentGovernance.js';
 
 export const intentCapabilityParityComparator: Comparator = {
@@ -70,8 +70,25 @@ export const intentCapabilityParityComparator: Comparator = {
 
     const actualCapabilities = inferCapabilitiesFromFileChanges(fileChanges);
 
+    // Step 3b: Import-level over-permission detection
+    // Scans added import statements for cloud SDK patterns that imply undeclared capabilities
+    const overpermissionedImports = detectOverpermissionedImports(fileChanges);
+
     // Step 4: Compare declared vs actual capabilities
     const violations = compareCapabilities(declaredCapabilities, actualCapabilities, constraints);
+
+    // Step 4b: Add overpermissioned import violations (if not already covered by declared caps)
+    for (const imp of overpermissionedImports) {
+      const isCovered = declaredCapabilities.some(d => d.type === imp.capability);
+      if (!isCovered) {
+        violations.push({
+          type: 'undeclared',
+          capability: imp.capability,
+          resource: imp.file,
+          reason: `${imp.description} imported but '${imp.capability}' not declared in IntentArtifact`,
+        });
+      }
+    }
 
     // Step 5: Persist findings to IntentArtifact.specBuildFindings (governance page reads this)
     // P0-A FIX: mark isFinalSnapshot:true when the PR was just merged (closed event)
@@ -79,7 +96,8 @@ export const intentCapabilityParityComparator: Comparator = {
       checkedAt: new Date().toISOString(),
       isFinalSnapshot: prAction === 'closed', // true only at actual merge time
       declaredCapabilities: declaredCapabilities.map(c => c.type),
-      actualCapabilities: actualCapabilities.map(c => c.type),
+      actualCapabilities: actualCapabilities.map(c => ({ type: c.type, resource: c.resource })),
+      importedCapabilities: overpermissionedImports,
       violations: violations.map(v => ({
         type: v.type,
         capability: v.capability,
@@ -100,12 +118,18 @@ export const intentCapabilityParityComparator: Comparator = {
     // Step 6: Build evidence
     const evidence: EvidenceItem[] = [];
     for (const violation of violations) {
+      const isImportViolation = violation.type === 'undeclared' &&
+        overpermissionedImports.some(i => i.file === violation.resource && i.capability === violation.capability);
       evidence.push({
         type: 'artifact',
         location: violation.resource,
         found: true,
         details: `${violation.type}: ${violation.reason}`,
-        metadata: { capabilityType: violation.capability, violationType: violation.type },
+        metadata: {
+          capabilityType: violation.capability,
+          violationType: violation.type,
+          reasonCode: isImportViolation ? FindingCode.OVERPERMISSIONED_IMPORT : FindingCode.INTENT_CAPABILITY_UNDECLARED,
+        },
       });
     }
 

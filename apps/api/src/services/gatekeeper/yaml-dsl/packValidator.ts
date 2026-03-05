@@ -350,6 +350,20 @@ export const PackYAMLSchema = z.object({
     requireApproval: z.boolean().optional(),
     approvers: z.array(z.string()).optional(),
   }).optional(),
+
+  // Agent permissioning — compiled into the workspace's AgentPermissionEnvelope
+  // and injected into CLAUDE.md, copilot-instructions.md, .windsurfrules, Cursor rules, etc.
+  agentPolicy: z.object({
+    /** Capabilities to add to the BLOCKED list (beyond the CRITICAL_CAPABILITIES baseline) */
+    additionalBlocked: z.array(z.string()).optional(),
+    /** Capabilities that require explicit human approval before an AI agent may use them */
+    requireApproval: z.array(z.string()).optional(),
+    /** Per-pack session budget overrides — most restrictive value wins across active packs */
+    sessionBudgets: z.object({
+      maxFilesChanged: z.number().int().positive().optional(),
+      maxNewAbstractions: z.number().int().positive().optional(),
+    }).optional(),
+  }).optional(),
 });
 
 export type PackYAML = z.infer<typeof PackYAMLSchema>;

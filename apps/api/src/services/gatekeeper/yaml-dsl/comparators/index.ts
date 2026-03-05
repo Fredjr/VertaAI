@@ -31,6 +31,7 @@ import { intentCapabilityParityComparator } from './cross-artifact/intentCapabil
 import { infraOwnershipParityComparator } from './cross-artifact/infraOwnershipParity.js';
 import { churnComplexityRiskComparator } from './cross-artifact/churnComplexityRisk.js';
 import { intentRuntimeParityComparator } from './cross-artifact/intentRuntimeParity.js';
+import { duplicateAbstractionRiskComparator } from './cross-artifact/duplicateAbstractionRisk.js';
 
 export function initializeComparators(): void {
   console.log('[Comparators] Initializing comparator registry...');
@@ -64,6 +65,7 @@ export function initializeComparators(): void {
   comparatorRegistry.register(infraOwnershipParityComparator); // Build→Run (ownership)
   comparatorRegistry.register(churnComplexityRiskComparator); // Build→Run (quality)
   comparatorRegistry.register(intentRuntimeParityComparator); // Spec→Run
+  comparatorRegistry.register(duplicateAbstractionRiskComparator); // Build→Run (spaghetti prevention)
 
   console.log(`[Comparators] Registered ${comparatorRegistry.list().length} comparators`);
   console.log(`[Comparators] Available: ${comparatorRegistry.list().join(', ')}`);

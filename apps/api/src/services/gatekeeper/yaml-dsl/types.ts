@@ -65,6 +65,7 @@ export enum ComparatorId {
   INFRA_OWNERSHIP_PARITY = 'INFRA_OWNERSHIP_PARITY', // Build→Run
   CHURN_COMPLEXITY_RISK = 'CHURN_COMPLEXITY_RISK', // Build→Run
   INTENT_RUNTIME_PARITY = 'INTENT_RUNTIME_PARITY', // Spec→Run
+  DUPLICATE_ABSTRACTION_RISK = 'DUPLICATE_ABSTRACTION_RISK', // Build→Run (spaghetti prevention)
 }
 
 // ============================================================================

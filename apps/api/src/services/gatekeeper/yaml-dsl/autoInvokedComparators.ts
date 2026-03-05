@@ -153,6 +153,12 @@ const AUTO_INVOKED_COMPARATORS: AutoInvokedConfig[] = [
     decisionOnFail: 'warn',
     triggerPatterns: null, // Always run — churn is measured across all file types
   },
+  {
+    id: 'DUPLICATE_ABSTRACTION_RISK' as ComparatorId,
+    category: 'agent-governance',
+    decisionOnFail: 'warn', // Never block — spaghetti is debt, not a security violation
+    triggerPatterns: ['**/*.ts', '**/*.js', '**/*.py', '**/*.go', '**/*.java', '**/*.rb'],
+  },
   // INTENT_RUNTIME_PARITY removed from Track A - now runs in Track B (async, post-deploy)
   // See: apps/api/src/services/runtime/runtimeDriftMonitor.ts
 ];

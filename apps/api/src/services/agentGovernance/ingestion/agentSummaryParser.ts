@@ -5,6 +5,7 @@
 
 import type {
   Capability,
+  CapabilityType,
   ToolCall,
   FileChange,
   ExternalAction,
@@ -188,6 +189,56 @@ export function inferCapabilitiesFromFileChanges(files: FileChange[]): Capabilit
   }
 
   return capabilities;
+}
+
+// ============================================================================
+// Over-permissioned import detection
+// ============================================================================
+
+export interface OverpermissionedImport {
+  file: string;
+  capability: CapabilityType;
+  description: string;
+  importLine: string;
+}
+
+/**
+ * Detect cloud SDK imports in PR diff that imply undeclared capabilities.
+ * Scans only added lines (+) in file patches — same heuristic approach as
+ * inferCapabilitiesFromFileChanges(), but focuses on import statements.
+ */
+export function detectOverpermissionedImports(files: FileChange[]): OverpermissionedImport[] {
+  const IMPORT_CAPABILITY_MAP: Array<{ pattern: RegExp; capability: CapabilityType; description: string }> = [
+    { pattern: /['"]@aws-sdk\/client-s3['"]|aws-sdk.*[Ss]3/,         capability: 's3_write',        description: 'AWS S3 SDK' },
+    { pattern: /['"]@aws-sdk\/client-iam['"]/,                         capability: 'iam_modify',      description: 'AWS IAM SDK' },
+    { pattern: /['"]@aws-sdk\/client-secrets-manager['"]/,             capability: 'secret_read',     description: 'AWS Secrets Manager' },
+    { pattern: /['"]prisma['"]|['"]@prisma\/client['"]|typeorm|sequelize|knex/i, capability: 'db_write', description: 'Database ORM' },
+    { pattern: /['"]@google-cloud\/storage['"]/,                       capability: 's3_write',        description: 'GCP Cloud Storage' },
+    { pattern: /['"]@google-cloud\/secret-manager['"]/,                capability: 'secret_read',     description: 'GCP Secret Manager' },
+    { pattern: /['"]aws-cdk-lib['"]|['"]@aws-cdk\//,                   capability: 'infra_create',    description: 'AWS CDK' },
+    { pattern: /['"]@pulumi\//,                                         capability: 'infra_create',    description: 'Pulumi IaC' },
+  ];
+
+  const results: OverpermissionedImport[] = [];
+
+  for (const file of files) {
+    if (!file.patch) continue;
+    const addedLines = file.patch.split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++'));
+
+    for (const { pattern, capability, description } of IMPORT_CAPABILITY_MAP) {
+      const matchLine = addedLines.find(l => pattern.test(l));
+      if (matchLine) {
+        results.push({
+          file: file.path,
+          capability,
+          description,
+          importLine: matchLine.slice(1).trim(),
+        });
+      }
+    }
+  }
+
+  return results;
 }
 
 /**

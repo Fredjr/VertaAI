@@ -107,6 +107,64 @@ let sseReconnectTimer: NodeJS.Timeout | undefined;
 let capabilityDiagnostics: vscode.DiagnosticCollection;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CodeLens provider — AI provenance at line 0
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Shows a CodeLens at line 0 of each source file showing which AI agent introduced it,
+ * the PR number, quality score, and test coverage status.
+ *
+ * Queries the /code-provenance endpoint which searches IntentArtifact.specBuildFindings
+ * for the relative file path — no new DB schema required.
+ *
+ * Cache TTL: 30 seconds per file to avoid hammering the API.
+ */
+class VertaAICodeLensProvider implements vscode.CodeLensProvider {
+  private readonly lensCache = new Map<string, { lenses: vscode.CodeLens[]; ts: number }>();
+  private readonly TTL_MS = 30_000;
+
+  async provideCodeLenses(document: vscode.TextDocument): Promise<vscode.CodeLens[]> {
+    const cfg = vscode.workspace.getConfiguration('vertaai');
+    const workspaceId = cfg.get<string>('workspaceId', '');
+    const apiUrl = cfg.get<string>('apiUrl', 'http://localhost:3001');
+    if (!workspaceId) return [];
+
+    const filePath = vscode.workspace.asRelativePath(document.uri);
+    const cacheKey = `${workspaceId}:${filePath}`;
+    const cached = this.lensCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < this.TTL_MS) return cached.lenses;
+
+    try {
+      const resp = await fetch(
+        `${apiUrl}/api/workspaces/${workspaceId}/code-provenance?filePath=${encodeURIComponent(filePath)}`
+      );
+      if (!resp.ok) return [];
+      const data = await resp.json() as any;
+      if (!data.provenance?.length) return [];
+
+      const top = data.provenance[0];
+      const agentLabel = top.agentIdentity?.id
+        ?? (top.authorType === 'AGENT' ? 'AI agent' : 'Human');
+      const qualityLabel = top.qualityScore != null ? ` | Quality: ${top.qualityScore}/100` : '';
+      const testLabel = top.hasTests ? '' : ' | \u26a0 0 tests';
+
+      const lens = new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
+        title: `\uD83E\uDD16 ${agentLabel} \u00b7 PR #${top.prNumber}${qualityLabel}${testLabel}`,
+        command: 'vertaai.showGovernance',
+        tooltip: `Introduced by ${agentLabel} in PR #${top.prNumber}. Click for governance details.`,
+        arguments: [],
+      });
+
+      const lenses = [lens];
+      this.lensCache.set(cacheKey, { lenses, ts: Date.now() });
+      return lenses;
+    } catch {
+      return [];
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Activation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -121,6 +179,14 @@ export function activate(context: vscode.ExtensionContext): void {
   // Diagnostic collection for inline capability hints
   capabilityDiagnostics = vscode.languages.createDiagnosticCollection('vertaai-capabilities');
   context.subscriptions.push(capabilityDiagnostics);
+
+  // CodeLens provider — AI provenance at line 0 of source files
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider(
+      { scheme: 'file', pattern: '**/*.{ts,tsx,js,jsx,py,go,java,rb}' },
+      new VertaAICodeLensProvider()
+    )
+  );
 
   // Commands
   context.subscriptions.push(
@@ -544,11 +610,11 @@ async function runSetupWizard(): Promise<void> {
   );
 
   // Track 0: Write .claude/CLAUDE.md — governance rules injected into every Claude Code session.
-  // Claude Code reads this file as part of its system context on every session start,
-  // making check_capability_intent automatic without any developer action.
+  // Appends the agent permission envelope so AI assistants know what they can/cannot do.
+  const claudeMdContent = await buildClaudeMdWithPermissions(workspaceId, apiUrl);
   await writeConfigFile(
     path.join('.claude', 'CLAUDE.md'),
-    buildClaudeMd(workspaceId, apiUrl),
+    claudeMdContent,
     'Claude Code governance rules (.claude/CLAUDE.md)',
   );
 
@@ -556,7 +622,7 @@ async function runSetupWizard(): Promise<void> {
   // GitHub Copilot reads this as workspace-level custom instructions for every chat session.
   await writeConfigFile(
     path.join('.github', 'copilot-instructions.md'),
-    buildCopilotInstructions(workspaceId, apiUrl),
+    await buildCopilotInstructions(workspaceId, apiUrl),
     'Copilot governance rules (.github/copilot-instructions.md)',
   );
 
@@ -568,11 +634,44 @@ async function runSetupWizard(): Promise<void> {
     'Cursor MCP config (.cursor/mcp.json)',
   );
 
+  // Track 0: Write .cursor/rules/vertaai-permissions.mdc — Cursor agent rules file.
+  // Cursor injects .mdc files from .cursor/rules/ into every AI context automatically,
+  // giving Cursor agents their VertaAI permission boundaries without needing an MCP call.
+  const cursorRulesContent = await buildCursorPermissionRules(workspaceId, apiUrl);
+  await writeConfigFile(
+    path.join('.cursor', 'rules', 'vertaai-permissions.mdc'),
+    cursorRulesContent,
+    'Cursor agent permission rules (.cursor/rules/vertaai-permissions.mdc)',
+  );
+
   // Track 0: Write .vscode/mcp.json — VS Code 1.99+ native MCP support.
+  // (Also picked up by Windsurf as its MCP config source)
   await writeConfigFile(
     path.join('.vscode', 'mcp.json'),
     JSON.stringify({ servers: { vertaai: { type: 'http', url: mcpUrl } } }, null, 2),
     'VS Code MCP config (.vscode/mcp.json)',
+  );
+
+  // Track 0: Write .windsurfrules — Windsurf project-level agent rules.
+  // Windsurf auto-injects this file into every AI context, so Windsurf agents receive
+  // their VertaAI permission boundaries without needing an explicit MCP call.
+  const windsurfRulesContent = await buildWindsurfPermissionRules(workspaceId, apiUrl);
+  await writeConfigFile(
+    '.windsurfrules',
+    windsurfRulesContent,
+    'Windsurf agent permission rules (.windsurfrules)',
+  );
+
+  // Track 0: Write .augment/settings.json — Augment MCP + inline guidelines.
+  // The `guidelines` field is injected into every Augment AI session automatically.
+  const augmentPermissionText = await buildAugmentPermissionGuidelines(workspaceId, apiUrl);
+  await writeConfigFile(
+    path.join('.augment', 'settings.json'),
+    JSON.stringify({
+      mcpServers: { vertaai: { transport: 'http', url: mcpUrl } },
+      guidelines: augmentPermissionText,
+    }, null, 2),
+    'Augment MCP config + guidelines (.augment/settings.json)',
   );
 
   // Connect SSE stream with the new config
@@ -583,7 +682,7 @@ async function runSetupWizard(): Promise<void> {
 
   vscode.window.showInformationMessage(
     `✅ VertaAI configured for "${workspaceId}". ` +
-    `Track 0 active for Claude Code, Copilot, Cursor, and Augment. ` +
+    `Track 0 active for Claude Code, Copilot, Cursor, Windsurf, and Augment. ` +
     `Real-time drift alerts active via SSE. Restart your AI assistants to pick up new configs.`,
   );
 }
@@ -642,13 +741,51 @@ function buildClaudeMd(workspaceId: string, apiUrl: string): string {
 }
 
 /**
+ * Build CLAUDE.md base content and append the live agent permission envelope
+ * fetched from the API. Falls back to base content if the API call fails.
+ */
+async function buildClaudeMdWithPermissions(workspaceId: string, apiUrl: string): Promise<string> {
+  const base = buildClaudeMd(workspaceId, apiUrl);
+
+  try {
+    const resp = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/agent-permissions`);
+    if (!resp.ok) return base;
+    const data = await resp.json() as any;
+
+    const lines = [
+      '',
+      '## Agent Permission Envelope',
+      `> Compiled ${new Date(data.compiledAt ?? Date.now()).toUTCString()}${(data.compiledFromPacks?.length ?? 0) > 0 ? ` from packs: ${(data.compiledFromPacks as string[]).join(', ')}` : ' (baseline)'}`,
+      '',
+      `On every session start, call \`get_governance_status\` to load the abstraction`,
+      `inventory and technical debt context before writing any code.`,
+      '',
+      `\uD83D\uDEAB **BLOCKED** (never use): ${(data.blocked as string[] ?? []).join(', ')}`,
+      `\u26A0\uFE0F **REQUIRES DECLARATION**: ${(data.requireDeclaration as string[] ?? []).join(', ')}`,
+      `\u2705 **ALWAYS ALLOWED**: ${(data.alwaysAllowed as string[] ?? []).join(', ')}`,
+      `\uD83D\uDC64 **REQUIRES HUMAN APPROVAL**: ${(data.requireHumanApproval as string[] ?? []).join(', ')}`,
+      '',
+      '## Session Budgets',
+      `- Max files changed per session: ${data.sessionBudgets?.maxFilesChanged ?? 20}`,
+      `- Max new abstractions per session: ${data.sessionBudgets?.maxNewAbstractions ?? 3}`,
+      `- Tests required before committing: ${(data.sessionBudgets?.requireTestFor as string[] ?? []).join(', ')}`,
+    ];
+    return base + '\n' + lines.join('\n');
+  } catch {
+    return base; // Non-blocking — base content is still valuable
+  }
+}
+
+/**
  * Build the .github/copilot-instructions.md content — Copilot's equivalent of CLAUDE.md.
  * GitHub Copilot reads this as workspace-level custom instructions for every chat session,
  * making the governance pre-flight check automatic for Copilot users (Track 0).
  * The VSCode LM Tool (registered above) handles the actual execution when Copilot calls it.
+ * Fetches the agent permission envelope from the API and appends it so Copilot agents
+ * receive their permission boundaries from the VertaAI workspace on every session.
  */
-function buildCopilotInstructions(workspaceId: string, apiUrl: string): string {
-  return [
+async function buildCopilotInstructions(workspaceId: string, apiUrl: string): Promise<string> {
+  const base = [
     '# VertaAI Governance — Active',
     '',
     'This workspace is governed by **VertaAI** runtime capability governance.',
@@ -687,6 +824,192 @@ function buildCopilotInstructions(workspaceId: string, apiUrl: string): string {
     '## Live governance',
     `- Dashboard: ${apiUrl.replace('/api', '')}/governance?workspace=${workspaceId}`,
     '- Local file: `.claude/GOVERNANCE.md` (updated seconds after production events)',
+  ].join('\n');
+
+  // Fetch and append the agent permission envelope from the VertaAI workspace
+  try {
+    const resp = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/agent-permissions`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (resp.ok) {
+      const env = await resp.json() as any;
+      const lines: string[] = [
+        '',
+        '## Agent Permission Envelope',
+        `> Compiled from VertaAI workspace \`${workspaceId}\``,
+        '',
+        `🚫 **BLOCKED** (never use): ${(env.blocked ?? []).join(', ')}`,
+        `⚠️ **REQUIRES DECLARATION**: ${(env.requireDeclaration ?? []).join(', ')}`,
+        `✅ **ALWAYS ALLOWED**: ${(env.alwaysAllowed ?? []).join(', ')}`,
+        `👤 **REQUIRES HUMAN APPROVAL**: ${(env.requireHumanApproval ?? []).join(', ')}`,
+        '',
+        '## Session Budgets',
+        `- Max files changed per session: ${env.sessionBudgets?.maxFilesChanged ?? 20}`,
+        `- Max new abstractions per session: ${env.sessionBudgets?.maxNewAbstractions ?? 3}`,
+        `- Tests required before committing: ${(env.sessionBudgets?.requireTestFor ?? []).join(', ')}`,
+      ];
+      return base + '\n' + lines.join('\n');
+    }
+  } catch { /* non-blocking — base is still valuable */ }
+  return base;
+}
+
+/**
+ * Build the .cursor/rules/vertaai-permissions.mdc content.
+ * Cursor injects all .mdc files in .cursor/rules/ into every AI session automatically,
+ * so Cursor agents receive their VertaAI workspace permission boundaries without needing
+ * an explicit MCP call at session start.
+ */
+async function buildCursorPermissionRules(workspaceId: string, apiUrl: string): Promise<string> {
+  const header = [
+    '---',
+    'description: VertaAI governance — agent permission boundaries (auto-loaded)',
+    'alwaysApply: true',
+    '---',
+    '',
+    '# VertaAI Agent Permissions',
+    '',
+    `This workspace is governed by **VertaAI**. Workspace ID: \`${workspaceId}\``,
+    '',
+    '## MANDATORY pre-flight rule',
+    '',
+    'Before writing code that uses any capability below, call `get_governance_status` via MCP',
+    'or use the `vertaai_check_capability_intent` tool to verify governance clearance.',
+    '',
+  ].join('\n');
+
+  try {
+    const resp = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/agent-permissions`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (resp.ok) {
+      const env = await resp.json() as any;
+      const lines: string[] = [
+        '## Permission Envelope',
+        `> Compiled from VertaAI workspace \`${workspaceId}\``,
+        '',
+        `🚫 **BLOCKED** (never use): ${(env.blocked ?? []).join(', ')}`,
+        `⚠️ **REQUIRES DECLARATION**: ${(env.requireDeclaration ?? []).join(', ')}`,
+        `✅ **ALWAYS ALLOWED**: ${(env.alwaysAllowed ?? []).join(', ')}`,
+        `👤 **REQUIRES HUMAN APPROVAL**: ${(env.requireHumanApproval ?? []).join(', ')}`,
+        '',
+        '## Session Budgets',
+        `- Max files changed per session: ${env.sessionBudgets?.maxFilesChanged ?? 20}`,
+        `- Max new abstractions per session: ${env.sessionBudgets?.maxNewAbstractions ?? 3}`,
+        `- Tests required before committing: ${(env.sessionBudgets?.requireTestFor ?? []).join(', ')}`,
+      ];
+      return header + lines.join('\n');
+    }
+  } catch { /* non-blocking — fallback below */ }
+
+  // Fallback: static baseline without workspace-specific overrides
+  return header + [
+    '## Permission Envelope (baseline — workspace overrides unavailable)',
+    '',
+    '🚫 **BLOCKED**: iam_modify, secret_write, db_admin, infra_delete, deployment_modify',
+    '⚠️ **REQUIRES DECLARATION**: s3_delete, s3_write, schema_modify, network_public, infra_create, infra_modify, secret_read',
+    '✅ **ALWAYS ALLOWED**: db_read, s3_read, api_endpoint',
+    '👤 **REQUIRES HUMAN APPROVAL**: iam_modify, secret_write',
+    '',
+    '## Session Budgets',
+    '- Max files changed per session: 20',
+    '- Max new abstractions per session: 3',
+    '- Tests required before committing: db_write, s3_write, schema_modify',
+  ].join('\n');
+}
+
+/**
+ * Build the .windsurfrules content for Windsurf agents.
+ * Windsurf auto-injects .windsurfrules (project root) into every AI context,
+ * giving Windsurf agents permission boundaries from the VertaAI workspace
+ * without requiring an explicit MCP call at session start.
+ */
+async function buildWindsurfPermissionRules(workspaceId: string, apiUrl: string): Promise<string> {
+  const header = [
+    '# VertaAI Governance — Agent Permissions',
+    '',
+    `This workspace is governed by **VertaAI**. Workspace ID: \`${workspaceId}\``,
+    '',
+    '## MANDATORY pre-flight rule',
+    '',
+    'Before writing code that uses any capability below, call `get_governance_status` via MCP',
+    'or use the `vertaai_check_capability_intent` tool to verify governance clearance.',
+    "If the check returns **BLOCKED**, do not write the code — ask the developer to declare",
+    'the capability in the IntentArtifact first.',
+    '',
+  ].join('\n');
+
+  try {
+    const resp = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/agent-permissions`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (resp.ok) {
+      const env = await resp.json() as any;
+      const lines: string[] = [
+        '## Permission Envelope',
+        `> Compiled from VertaAI workspace \`${workspaceId}\``,
+        '',
+        `🚫 **BLOCKED** (never use): ${(env.blocked ?? []).join(', ')}`,
+        `⚠️ **REQUIRES DECLARATION**: ${(env.requireDeclaration ?? []).join(', ')}`,
+        `✅ **ALWAYS ALLOWED**: ${(env.alwaysAllowed ?? []).join(', ')}`,
+        `👤 **REQUIRES HUMAN APPROVAL**: ${(env.requireHumanApproval ?? []).join(', ')}`,
+        '',
+        '## Session Budgets',
+        `- Max files changed per session: ${env.sessionBudgets?.maxFilesChanged ?? 20}`,
+        `- Max new abstractions per session: ${env.sessionBudgets?.maxNewAbstractions ?? 3}`,
+        `- Tests required before committing: ${(env.sessionBudgets?.requireTestFor ?? []).join(', ')}`,
+      ];
+      return header + lines.join('\n');
+    }
+  } catch { /* non-blocking */ }
+
+  return header + [
+    '## Permission Envelope (baseline)',
+    '',
+    '🚫 **BLOCKED**: iam_modify, secret_write, db_admin, infra_delete, deployment_modify',
+    '⚠️ **REQUIRES DECLARATION**: s3_delete, s3_write, schema_modify, network_public, infra_create, infra_modify, secret_read',
+    '✅ **ALWAYS ALLOWED**: db_read, s3_read, api_endpoint',
+    '👤 **REQUIRES HUMAN APPROVAL**: iam_modify, secret_write',
+  ].join('\n');
+}
+
+/**
+ * Build the plain-text guidelines string for Augment's `guidelines` field.
+ * Augment injects this text into every AI session automatically alongside the MCP URL,
+ * ensuring Augment agents receive permission boundaries from the VertaAI workspace
+ * without needing to call get_governance_status proactively.
+ */
+async function buildAugmentPermissionGuidelines(workspaceId: string, apiUrl: string): Promise<string> {
+  const header = [
+    `VertaAI Governance active for workspace ${workspaceId}.`,
+    '',
+    'MANDATORY: Before writing code that uses any infrastructure capability (db_write, s3_write,',
+    'iam_modify, secret_read, infra_create, schema_modify, etc.), call the vertaai_check_capability_intent',
+    'MCP tool to verify governance clearance. Do not implement code that uses BLOCKED capabilities.',
+    '',
+  ].join('\n');
+
+  try {
+    const resp = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/agent-permissions`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (resp.ok) {
+      const env = await resp.json() as any;
+      return header + [
+        `BLOCKED (never use): ${(env.blocked ?? []).join(', ')}`,
+        `REQUIRES DECLARATION: ${(env.requireDeclaration ?? []).join(', ')}`,
+        `ALWAYS ALLOWED: ${(env.alwaysAllowed ?? []).join(', ')}`,
+        `REQUIRES HUMAN APPROVAL: ${(env.requireHumanApproval ?? []).join(', ')}`,
+        `Session limits: max ${env.sessionBudgets?.maxFilesChanged ?? 20} files, max ${env.sessionBudgets?.maxNewAbstractions ?? 3} new abstractions.`,
+      ].join('\n');
+    }
+  } catch { /* non-blocking */ }
+
+  return header + [
+    'BLOCKED: iam_modify, secret_write, db_admin, infra_delete, deployment_modify',
+    'REQUIRES DECLARATION: s3_delete, s3_write, schema_modify, network_public, infra_create, infra_modify, secret_read',
+    'ALWAYS ALLOWED: db_read, s3_read, api_endpoint',
+    'Session limits: max 20 files, max 3 new abstractions.',
   ].join('\n');
 }
 

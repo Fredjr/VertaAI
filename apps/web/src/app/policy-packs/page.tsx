@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Navigation from '@/components/Navigation';
-import { Plus, Edit2, Trash2, BarChart2 } from 'lucide-react';
+import { Plus, Edit2, Trash2, BarChart2, Shield, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import ConflictDetector from '@/components/policyPacks/ConflictDetector';
 
@@ -19,9 +19,20 @@ interface WorkspacePolicyPack {
   scopeMergeStrategy?: 'MOST_RESTRICTIVE' | 'HIGHEST_PRIORITY' | 'EXPLICIT';
   trackAEnabled: boolean;
   trackBEnabled: boolean;
+  trackAConfig?: any;
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+interface AgentPermissionEnvelope {
+  blocked: string[];
+  requireDeclaration: string[];
+  alwaysAllowed: string[];
+  requireHumanApproval: string[];
+  sessionBudgets: { maxFilesChanged: number; maxNewAbstractions: number; requireTestFor: string[] };
+  compiledFromPacks: string[];
+  compiledAt: string;
 }
 
 function PolicyPacksContent() {
@@ -31,10 +42,28 @@ function PolicyPacksContent() {
   const [policyPacks, setPolicyPacks] = useState<WorkspacePolicyPack[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [envelope, setEnvelope] = useState<AgentPermissionEnvelope | null>(null);
+  const [envelopeLoading, setEnvelopeLoading] = useState(false);
+  const [envelopeExpanded, setEnvelopeExpanded] = useState(false);
 
   useEffect(() => {
     fetchPolicyPacks();
+    fetchEnvelope();
   }, [workspaceId]);
+
+  const fetchEnvelope = async () => {
+    setEnvelopeLoading(true);
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      const res = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/agent-permissions`);
+      if (res.ok) {
+        const data = await res.json();
+        setEnvelope(data);
+      }
+    } catch { /* non-blocking */ } finally {
+      setEnvelopeLoading(false);
+    }
+  };
 
   const fetchPolicyPacks = async () => {
     try {
@@ -131,6 +160,57 @@ function PolicyPacksContent() {
               </Link>
             </div>
           </div>
+        </div>
+
+        {/* Active Agent Permission Envelope */}
+        <div className="mb-6 bg-white dark:bg-gray-800 border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setEnvelopeExpanded(v => !v)}
+            className="w-full flex items-center justify-between px-5 py-3 hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+              <span className="text-sm font-semibold text-purple-900 dark:text-purple-200">Active Agent Permission Envelope</span>
+              {envelope && (
+                <span className="text-xs text-purple-600 dark:text-purple-400 font-normal">
+                  · compiled {new Date(envelope.compiledAt).toLocaleTimeString()} from{' '}
+                  {envelope.compiledFromPacks.length > 0 ? envelope.compiledFromPacks.join(', ') : 'baseline'}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); fetchEnvelope(); }}
+                className="p-1 text-purple-400 hover:text-purple-600 dark:hover:text-purple-300"
+                title="Refresh envelope"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${envelopeLoading ? 'animate-spin' : ''}`} />
+              </button>
+              {envelopeExpanded
+                ? <ChevronDown className="h-4 w-4 text-gray-400" />
+                : <ChevronRight className="h-4 w-4 text-gray-400" />
+              }
+            </div>
+          </button>
+          {envelopeExpanded && (
+            <div className="px-5 pb-4 border-t border-purple-100 dark:border-purple-900">
+              {!envelope ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-3">No data — ensure the API is running.</p>
+              ) : (
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 font-mono text-xs">
+                  <div><span className="text-red-500">🚫 Blocked:</span> <span className="text-gray-700 dark:text-gray-300">{envelope.blocked.join(', ')}</span></div>
+                  <div><span className="text-yellow-600 dark:text-yellow-400">⚠️ Requires declaration:</span> <span className="text-gray-700 dark:text-gray-300">{envelope.requireDeclaration.join(', ')}</span></div>
+                  <div><span className="text-blue-600 dark:text-blue-400">👤 Requires approval:</span> <span className="text-gray-700 dark:text-gray-300">{envelope.requireHumanApproval.join(', ')}</span></div>
+                  <div><span className="text-green-600 dark:text-green-400">✅ Always allowed:</span> <span className="text-gray-700 dark:text-gray-300">{envelope.alwaysAllowed.join(', ')}</span></div>
+                  <div className="sm:col-span-2 pt-1 border-t border-gray-100 dark:border-gray-700 text-gray-500 dark:text-gray-400">
+                    Session: max {envelope.sessionBudgets.maxFilesChanged} files · max {envelope.sessionBudgets.maxNewAbstractions} abstractions · tests required for {envelope.sessionBudgets.requireTestFor.join(', ')}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Conflict Detector - Show conflicts across all packs */}
@@ -247,7 +327,7 @@ function PolicyPacksContent() {
                       })()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         {pack.trackAEnabled && (
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200">
                             Track A
@@ -258,6 +338,16 @@ function PolicyPacksContent() {
                             Track B
                           </span>
                         )}
+                        {(() => {
+                          const ap = pack.trackAConfig?.agentPolicy;
+                          const hasPolicy = (ap?.additionalBlocked?.length ?? 0) > 0 || (ap?.requireApproval?.length ?? 0) > 0;
+                          return hasPolicy ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" title="This pack configures agent permissions">
+                              <Shield className="h-3 w-3" />
+                              Agent Policy
+                            </span>
+                          ) : null;
+                        })()}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">

@@ -189,6 +189,11 @@ export async function runYAMLGatekeeper(
   const allFindings = packResults.flatMap(pr => pr.result.findings);
   const allTriggeredRules = packResults.flatMap(pr => pr.result.triggeredRules);
 
+  // Fire-and-forget: persist agentCodeQuality score to IntentArtifact.specBuildFindings
+  writeAgentCodeQualityScore(prisma, input, allFindings).catch(e =>
+    console.warn('[YAMLGatekeeper] agentCodeQuality write failed:', e.message)
+  );
+
   // A4-FIX: Detect EXPLICIT-mode conflicts and inject blocking synthetic findings.
   // Previously conflicts were silently swallowed by falling back to MOST_RESTRICTIVE.
   // Now they surface as block-severity findings so the user sees WHY the check failed.
@@ -412,5 +417,66 @@ function computeExplicit(packResults: PackResult[]): 'pass' | 'warn' | 'block' {
 
   // All enforcing packs agree - return the decision
   return enforcingPacks[0].result.decision;
+}
+
+// ============================================================================
+// Agent Code Quality Score Aggregation
+// ============================================================================
+
+/**
+ * Persist an agentCodeQuality score to IntentArtifact.specBuildFindings.
+ * Aggregates 5 quality dimensions from all comparator findings collected in this gate run.
+ * Called fire-and-forget so it never blocks the gate response.
+ */
+async function writeAgentCodeQualityScore(
+  prisma: PrismaClient,
+  input: GatekeeperInput,
+  findings: any[]
+): Promise<void> {
+  const artifact = await prisma.intentArtifact.findFirst({
+    where: {
+      workspaceId: input.workspaceId,
+      prNumber: input.prNumber,
+      repoFullName: `${input.owner}/${input.repo}`,
+    },
+    select: { id: true, specBuildFindings: true },
+  });
+  if (!artifact) return;
+
+  const codes: string[] = findings.map(
+    (f: any) => f.comparatorResult?.reasonCode ?? f.reasonCode ?? ''
+  );
+
+  // Score each dimension: 100 = clean, lower = issues found
+  const abstractionScore  = codes.includes('DUPLICATE_ABSTRACTION_RISK')    ? 50  : 100;
+  const testScore         = codes.includes('TEST_IMPLEMENTATION_MISSING')    ? 40  :
+                            codes.includes('IMPLEMENTATION_TEST_MISSING')    ? 60  : 100;
+  const churnScore        = codes.includes('CHURN_COMPLEXITY_HIGH_RISK')     ? 30  :
+                            codes.includes('CHURN_COMPLEXITY_MEDIUM_RISK')   ? 65  : 100;
+  const importScore       = codes.includes('OVERPERMISSIONED_IMPORT')        ? 45  : 100;
+  const capabilityScore   = codes.includes('INTENT_CAPABILITY_UNDECLARED')   ? 20  : 100;
+
+  const overall = Math.round(
+    (abstractionScore + testScore + churnScore + importScore + capabilityScore) / 5
+  );
+
+  let existing: Record<string, any> = {};
+  try {
+    if (artifact.specBuildFindings) existing = JSON.parse(artifact.specBuildFindings);
+  } catch { /* malformed — start fresh */ }
+
+  await prisma.intentArtifact.update({
+    where: { id: artifact.id },
+    data: {
+      specBuildFindings: JSON.stringify({
+        ...existing,
+        agentCodeQuality: {
+          score: overall,
+          dimensions: { abstractionScore, testScore, churnScore, importScore, capabilityScore },
+          computedAt: new Date().toISOString(),
+        },
+      }),
+    },
+  });
 }
 

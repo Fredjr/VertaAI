@@ -22,6 +22,7 @@ import { parseWorkspaceDefaults, validateWorkspaceDefaults } from '../services/g
 import { loadAllTemplates, getTemplateById, getTemplateMetadata } from '../services/gatekeeper/yaml-dsl/templateRegistry.js';
 // PHASE 3B.1: Effective Policy View
 import { selectApplicablePacks } from '../services/gatekeeper/yaml-dsl/packSelector.js';
+import { invalidatePermissionCache } from '../services/governance/agentPermissionCompiler.js';
 import { computeEffectivePolicy } from '../services/gatekeeper/yaml-dsl/effectivePolicyService.js';
 import yaml from 'yaml';
 
@@ -422,6 +423,9 @@ router.put('/workspaces/:workspaceId/policy-packs/:id', async (req: Request, res
       },
     });
 
+    // Invalidate cached agent permissions — status or trackAEnabled may have changed
+    invalidatePermissionCache(workspaceId);
+
     res.json({ policyPack });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -610,6 +614,9 @@ router.post('/workspaces/:workspaceId/policy-packs/:id/publish', async (req: Req
         packMetadataName: packYAML.metadata.name,
       },
     });
+
+    // Invalidate cached agent permissions — newly published pack may add blocked/requireApproval caps
+    invalidatePermissionCache(workspaceId);
 
     res.json({
       policyPack: updatedPack,

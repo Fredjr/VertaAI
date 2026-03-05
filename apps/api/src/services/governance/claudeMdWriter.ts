@@ -20,6 +20,7 @@
 import { prisma } from '../../lib/db.js';
 import { getGitHubClient } from '../github-client.js';
 import { buildCompactSummary, type ParsedDriftCluster } from './compactSummaryBuilder.js';
+import { compileAgentPermissions, formatPermissionEnvelopeAsMarkdown } from './agentPermissionCompiler.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Write throttle
@@ -192,5 +193,88 @@ export async function buildWorkspaceGovernanceMarkdown(workspaceId: string): Pro
     parsed,
     compliantServiceCount,
   );
-  return result.markdown;
+
+  // Append structural context section for session bootstrap (spaghetti prevention)
+  const structuralSection = await buildStructuralContextSection(workspaceId);
+
+  // Append the agent permission envelope so MCP consumers (Cursor, Windsurf, Claude Code)
+  // receive their permission boundaries from the VertaAI workspace on every session.
+  let permissionSection = '';
+  try {
+    const envelope = await compileAgentPermissions(workspaceId);
+    permissionSection = formatPermissionEnvelopeAsMarkdown(envelope);
+  } catch { /* non-blocking */ }
+
+  return result.markdown + structuralSection + permissionSection;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Structural context for session bootstrap
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Query the last 15 IntentArtifacts for the workspace and build a markdown section
+ * listing existing abstractions and active technical debt.
+ *
+ * This section is injected into GOVERNANCE.md so every AI session starts with
+ * awareness of what already exists — preventing spaghetti abstraction duplication.
+ */
+async function buildStructuralContextSection(workspaceId: string): Promise<string> {
+  let artifacts: Array<{ specBuildFindings: string | null; prNumber: number; authorType: string }> = [];
+  try {
+    artifacts = await prisma.intentArtifact.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: 'desc' },
+      take: 15,
+      select: { specBuildFindings: true, prNumber: true, authorType: true },
+    });
+  } catch { return ''; }
+
+  // Collect existing abstractions (file path → capability type)
+  const abstractionMap = new Map<string, string>();
+  // Collect active debt (PRs with quality score below threshold)
+  const debtItems: Array<{ prNumber: number; score: number }> = [];
+
+  for (const a of artifacts) {
+    if (!a.specBuildFindings) continue;
+    let findings: any = {};
+    try { findings = JSON.parse(a.specBuildFindings); } catch { continue; }
+
+    // actualCapabilities[].resource + type
+    for (const cap of (findings.actualCapabilities ?? []) as Array<{ type?: string; resource?: string }>) {
+      if (cap.resource && cap.resource !== '*') {
+        abstractionMap.set(cap.resource, cap.type ?? 'unknown');
+      }
+    }
+
+    // agentCodeQuality scores
+    if (findings.agentCodeQuality?.score != null && findings.agentCodeQuality.score < 80) {
+      debtItems.push({ prNumber: a.prNumber, score: findings.agentCodeQuality.score });
+    }
+  }
+
+  if (abstractionMap.size === 0 && debtItems.length === 0) return '';
+
+  const lines: string[] = [
+    '',
+    '---',
+    '',
+    '## Existing Abstractions (do not duplicate)',
+    '>  On every session start, call `get_governance_status` to load this inventory before writing code.',
+    '',
+  ];
+
+  for (const [file, capability] of abstractionMap) {
+    lines.push(`- \`${file}\` (${capability})`);
+  }
+
+  if (debtItems.length > 0) {
+    lines.push('');
+    lines.push('## Active Technical Debt');
+    for (const d of debtItems) {
+      lines.push(`- PR #${d.prNumber}: quality score ${d.score}/100`);
+    }
+  }
+
+  return lines.join('\n');
 }

@@ -30,6 +30,7 @@ import { registerSseClient, unregisterSseClient, notifyGovernanceSse, activeSseC
 import { initializeComparators } from './services/gatekeeper/yaml-dsl/comparators/index.js';  // YAML DSL Migration
 import { buildCompactSummary, type ParsedDriftCluster } from './services/governance/compactSummaryBuilder.js';  // Phase 2: Compact governance summary
 import { buildWorkspaceGovernanceMarkdown } from './services/governance/claudeMdWriter.js';  // Phase 3+4: governance markdown builder
+import { compileAgentPermissions } from './services/governance/agentPermissionCompiler.js';  // Agent permission envelope
 import { createGovernanceMcpServer, registerSession, unregisterSession } from '@vertaai/mcp-server';  // Phase 4: MCP resource server
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';  // Phase 4: MCP transport
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';  // Phase 4: MCP session check
@@ -730,9 +731,153 @@ app.post('/api/workspaces/:id/capability-intent-check', async (req: Request, res
 
     const allowed = undeclaredRequested.length === 0;
 
-    return res.json({ success: true, allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service });
+    // Extend response with structural context (session amnesia prevention)
+    // and agent permission envelope (permissioning)
+    const [recentArtifacts, agentPermissions] = await Promise.all([
+      prisma.intentArtifact.findMany({
+        where: { workspaceId, affectedServices: { has: service } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: { specBuildFindings: true, agentIdentity: true, authorType: true, prNumber: true, createdAt: true },
+      }),
+      compileAgentPermissions(workspaceId),
+    ]);
+
+    const structuralContext = buildStructuralContext(recentArtifacts);
+
+    return res.json({ success: true, allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service, structuralContext, agentPermissions });
   } catch (err: any) {
     console.error('[CapabilityIntentCheck] Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Structural context helper ──────────────────────────────────────────────
+
+/**
+ * Parse recent IntentArtifacts to build a structural context object for session bootstrap.
+ * Extracts existing abstractions (file paths + capability types) and active technical debt.
+ */
+function buildStructuralContext(artifacts: Array<{
+  specBuildFindings: string | null;
+  agentIdentity: string | null;
+  authorType: string;
+  prNumber: number;
+  createdAt: Date;
+}>): {
+  existingAbstractions: Array<{ file: string; capability: string }>;
+  activeTechnicalDebt: Array<{ prNumber: number; score: number; authorType: string }>;
+  duplicateAbstractionFrequency: number;
+  missingTestFrequency: number;
+} {
+  const abstractionSet = new Map<string, string>(); // file → capability
+  const debtItems: Array<{ prNumber: number; score: number; authorType: string }> = [];
+  let dupCount = 0;
+  let missingTestCount = 0;
+
+  for (const a of artifacts) {
+    if (!a.specBuildFindings) continue;
+    let findings: any = {};
+    try { findings = JSON.parse(a.specBuildFindings); } catch { continue; }
+
+    // Extract existing abstractions from actualCapabilities
+    for (const cap of (findings.actualCapabilities ?? []) as Array<{ type?: string; resource?: string }>) {
+      if (cap.resource && cap.resource !== '*') {
+        abstractionSet.set(cap.resource, cap.type ?? 'unknown');
+      }
+    }
+
+    // Count quality signals
+    if (findings.agentCodeQuality) {
+      const q = findings.agentCodeQuality;
+      if (q.score < 80) {
+        debtItems.push({ prNumber: a.prNumber, score: q.score, authorType: a.authorType });
+      }
+      if (q.dimensions?.abstractionScore < 100) dupCount++;
+      if (q.dimensions?.testScore < 100) missingTestCount++;
+    }
+
+    // Fallback: scan violations array
+    for (const v of (findings.violations ?? []) as Array<{ type?: string }>) {
+      if (v.type === 'DUPLICATE_ABSTRACTION_RISK') dupCount++;
+      if (v.type === 'TEST_IMPLEMENTATION_MISSING' || v.type === 'IMPLEMENTATION_TEST_MISSING') missingTestCount++;
+    }
+  }
+
+  return {
+    existingAbstractions: Array.from(abstractionSet.entries()).map(([file, capability]) => ({ file, capability })),
+    activeTechnicalDebt: debtItems,
+    duplicateAbstractionFrequency: dupCount,
+    missingTestFrequency: missingTestCount,
+  };
+}
+
+// ── Agent Permissions endpoint ──────────────────────────────────────────────
+
+// GET /api/workspaces/:id/agent-permissions
+app.get('/api/workspaces/:id/agent-permissions', async (req: Request, res: Response) => {
+  try {
+    const envelope = await compileAgentPermissions(req.params.id);
+    return res.json({ success: true, ...envelope });
+  } catch (err: any) {
+    console.error('[AgentPermissions] Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Code Provenance endpoint ────────────────────────────────────────────────
+
+// GET /api/workspaces/:id/code-provenance?filePath=<path>
+app.get('/api/workspaces/:id/code-provenance', async (req: Request, res: Response) => {
+  const filePath = req.query.filePath as string | undefined;
+  if (!filePath) {
+    return res.status(400).json({ success: false, error: 'filePath query parameter is required' });
+  }
+
+  try {
+    const artifacts = await prisma.intentArtifact.findMany({
+      where: {
+        workspaceId: req.params.id,
+        specBuildFindings: { contains: filePath },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: {
+        prNumber: true,
+        authorType: true,
+        agentIdentity: true,
+        specBuildFindings: true,
+        repoFullName: true,
+        createdAt: true,
+      },
+    });
+
+    const provenance = artifacts.map(a => {
+      let findings: any = {};
+      try { if (a.specBuildFindings) findings = JSON.parse(a.specBuildFindings); } catch {}
+
+      let agentIdentity: any = null;
+      try { if (a.agentIdentity) agentIdentity = JSON.parse(a.agentIdentity); } catch {}
+
+      return {
+        prNumber: a.prNumber,
+        repoFullName: a.repoFullName,
+        authorType: a.authorType,
+        agentIdentity,
+        qualityScore: findings.agentCodeQuality?.score ?? null,
+        hasTests: !(findings.violations ?? []).some((v: any) =>
+          v.type === 'TEST_IMPLEMENTATION_MISSING' || v.type === 'IMPLEMENTATION_TEST_MISSING'
+        ),
+        capabilityViolations: (findings.violations ?? []).filter(
+          (v: any) => v.resource === filePath && v.type === 'undeclared'
+        ).length,
+        checkedAt: findings.checkedAt ?? a.createdAt.toISOString(),
+      };
+    });
+
+    return res.json({ success: true, provenance });
+  } catch (err: any) {
+    console.error('[CodeProvenance] Error:', err);
     return res.status(500).json({ success: false, error: err.message });
   }
 });

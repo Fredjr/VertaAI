@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import { FileText, CheckCircle, XCircle, AlertCircle, Code, Eye, Wand2, ShieldOff } from 'lucide-react';
+import { FileText, CheckCircle, XCircle, AlertCircle, Code, Eye, Wand2, ShieldOff, Shield } from 'lucide-react';
 // FIX B: Removed TemplateGallery import - template selection is in Step 3
 import RuleBuilder from '@/components/policyPacks/RuleBuilder';
 import PackPreview from '@/components/policyPacks/PackPreview';
@@ -30,13 +30,44 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   // FIX B: Remove 'templates' from tab options (template selection is in Step 3)
-  const [activeTab, setActiveTab] = useState<'surfaces' | 'builder' | 'yaml' | 'preview' | 'waivers'>('yaml');
+  const [activeTab, setActiveTab] = useState<'surfaces' | 'builder' | 'yaml' | 'preview' | 'waivers' | 'agent-policy'>('yaml');
   const [waiversEnabled, setWaiversEnabled] = useState<boolean>(formData.waiversEnabled ?? false);
   const [waiverMaxDays, setWaiverMaxDays] = useState<number>(formData.waiverMaxDays ?? 30);
   const [waiverApprovers, setWaiverApprovers] = useState<string>(formData.waiverApprovers ?? '');
   const [waiverRequiredFields, setWaiverRequiredFields] = useState<string[]>(
     formData.waiverRequiredFields ?? ['reason', 'scope', 'expiry']
   );
+  // Capability constants — must match severityConstants.ts on the backend
+  const CRITICAL_CAPS = ['iam_modify', 'secret_write', 'db_admin', 'infra_delete', 'deployment_modify'];
+  const HIGH_CAPS = ['s3_delete', 's3_write', 'schema_modify', 'network_public', 'infra_create', 'infra_modify', 'secret_read'];
+  const ALL_CAPS = [...CRITICAL_CAPS, ...HIGH_CAPS];
+
+  // Agent Policy state — synced bidirectionally with trackAConfigYamlDraft
+  const [agentPolicyBlocked, setAgentPolicyBlocked] = useState<string[]>(() => {
+    try {
+      const parsed = yaml.load(formData.trackAConfigYamlDraft || '') as any;
+      return parsed?.agentPolicy?.additionalBlocked ?? [];
+    } catch { return []; }
+  });
+  const [agentPolicyApproval, setAgentPolicyApproval] = useState<string[]>(() => {
+    try {
+      const parsed = yaml.load(formData.trackAConfigYamlDraft || '') as any;
+      return parsed?.agentPolicy?.requireApproval ?? [];
+    } catch { return []; }
+  });
+  const [agentMaxFiles, setAgentMaxFiles] = useState<number>(() => {
+    try {
+      const parsed = yaml.load(formData.trackAConfigYamlDraft || '') as any;
+      return parsed?.agentPolicy?.sessionBudgets?.maxFilesChanged ?? 20;
+    } catch { return 20; }
+  });
+  const [agentMaxAbstractions, setAgentMaxAbstractions] = useState<number>(() => {
+    try {
+      const parsed = yaml.load(formData.trackAConfigYamlDraft || '') as any;
+      return parsed?.agentPolicy?.sessionBudgets?.maxNewAbstractions ?? 3;
+    } catch { return 3; }
+  });
+
   // FIX B: Track if template was loaded from Step 3
   const [templateLoadedFromStep3, setTemplateLoadedFromStep3] = useState<boolean>(
     !!(formData.trackAConfigYamlDraft && formData.trackAConfigYamlDraft.length > 100)
@@ -177,6 +208,47 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
     });
   };
 
+  // Sync agentPolicy local state → YAML draft + formData
+  const applyAgentPolicyToYaml = (
+    blocked: string[],
+    approval: string[],
+    maxFiles: number,
+    maxAbstractions: number,
+    currentYaml: string,
+  ): string => {
+    try {
+      const parsed = (yaml.load(currentYaml || '') as any) ?? {};
+      if (blocked.length === 0 && approval.length === 0 && maxFiles === 20 && maxAbstractions === 3) {
+        delete parsed.agentPolicy;
+      } else {
+        parsed.agentPolicy = {
+          ...(blocked.length > 0 ? { additionalBlocked: blocked } : {}),
+          ...(approval.length > 0 ? { requireApproval: approval } : {}),
+          ...(maxFiles !== 20 || maxAbstractions !== 3 ? {
+            sessionBudgets: {
+              ...(maxFiles !== 20 ? { maxFilesChanged: maxFiles } : {}),
+              ...(maxAbstractions !== 3 ? { maxNewAbstractions: maxAbstractions } : {}),
+            },
+          } : {}),
+        };
+      }
+      return yaml.dump(parsed, { indent: 2, lineWidth: 120 });
+    } catch {
+      return currentYaml;
+    }
+  };
+
+  const handleAgentPolicyChange = (
+    blocked: string[],
+    approval: string[],
+    maxFiles: number,
+    maxAbstractions: number,
+  ) => {
+    const updatedYaml = applyAgentPolicyToYaml(blocked, approval, maxFiles, maxAbstractions, yamlContent);
+    setYamlContent(updatedYaml);
+    setFormData({ ...formData, trackAConfigYamlDraft: updatedYaml });
+  };
+
   return (
     <div className="space-y-6">
       {/* Enable Track A */}
@@ -291,6 +363,25 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
                 <div className="flex items-center gap-2">
                   <ShieldOff className="h-4 w-4" />
                   Exceptions &amp; Waivers
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('agent-policy')}
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+                  activeTab === 'agent-policy'
+                    ? 'border-purple-600 text-purple-600 dark:text-purple-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4" />
+                  Agent Policy
+                  {(agentPolicyBlocked.length > 0 || agentPolicyApproval.length > 0) && (
+                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 rounded-full">
+                      {agentPolicyBlocked.length + agentPolicyApproval.length}
+                    </span>
+                  )}
                 </div>
               </button>
             </nav>
@@ -474,6 +565,144 @@ export default function TrackAFormYAML({ formData, setFormData }: TrackAFormYAML
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Agent Policy Tab */}
+            {activeTab === 'agent-policy' && (
+              <div className="space-y-6">
+                {/* Header banner */}
+                <div className="p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
+                  <h3 className="text-sm font-semibold text-purple-900 dark:text-purple-200 flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    Agent Permission Policy
+                  </h3>
+                  <p className="text-xs text-purple-700 dark:text-purple-300 mt-1">
+                    Configure what AI coding agents (Claude Code, Copilot, Cursor, Windsurf, Augment) are allowed to do in this workspace.
+                    These settings are compiled into the permission envelope injected into every AI session automatically.
+                  </p>
+                </div>
+
+                {/* Section 1: Additional Blocked */}
+                <div className="space-y-3">
+                  <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                    <h4 className="text-sm font-semibold text-red-900 dark:text-red-200">🚫 Additional Blocked Capabilities</h4>
+                    <p className="text-xs text-red-700 dark:text-red-300 mt-1">
+                      AI agents will refuse to write code using these capabilities.
+                      The baseline CRITICAL capabilities (marked below) are always blocked regardless of this setting.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {ALL_CAPS.map(cap => {
+                      const isBaseline = CRITICAL_CAPS.includes(cap);
+                      const isChecked = isBaseline || agentPolicyBlocked.includes(cap);
+                      return (
+                        <label key={cap} className={`flex items-center gap-2 p-2 rounded border ${isBaseline ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10 opacity-70 cursor-not-allowed' : 'border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800'}`}>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            disabled={isBaseline}
+                            onChange={() => {
+                              const next = agentPolicyBlocked.includes(cap)
+                                ? agentPolicyBlocked.filter(c => c !== cap)
+                                : [...agentPolicyBlocked, cap];
+                              setAgentPolicyBlocked(next);
+                              handleAgentPolicyChange(next, agentPolicyApproval, agentMaxFiles, agentMaxAbstractions);
+                            }}
+                            className="h-4 w-4 text-red-500 rounded border-gray-300"
+                          />
+                          <span className="text-sm font-mono text-gray-800 dark:text-gray-200">{cap}</span>
+                          {isBaseline && <span className="text-xs text-red-500 ml-auto">baseline</span>}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Section 2: Require Human Approval */}
+                <div className="space-y-3">
+                  <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                    <h4 className="text-sm font-semibold text-blue-900 dark:text-blue-200">👤 Require Human Approval</h4>
+                    <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                      AI agents must pause and get human sign-off before writing code that uses these capabilities.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {ALL_CAPS.map(cap => {
+                      const isChecked = agentPolicyApproval.includes(cap);
+                      return (
+                        <label key={cap} className="flex items-center gap-2 p-2 rounded border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              const next = isChecked
+                                ? agentPolicyApproval.filter(c => c !== cap)
+                                : [...agentPolicyApproval, cap];
+                              setAgentPolicyApproval(next);
+                              handleAgentPolicyChange(agentPolicyBlocked, next, agentMaxFiles, agentMaxAbstractions);
+                            }}
+                            className="h-4 w-4 text-blue-500 rounded border-gray-300"
+                          />
+                          <span className="text-sm font-mono text-gray-800 dark:text-gray-200">{cap}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Section 3: Session Budgets */}
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-gray-900 dark:text-white">📊 Session Budget Overrides</h4>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Limit how much an AI agent can change in a single session. The most restrictive value across all active packs wins.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Max files changed per session
+                      </label>
+                      <input
+                        type="number" min={1} max={200} value={agentMaxFiles}
+                        onChange={e => {
+                          const v = Number(e.target.value);
+                          setAgentMaxFiles(v);
+                          handleAgentPolicyChange(agentPolicyBlocked, agentPolicyApproval, v, agentMaxAbstractions);
+                        }}
+                        className="w-32 rounded-md border-gray-300 dark:border-gray-600 shadow-sm text-sm dark:bg-gray-700 dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Max new abstractions per session
+                      </label>
+                      <input
+                        type="number" min={1} max={50} value={agentMaxAbstractions}
+                        onChange={e => {
+                          const v = Number(e.target.value);
+                          setAgentMaxAbstractions(v);
+                          handleAgentPolicyChange(agentPolicyBlocked, agentPolicyApproval, agentMaxFiles, v);
+                        }}
+                        className="w-32 rounded-md border-gray-300 dark:border-gray-600 shadow-sm text-sm dark:bg-gray-700 dark:text-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section 4: Compiled preview */}
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Preview — Effective Permission Envelope</h4>
+                  <div className="p-4 bg-gray-900 dark:bg-gray-950 text-gray-100 rounded-lg font-mono text-xs space-y-1">
+                    <div><span className="text-red-400">🚫 Blocked:</span> {[...CRITICAL_CAPS, ...agentPolicyBlocked.filter(c => !CRITICAL_CAPS.includes(c))].join(', ') || '—'}</div>
+                    <div><span className="text-yellow-400">⚠️ Requires declaration:</span> {HIGH_CAPS.filter(c => !agentPolicyBlocked.includes(c)).join(', ') || '—'}</div>
+                    <div><span className="text-blue-400">👤 Requires approval:</span> {agentPolicyApproval.length > 0 ? agentPolicyApproval.join(', ') : 'iam_modify, secret_write (baseline)'}</div>
+                    <div><span className="text-green-400">✅ Always allowed:</span> db_read, s3_read, api_endpoint</div>
+                    <div className="pt-1 border-t border-gray-700"><span className="text-gray-400">Session:</span> max {agentMaxFiles} files · max {agentMaxAbstractions} abstractions</div>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    This preview reflects this pack&apos;s contribution. The final envelope merges all active packs — visible at the top of the Policy Packs page.
+                  </p>
+                </div>
               </div>
             )}
           </div>
