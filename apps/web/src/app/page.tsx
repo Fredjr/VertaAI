@@ -164,7 +164,59 @@ export default function MarketingPage() {
         .mkt-footer a { color: var(--muted); text-decoration: none; }
         .mkt-footer a:hover { color: var(--text); }
         code { font-family: 'SF Mono','Fira Code',monospace; font-size: 0.75rem; color: var(--accent2); }
-        @media (max-width: 640px) { .mkt-nav { padding: 0 1rem; } .mkt-nav-links { display: none; } .mkt-section { padding: 3rem 1rem; } .comparison-grid { grid-template-columns: 1fr; } .sbr-wrap { grid-template-columns: 1fr; } .sbr-arrow { display: none; } }
+
+        /* ── RESPONSIVE ── */
+        @media (max-width: 900px) {
+          .grid-4 { grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); }
+        }
+        @media (max-width: 768px) {
+          /* Pipeline: horizontal scroll instead of ugly wrap */
+          .pipeline { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 0.75rem; -webkit-overflow-scrolling: touch; gap: 0.15rem; }
+          .pipeline-wrap { padding: 1rem; }
+          .pipeline-node { min-width: 80px; max-width: 100px; flex: 0 0 88px; padding: 0.6rem 0.5rem; }
+          .pipeline-node .pn-title { font-size: 0.7rem; }
+          .pipeline-node .pn-track { font-size: 0.55rem; }
+          .pipeline-arrow { font-size: 0.75rem; padding: 0; }
+          .pipeline-loop-row { font-size: 0.7rem; }
+          /* Spec→Build→Run: stack vertically */
+          .sbr-wrap { grid-template-columns: 1fr; gap: 0.5rem; }
+          .sbr-arrow { display: none; }
+          /* Comparison: single column */
+          .comparison-grid { grid-template-columns: 1fr; }
+          /* Timeline: tighten number */
+          .timeline-item { grid-template-columns: 40px 1fr; gap: 1rem; }
+          .timeline-number { width: 40px; height: 40px; font-size: 0.95rem; }
+          /* Stats bar: 2 cols */
+          .stats-bar { grid-template-columns: repeat(2,1fr); }
+          /* Quality grid */
+          .quality-grid { grid-template-columns: repeat(2,1fr); }
+          /* Sections */
+          .mkt-section { padding: 2.5rem 1rem; }
+          h1 { font-size: 2rem; }
+          h2 { font-size: 1.4rem; }
+        }
+        @media (max-width: 640px) {
+          .mkt-nav { padding: 0 1rem; }
+          .mkt-nav-links { display: none; }
+          .hero { padding: 2rem 1rem 2rem; min-height: auto; padding-top: calc(60px + 2rem); }
+          .hero-sub { gap: 0.4rem; }
+          .track-pill { font-size: 0.62rem; padding: 0.15rem 0.55rem; }
+          .editor-strip { gap: 0.35rem; }
+          .editor-chip { font-size: 0.72rem; padding: 0.25rem 0.6rem; }
+          .stats-bar { grid-template-columns: repeat(2,1fr); }
+          .stat-num { font-size: 1.6rem; }
+          .grid-3 { grid-template-columns: 1fr; }
+          .grid-4 { grid-template-columns: 1fr; }
+          .grid-2 { grid-template-columns: 1fr; }
+          .int-grid { grid-template-columns: 1fr 1fr; }
+          .perm-grid { grid-template-columns: 1fr 1fr; }
+          h1 { font-size: 1.8rem; }
+          h2 { font-size: 1.25rem; }
+          .lead { font-size: 1rem; }
+          .quality-grid { grid-template-columns: 1fr 1fr; }
+          .btn-primary, .btn-secondary { width: 100%; text-align: center; }
+          .hero-actions { flex-direction: column; }
+        }
       `}</style>
 
       <div className="mkt">
@@ -190,9 +242,9 @@ export default function MarketingPage() {
               <div className="hero-sub">
                 <span className="label">AI Agent Governance</span>
                 <span className="track-pill track-0">Track 0 · Pre-flight</span>
+                <span className="track-pill track-1">Track 1 · In-Editor</span>
                 <span className="track-pill track-a">Track A · PR Gate</span>
                 <span className="track-pill track-b">Track B · Runtime</span>
-                <span className="track-pill track-1">Track 1 · In-Editor</span>
               </div>
               <h1>Stop runaway AI agents<br /><span className="gradient-text">before they ship.</span></h1>
               <p className="lead hero-desc">VertaAI enforces your engineering policies at every stage of the AI coding workflow — before an agent writes code, at PR review, in production, and back in the editor. Four tracks. One closed loop. Five editors.</p>
