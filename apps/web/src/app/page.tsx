@@ -80,8 +80,8 @@ export default function MarketingPage() {
         .track-1 { background: rgba(251,146,60,0.15);  color: #fdba74; border: 1px solid rgba(251,146,60,0.3); }
 
         /* ── HERO ── */
-        .hero { min-height: calc(100vh - 64px); display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 5rem 1.5rem 4rem; max-width: 1100px; margin: 0 auto; position: relative; }
-        .hero-glow { position: absolute; top: -80px; left: 50%; transform: translateX(-50%); width: 900px; height: 600px; background: radial-gradient(circle, rgba(99,102,241,0.18) 0%, transparent 65%); pointer-events: none; z-index: 0; }
+        .hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 7rem 1.5rem 5rem; max-width: 1100px; margin: 0 auto; position: relative; }
+        .hero-glow { position: absolute; top: -20px; left: 50%; transform: translateX(-50%); width: 900px; height: 500px; background: radial-gradient(circle, rgba(99,102,241,0.18) 0%, transparent 65%); pointer-events: none; z-index: 0; }
         .hero > * { position: relative; z-index: 1; }
         .hero-sub { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-bottom: 2rem; flex-wrap: wrap; }
         .hero-desc { margin: 1.75rem auto 2.25rem; }
@@ -236,7 +236,7 @@ export default function MarketingPage() {
           .mkt-nav-links { display: none; }
           .mkt-hamburger { display: flex; }
           .stats-bar { display: none; }
-          .hero { padding: 2rem 1rem 2rem; min-height: auto; padding-top: calc(64px + 2rem); }
+          .hero { padding: 3rem 1rem 3rem; }
           .hero-glow { width: 400px; height: 300px; }
           .hero-sub { gap: 0.35rem; }
           .track-pill { font-size: 0.6rem; padding: 0.15rem 0.5rem; }
