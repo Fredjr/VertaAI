@@ -306,14 +306,20 @@ export default function MarketingPage() {
                   <div className="pipeline-arrow">→</div>
                   <div className="pipeline-node pb"><div className="pn-track">Track B</div><div className="pn-title">Runtime Monitor</div></div>
                 </div>
-                <div className="pipeline-loop-row">
-                  <span>⬑</span>
-                  <span><strong>Track 1:</strong> Drift detected in production → alert pushed live into the developer&apos;s editor via SSE — no context switch required</span>
+                {/* Track 1 return node */}
+                <div style={{display:'flex',alignItems:'center',gap:'0.25rem',marginTop:'0.35rem',paddingTop:'0.6rem',borderTop:'1px dashed rgba(251,146,60,0.3)'}}>
+                  <span style={{color:'#fdba74',fontSize:'0.8rem',flexShrink:0}}>↑ editor</span>
+                  <div style={{flex:1,borderTop:'1px dashed rgba(251,146,60,0.25)',height:0}}></div>
+                  <div className="pipeline-node p1" style={{flexShrink:0,flex:'none',minWidth:'auto'}}>
+                    <div className="pn-track">Track 1</div>
+                    <div className="pn-title">In-Editor Alert</div>
+                  </div>
+                  <span style={{color:'#fdba74',fontSize:'0.8rem',flexShrink:0}}>↓ from B</span>
                 </div>
               </div>
             </div>
 
-            {/* 4 TRACK CARDS */}
+            {/* 4 TRACK CARDS — order: 0, 1, A, B */}
             <div className="mkt-section" style={{paddingTop:'0'}}>
               <div className="grid-4">
                 <div className="track-card t0">
@@ -325,6 +331,17 @@ export default function MarketingPage() {
                     <li>Injected into 5 editor config files</li>
                     <li>5 blocked + 7 declaration-required caps</li>
                     <li>Session budgets: max files + abstractions</li>
+                  </ul>
+                </div>
+                <div className="track-card t1">
+                  <span className="track-pill track-1">Track 1</span>
+                  <div className="track-title">In-Editor Governance Feedback</div>
+                  <div className="track-desc">When production drift is detected, VertaAI pushes the alert directly into the developer&apos;s editor in real-time via SSE — no context switch, no Slack tab hunting.</div>
+                  <ul className="track-bullets">
+                    <li>Real-time SSE push to open editors</li>
+                    <li>CodeLens: agent · PR · quality score</li>
+                    <li>Closes the governance loop</li>
+                    <li>Alert surfaced where code lives</li>
                   </ul>
                 </div>
                 <div className="track-card ta">
@@ -347,17 +364,6 @@ export default function MarketingPage() {
                     <li>Decay-weighted severity scoring</li>
                     <li>Cross-service correlation signals</li>
                     <li>Auto-close when drift resolves</li>
-                  </ul>
-                </div>
-                <div className="track-card t1">
-                  <span className="track-pill track-1">Track 1</span>
-                  <div className="track-title">In-Editor Governance Feedback</div>
-                  <div className="track-desc">When production drift is detected, VertaAI pushes the alert directly into the developer&apos;s editor in real-time via SSE — no context switch, no Slack tab hunting.</div>
-                  <ul className="track-bullets">
-                    <li>Real-time SSE push to open editors</li>
-                    <li>CodeLens: agent · PR · quality score</li>
-                    <li>Closes the governance loop</li>
-                    <li>Alert surfaced where code lives</li>
                   </ul>
                 </div>
               </div>
@@ -399,9 +405,15 @@ export default function MarketingPage() {
                       </div>
                   )}
                 </div>
-                <div className="pipeline-loop-row">
-                  <span>⬑</span>
-                  <strong>Track 1:</strong> drift detected → alert pushed to editor in real-time via SSE
+                {/* Track 1 return node */}
+                <div style={{display:'flex',alignItems:'center',gap:'0.25rem',marginTop:'0.35rem',paddingTop:'0.6rem',borderTop:'1px dashed rgba(251,146,60,0.3)'}}>
+                  <span style={{color:'#fdba74',fontSize:'0.8rem',flexShrink:0}}>↑ editor</span>
+                  <div style={{flex:1,borderTop:'1px dashed rgba(251,146,60,0.25)',height:0}}></div>
+                  <div className="pipeline-node p1" style={{flexShrink:0,flex:'none',minWidth:'auto'}}>
+                    <div className="pn-track">Track 1</div>
+                    <div className="pn-title">In-Editor Alert</div>
+                  </div>
+                  <span style={{color:'#fdba74',fontSize:'0.8rem',flexShrink:0}}>↓ from B</span>
                 </div>
               </div>
 
@@ -422,6 +434,34 @@ export default function MarketingPage() {
                       <div className="t-block" style={{marginTop:'0.5rem'}}>🚫 BLOCKED: iam_modify · secret_write · db_admin · infra_delete · deployment_modify</div>
                       <div className="t-warn" style={{marginTop:'0.25rem'}}>⚠️ DECLARE BEFORE USE: s3_delete · s3_write · schema_modify · network_public · infra_create · infra_modify · secret_read</div>
                       <div className="t-ok" style={{marginTop:'0.25rem'}}>📋 SESSION BUDGETS: max 20 files · max 3 new abstractions per session</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Track 1 */}
+              <div className="timeline-item">
+                <div className="timeline-number tn-1">1</div>
+                <div className="timeline-content">
+                  <span className="track-pill track-1" style={{marginBottom:'0.5rem',display:'inline-block'}}>Track 1 · In-Editor</span>
+                  <h3>Production drift surfaces in the editor — not just Slack</h3>
+                  <p>When Track B detects drift in production, VertaAI pushes a real-time governance event via SSE directly into the developer&apos;s open editor. The developer sees the alert in context — right where the code lives — without switching tabs or waiting for an on-call ping.</p>
+                  <div className="terminal">
+                    <div className="terminal-bar">
+                      <div className="terminal-dot" style={{background:'#ff5f57'}}></div><div className="terminal-dot" style={{background:'#febc2e'}}></div><div className="terminal-dot" style={{background:'#28c840'}}></div>
+                      <span style={{color:'var(--muted)',fontSize:'0.78rem',marginLeft:'0.5rem'}}>userService.ts — VertaAI In-Editor Alert</span>
+                    </div>
+                    <div className="terminal-body">
+                      <div className="t-orange">⚡ VertaAI [Track 1] — Production drift detected in this file&apos;s service</div>
+                      <div className="t-out">&nbsp;&nbsp;Capability: iam_modify &nbsp;·&nbsp; Source: CloudTrail &nbsp;·&nbsp; Severity: CRITICAL</div>
+                      <div className="t-out">&nbsp;&nbsp;This capability was not declared in intent artifact for PR #142</div>
+                      <div className="t-out" style={{marginTop:'0.25rem'}}>&nbsp;&nbsp;Remediation A: Remove policy attachment from role arn:aws:iam::123:role/UserServiceRole</div>
+                      <div className="t-out">&nbsp;&nbsp;[View full drift cluster →] &nbsp;·&nbsp; [Mark as declared →] &nbsp;·&nbsp; [Open PagerDuty →]</div>
+                      <div className="t-ok" style={{marginTop:'0.5rem'}}>🤖 agent · PR #142 | Quality: 84/100</div>
+                      <div className="t-out">export async function createUser(data: CreateUserInput) &#123;</div>
+                      <div className="t-out">&nbsp; const user = await db.user.create(&#123; data &#125;);</div>
+                      <div className="t-out">&nbsp; return user;</div>
+                      <div className="t-out">&#125;</div>
                     </div>
                   </div>
                 </div>
@@ -469,34 +509,6 @@ export default function MarketingPage() {
                       <div className="t-out">Correlation: iam_modify shared across [user-service, auth-service]</div>
                       <div className="t-out" style={{marginTop:'0.25rem'}}>Remediation A: Remove policy attachment &nbsp;·&nbsp; B: Add permission boundary &nbsp;·&nbsp; C: Declare + get approval</div>
                       <div className="t-out">PagerDuty: PD-291847 &nbsp;·&nbsp; Slack: #ai-governance &nbsp;·&nbsp; → Track 1 push sent to editor</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Track 1 */}
-              <div className="timeline-item">
-                <div className="timeline-number tn-1">1</div>
-                <div className="timeline-content">
-                  <span className="track-pill track-1" style={{marginBottom:'0.5rem',display:'inline-block'}}>Track 1 · In-Editor</span>
-                  <h3>Production drift surfaces in the editor — not just Slack</h3>
-                  <p>When Track B detects drift in production, VertaAI pushes a real-time governance event via SSE directly into the developer&apos;s open editor. The developer sees the alert in context — right where the code lives — without switching tabs or waiting for an on-call ping.</p>
-                  <div className="terminal">
-                    <div className="terminal-bar">
-                      <div className="terminal-dot" style={{background:'#ff5f57'}}></div><div className="terminal-dot" style={{background:'#febc2e'}}></div><div className="terminal-dot" style={{background:'#28c840'}}></div>
-                      <span style={{color:'var(--muted)',fontSize:'0.78rem',marginLeft:'0.5rem'}}>userService.ts — VertaAI In-Editor Alert</span>
-                    </div>
-                    <div className="terminal-body">
-                      <div className="t-orange">⚡ VertaAI [Track 1] — Production drift detected in this file&apos;s service</div>
-                      <div className="t-out">&nbsp;&nbsp;Capability: iam_modify &nbsp;·&nbsp; Source: CloudTrail &nbsp;·&nbsp; Severity: CRITICAL</div>
-                      <div className="t-out">&nbsp;&nbsp;This capability was not declared in intent artifact for PR #142</div>
-                      <div className="t-out" style={{marginTop:'0.25rem'}}>&nbsp;&nbsp;Remediation A: Remove policy attachment from role arn:aws:iam::123:role/UserServiceRole</div>
-                      <div className="t-out">&nbsp;&nbsp;[View full drift cluster →] &nbsp;·&nbsp; [Mark as declared →] &nbsp;·&nbsp; [Open PagerDuty →]</div>
-                      <div className="t-ok" style={{marginTop:'0.5rem'}}>🤖 agent · PR #142 | Quality: 84/100</div>
-                      <div className="t-out">export async function createUser(data: CreateUserInput) &#123;</div>
-                      <div className="t-out">&nbsp; const user = await db.user.create(&#123; data &#125;);</div>
-                      <div className="t-out">&nbsp; return user;</div>
-                      <div className="t-out">&#125;</div>
                     </div>
                   </div>
                 </div>
