@@ -5,8 +5,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'VertaAI - Knowledge Drift Agent',
-  description: 'Keep your operational documentation correct automatically',
+  title: 'VertaAI — AI Agent Governance for Engineering Teams',
+  description: 'VertaAI enforces policy at every stage of the AI coding workflow — before an agent writes code, at PR review, and in production runtime.',
 };
 
 export default function RootLayout({
