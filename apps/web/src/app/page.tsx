@@ -287,12 +287,12 @@ export default function MarketingPage() {
 
             {/* PIPELINE DIAGRAM */}
             <div className="mkt-section" style={{paddingTop:'0'}}>
-              <div className="label">The Closed-Loop Architecture</div>
+              <div className="label">The Governance Pipeline</div>
               <h2>Four tracks. One source of truth.</h2>
-              <p className="lead" style={{marginTop:'1rem',marginBottom:'1.5rem'}}>VertaAI intercepts the AI coding workflow at four moments — and closes the loop by pushing production intelligence back into the editor.</p>
+              <p className="lead" style={{marginTop:'1rem',marginBottom:'1.5rem'}}>VertaAI intercepts the AI coding workflow at every stage — from the first keystroke to production. Tracks 0 and 1 live inside the editor. Tracks A and B enforce at PR time and runtime.</p>
 
               <div className="pipeline-wrap">
-                <h4>Governance pipeline — left to right, then back</h4>
+                <h4>Governance pipeline — left to right</h4>
                 <div className="pipeline">
                   <div className="pipeline-node p-neutral"><div className="pn-track" style={{color:'var(--muted)'}}>Start</div><div className="pn-title">Open Editor</div></div>
                   <div className="pipeline-arrow">→</div>
@@ -300,21 +300,13 @@ export default function MarketingPage() {
                   <div className="pipeline-arrow">→</div>
                   <div className="pipeline-node p-neutral"><div className="pn-track" style={{color:'var(--muted)'}}>Code</div><div className="pn-title">Agent Writes Code</div></div>
                   <div className="pipeline-arrow">→</div>
+                  <div className="pipeline-node p1"><div className="pn-track">Track 1</div><div className="pn-title">In-Editor · Live</div></div>
+                  <div className="pipeline-arrow">→</div>
                   <div className="pipeline-node pa"><div className="pn-track">Track A</div><div className="pn-title">PR Gate · 5 Checks</div></div>
                   <div className="pipeline-arrow">→</div>
                   <div className="pipeline-node p-neutral"><div className="pn-track" style={{color:'var(--muted)'}}>Ship</div><div className="pn-title">Merge + Deploy</div></div>
                   <div className="pipeline-arrow">→</div>
-                  <div className="pipeline-node pb"><div className="pn-track">Track B</div><div className="pn-title">Runtime Monitor</div></div>
-                </div>
-                {/* Track 1 return node */}
-                <div style={{display:'flex',alignItems:'center',gap:'0.25rem',marginTop:'0.35rem',paddingTop:'0.6rem',borderTop:'1px dashed rgba(251,146,60,0.3)'}}>
-                  <span style={{color:'#fdba74',fontSize:'0.8rem',flexShrink:0}}>↑ editor</span>
-                  <div style={{flex:1,borderTop:'1px dashed rgba(251,146,60,0.25)',height:0}}></div>
-                  <div className="pipeline-node p1" style={{flexShrink:0,flex:'none',minWidth:'auto'}}>
-                    <div className="pn-track">Track 1</div>
-                    <div className="pn-title">In-Editor Alert</div>
-                  </div>
-                  <span style={{color:'#fdba74',fontSize:'0.8rem',flexShrink:0}}>↓ from B</span>
+                  <div className="pipeline-node pb"><div className="pn-track">Track B</div><div className="pn-title">Runtime Audit</div></div>
                 </div>
               </div>
             </div>
@@ -378,8 +370,8 @@ export default function MarketingPage() {
           <>
             <div className="mkt-section">
               <div className="label">How It Works</div>
-              <h2>Four enforced stages. One feedback loop.</h2>
-              <p className="lead" style={{marginTop:'1rem',marginBottom:'2rem'}}>Every AI-generated code change flows through the VertaAI governance pipeline — and production intelligence flows back to the editor.</p>
+              <h2>Four enforced stages. One pipeline.</h2>
+              <p className="lead" style={{marginTop:'1rem',marginBottom:'2rem'}}>Tracks 0 and 1 govern what happens inside the editor. Track A gates the PR. Track B audits production. Together they cover every moment from first keystroke to deployed code.</p>
 
               {/* Pipeline diagram */}
               <div className="pipeline-wrap">
@@ -392,11 +384,13 @@ export default function MarketingPage() {
                     null,
                     {cls:'p-neutral',track:'',title:'Write Code'},
                     null,
+                    {cls:'p1',track:'Track 1',title:'In-Editor · Live'},
+                    null,
                     {cls:'pa',track:'Track A',title:'PR Gate'},
                     null,
                     {cls:'p-neutral',track:'',title:'Merge + Deploy'},
                     null,
-                    {cls:'pb',track:'Track B',title:'Runtime Monitor'},
+                    {cls:'pb',track:'Track B',title:'Runtime Audit'},
                   ].map((node,i) => node === null
                     ? <div key={i} className="pipeline-arrow">→</div>
                     : <div key={i} className={`pipeline-node ${node.cls}`}>
@@ -404,16 +398,6 @@ export default function MarketingPage() {
                         <div className="pn-title">{node.title}</div>
                       </div>
                   )}
-                </div>
-                {/* Track 1 return node */}
-                <div style={{display:'flex',alignItems:'center',gap:'0.25rem',marginTop:'0.35rem',paddingTop:'0.6rem',borderTop:'1px dashed rgba(251,146,60,0.3)'}}>
-                  <span style={{color:'#fdba74',fontSize:'0.8rem',flexShrink:0}}>↑ editor</span>
-                  <div style={{flex:1,borderTop:'1px dashed rgba(251,146,60,0.25)',height:0}}></div>
-                  <div className="pipeline-node p1" style={{flexShrink:0,flex:'none',minWidth:'auto'}}>
-                    <div className="pn-track">Track 1</div>
-                    <div className="pn-title">In-Editor Alert</div>
-                  </div>
-                  <span style={{color:'#fdba74',fontSize:'0.8rem',flexShrink:0}}>↓ from B</span>
                 </div>
               </div>
 
