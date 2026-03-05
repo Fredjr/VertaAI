@@ -297,8 +297,8 @@ export default function MarketingPage() {
                 <span className="track-pill track-a">Track A · PR Gate</span>
                 <span className="track-pill track-b">Track B · Runtime</span>
               </div>
-              <h1>Stop runaway AI agents<br /><span className="gradient-text">before they ship.</span></h1>
-              <p className="lead hero-desc">Permission envelope before writing. Live alerts while coding. Policy gate at PR. Production audit after deploy.</p>
+              <h1>Stop runaway AI agents.<br /><span className="gradient-text">Before they cost you.</span></h1>
+              <p className="lead hero-desc">The Spec→Build→Run governance platform for AI coding agents. Four tracks. Five editors. Zero ungoverned code.</p>
               <div className="hero-actions">
                 <a href="mailto:hello@vertaai.io" className="btn-primary">Request Early Access</a>
                 <button className="btn-secondary" onClick={() => setSection('howitworks')}>See How It Works →</button>
