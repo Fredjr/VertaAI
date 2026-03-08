@@ -1766,12 +1766,24 @@ app.post('/mcp', async (req: Request, res: Response) => {
         return { allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service };
       },
       declareSessionIntent: async (workspaceId, sessionId, rawPrompt, service, ticketRef, scopeHint) => {
-        const intent = await prisma.sessionIntent.upsert({
-          where: { workspaceId_sessionId: { workspaceId, sessionId } },
-          update: { rawPrompt, service, ticketRef, scopeHint, status: 'active', closedAt: null },
-          create: { workspaceId, sessionId, rawPrompt, service, ticketRef, scopeHint },
-        });
-        const policy = await compileAgentPermissions(workspaceId);
+        const [intent, policy, recentArtifacts] = await Promise.all([
+          prisma.sessionIntent.upsert({
+            where: { workspaceId_sessionId: { workspaceId, sessionId } },
+            update: { rawPrompt, service, ticketRef, scopeHint, status: 'active', closedAt: null },
+            create: { workspaceId, sessionId, rawPrompt, service, ticketRef, scopeHint },
+          }),
+          compileAgentPermissions(workspaceId),
+          prisma.intentArtifact.findMany({
+            where: {
+              workspaceId,
+              ...(service ? { affectedServices: { has: service } } : {}),
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            select: { specBuildFindings: true, agentIdentity: true, authorType: true, prNumber: true, createdAt: true },
+          }),
+        ]);
+        const structuralContext = buildStructuralContext(recentArtifacts);
         return {
           sessionIntentId: intent.id,
           policy: {
@@ -1781,6 +1793,7 @@ app.post('/mcp', async (req: Request, res: Response) => {
             requireDeclaration: policy.requireDeclaration,
             warningThresholdPercent: 80,
           },
+          structuralContext,
         };
       },
       workspaceId: scopedWorkspaceId,

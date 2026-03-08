@@ -828,6 +828,23 @@ function buildClaudeMd(workspaceId: string, apiUrl: string): string {
     'This workspace is governed by **VertaAI** runtime capability governance.',
     `Workspace ID: \`${workspaceId}\` | API: \`${apiUrl}\``,
     '',
+    '## Session start (MANDATORY — do this FIRST)',
+    '',
+    'Call `declare_session_intent` before writing any code. Pass the developer\'s prompt,',
+    'the target service name, and the ticket reference. The tool returns:',
+    '- Your permission envelope (what you can/cannot use)',
+    '- Existing abstractions in this workspace (check before creating new utilities)',
+    '- Session budget (max files you can touch before needing a scope review)',
+    '',
+    '```',
+    'declare_session_intent({',
+    '  sessionId: "<stable-id-for-this-session>",',
+    '  rawPrompt: "<developer\'s natural language prompt>",',
+    '  service: "<service-name>",',
+    '  ticketRef: "JIRA-123"',
+    '})',
+    '```',
+    '',
     '## Pre-flight rule (MANDATORY)',
     '',
     'Before writing code that touches **any** of the following, call the',
@@ -920,6 +937,11 @@ async function buildCopilotInstructions(workspaceId: string, apiUrl: string): Pr
     '',
     'This workspace is governed by **VertaAI** runtime capability governance.',
     `Workspace ID: \`${workspaceId}\``,
+    '',
+    '## MANDATORY: session start',
+    '',
+    'Call `vertaai_declare_session_intent` FIRST with the developer\'s prompt and the target service.',
+    'This loads the abstraction inventory (existing utilities to reuse) and your session budget.',
     '',
     '## MANDATORY pre-flight rule',
     '',
@@ -1318,6 +1340,16 @@ async function initSession(): Promise<void> {
 
   // Also fetch the full policy summary to ensure budgets are current (GAP 4)
   await pollPolicySummary();
+
+  // If no local GOVERNANCE.md exists, fetch and write it so agents have governance context
+  // from the very first message — not only after a drift event arrives.
+  if (!governanceFileFound) {
+    const content = await fetchApiContent();
+    if (content) {
+      processGovernanceMarkdown(content, 'api');
+      writeGovernanceMd(content);
+    }
+  }
 }
 
 /**

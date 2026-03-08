@@ -94,7 +94,16 @@ export interface GovernanceMcpOpts {
     service?: string,
     ticketRef?: string,
     scopeHint?: string,
-  ) => Promise<{ sessionIntentId: string; policy: Record<string, unknown> }>;
+  ) => Promise<{
+    sessionIntentId: string;
+    policy: Record<string, unknown>;
+    structuralContext?: {
+      existingAbstractions: Array<{ file: string; capability: string }>;
+      activeTechnicalDebt: Array<{ prNumber: number; score: number; authorType: string }>;
+      duplicateAbstractionFrequency: number;
+      missingTestFrequency: number;
+    };
+  }>;
   /**
    * Optional workspace this session is scoped to.
    * If set, notifications are filtered and the resource list is scoped to this workspace.
@@ -416,6 +425,8 @@ export function createGovernanceMcpServer(opts: GovernanceMcpOpts): McpServer {
           warningThresholdPercent?: number;
         };
 
+        const ctx = result.structuralContext;
+
         const lines: string[] = [
           '# ✅ Session Intent Declared',
           '',
@@ -430,10 +441,36 @@ export function createGovernanceMcpServer(opts: GovernanceMcpOpts): McpServer {
           `- Max new abstractions: **${policy.maxNewAbstractions ?? 3}**`,
           `- 🚫 BLOCKED capabilities: ${(policy.blockedCapabilities ?? []).join(', ') || 'none'}`,
           `- ⚠️ REQUIRES DECLARATION: ${(policy.requireDeclaration ?? []).join(', ') || 'none'}`,
+        ];
+
+        // Structural context — prevents duplicate abstractions before the agent writes a line
+        if (ctx && (ctx.existingAbstractions.length > 0 || ctx.duplicateAbstractionFrequency > 0)) {
+          lines.push('', '## Existing Abstractions (check before creating new utilities)');
+          for (const a of ctx.existingAbstractions.slice(0, 10)) {
+            lines.push(`- \`${a.file}\` — ${a.capability}`);
+          }
+          if (ctx.existingAbstractions.length > 10) {
+            lines.push(`- …and ${ctx.existingAbstractions.length - 10} more`);
+          }
+          if (ctx.duplicateAbstractionFrequency > 0) {
+            lines.push('', `> ⚠️ ${ctx.duplicateAbstractionFrequency} of the last 10 PRs introduced duplicate abstractions — check the list above before creating new utility functions.`);
+          }
+          if (ctx.missingTestFrequency > 0) {
+            lines.push(`> ⚠️ ${ctx.missingTestFrequency} of the last 10 PRs were missing tests — add tests before committing.`);
+          }
+          if (ctx.activeTechnicalDebt.length > 0) {
+            lines.push('', '## Active Technical Debt');
+            for (const d of ctx.activeTechnicalDebt.slice(0, 5)) {
+              lines.push(`- PR #${d.prNumber} (${d.authorType}): quality score ${d.score}/100`);
+            }
+          }
+        }
+
+        lines.push(
           '',
           'Track 1 real-time in-editor alerts are now active for this session. ',
           'Track 0 governance rules are loaded. Call `check_capability_intent` before using any listed capabilities.',
-        ].filter(Boolean);
+        );
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       },
