@@ -929,22 +929,37 @@ app.post('/api/workspaces/:id/session-intent', async (req: Request, res: Respons
   }
 
   try {
-    // Upsert: allow the extension to re-send on reconnect without duplicates
-    const intent = await prisma.sessionIntent.upsert({
-      where: { workspaceId_sessionId: { workspaceId, sessionId } },
-      update: {
-        rawPrompt: rawPrompt ?? undefined,
-        service: service ?? undefined,
-        ticketRef: ticketRef ?? undefined,
-        scopeHint: scopeHint ?? undefined,
-        status: 'active',
-        closedAt: null,
-      },
-      create: { workspaceId, sessionId, rawPrompt, service, ticketRef, scopeHint },
-    });
+    const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-    // Return the effective policy so the extension can cache it immediately
-    const policy = await compileAgentPermissions(workspaceId);
+    // Parallel: upsert session, compile policy, fetch recent artifacts for structural context
+    const [intent, policy, recentArtifacts] = await Promise.all([
+      prisma.sessionIntent.upsert({
+        where: { workspaceId_sessionId: { workspaceId, sessionId } },
+        update: {
+          rawPrompt: rawPrompt ?? undefined,
+          service: service ?? undefined,
+          ticketRef: ticketRef ?? undefined,
+          scopeHint: scopeHint ?? undefined,
+          status: 'active',
+          closedAt: null,
+        },
+        create: { workspaceId, sessionId, rawPrompt, service, ticketRef, scopeHint },
+      }),
+      compileAgentPermissions(workspaceId),
+      prisma.intentArtifact.findMany({
+        where: {
+          workspaceId,
+          createdAt: { gte: cutoff90d },
+          ...(service ? { affectedServices: { has: service } } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+        select: { specBuildFindings: true, agentIdentity: true, authorType: true, prNumber: true, createdAt: true },
+      }),
+    ]);
+
+    const structuralContext = buildStructuralContext(recentArtifacts);
+
     return res.json({
       success: true,
       sessionIntent: { id: intent.id, sessionId: intent.sessionId, workspaceId: intent.workspaceId },
@@ -955,6 +970,7 @@ app.post('/api/workspaces/:id/session-intent', async (req: Request, res: Respons
         requireDeclaration: policy.requireDeclaration,
         warningThresholdPercent: 80,
       },
+      structuralContext,
     });
   } catch (err: any) {
     console.error('[SessionIntent] Error:', err);
@@ -1006,11 +1022,16 @@ app.patch('/api/workspaces/:id/session-intent/:sessionId/scan-report', async (re
       }
     }
 
-    // Determine which detected capabilities are NOT in any recent spec
-    const undeclared = detectedCapabilities.filter(c => !declaredTypes.has(c.type));
-
-    // Fetch policy budgets for budget status
+    // Fetch policy budgets for budget status (also needed for alwaysAllowed filter)
     const policy = await compileAgentPermissions(workspaceId);
+
+    // Capabilities always permitted — never flag as undeclared regardless of IntentArtifact
+    const alwaysAllowed = new Set<string>(policy.alwaysAllowed);
+
+    // Determine which detected capabilities are NOT in any recent spec AND NOT always-allowed
+    const undeclared = detectedCapabilities.filter(
+      c => !declaredTypes.has(c.type) && !alwaysAllowed.has(c.type),
+    );
     const maxFiles = policy.sessionBudgets.maxFilesChanged;
     const filesUsed = filesModified.length;
     const filesWarning = Math.floor(maxFiles * 0.8);
@@ -1776,6 +1797,7 @@ app.post('/mcp', async (req: Request, res: Response) => {
           prisma.intentArtifact.findMany({
             where: {
               workspaceId,
+              createdAt: { gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) },
               ...(service ? { affectedServices: { has: service } } : {}),
             },
             orderBy: { createdAt: 'desc' },

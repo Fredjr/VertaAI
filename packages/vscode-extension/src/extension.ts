@@ -122,7 +122,7 @@ let policyBudgets = {
   requireDeclaration: [] as string[],
 };
 
-/** Accumulated capabilities from local scanner — drained by reportScanToApi (debounced). */
+/** Accumulated capabilities from local scanner — represents current state per file. */
 const pendingCapabilities: Array<{ type: string; target?: string; file: string; line: number }> = [];
 
 /** Debounce timer for reportScanToApi. */
@@ -133,6 +133,22 @@ let gitDiffTimer: NodeJS.Timeout | undefined;
 
 /** Last known set of unstaged file paths (for delta detection). */
 let lastGitDiffFiles = new Set<string>();
+
+/**
+ * Abstraction inventory from the last session-intent or declare_session_intent response.
+ * Maps capability type → files that already implement it, for duplicate detection.
+ * Populated at session start; used to flag "this capability already exists in X".
+ */
+let existingAbstractions: Array<{ file: string; capability: string }> = [];
+
+/**
+ * Capability types the server has confirmed are undeclared (from scan-report response or SSE).
+ * Used to escalate those diagnostics from Warning → Error severity.
+ */
+const serverConfirmedUndeclared = new Set<string>();
+
+/** Reference to the session budget CodeLens provider (fires refresh on state change). */
+let sessionBudgetLensProvider: VertaAISessionBudgetLens | undefined;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CodeLens provider — AI provenance at line 0
@@ -193,6 +209,53 @@ class VertaAICodeLensProvider implements vscode.CodeLensProvider {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Session Budget CodeLens — inline session state at line 0 (pure local, no API)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Shows a second CodeLens at line 0 of source files indicating the current session
+ * budget and any server-confirmed undeclared capabilities.
+ * Refreshed whenever session state changes (save, scan-report, SSE, git diff).
+ * Purely local — no API call needed.
+ */
+class VertaAISessionBudgetLens implements vscode.CodeLensProvider {
+  private readonly _onDidChange = new vscode.EventEmitter<void>();
+  readonly onDidChangeCodeLenses: vscode.Event<void> = this._onDidChange.event;
+
+  fireChange(): void { this._onDidChange.fire(); }
+
+  provideCodeLenses(_document: vscode.TextDocument): vscode.CodeLens[] {
+    const cfg = vscode.workspace.getConfiguration('vertaai');
+    if (!cfg.get<string>('workspaceId')) return [];
+
+    const used = sessionFilesTouched.size;
+    const max = policyBudgets.maxFilesChanged;
+    const warningAt = Math.floor(max * 0.8);
+
+    // Only show if session has activity or confirmed undeclared capabilities
+    if (used === 0 && serverConfirmedUndeclared.size === 0) return [];
+
+    const pct = max > 0 ? Math.round(used / max * 100) : 0;
+    const budgetIcon = used >= max ? '🚫' : used >= warningAt ? '⚠️' : '📊';
+    const budgetLabel = used > 0 ? `${budgetIcon} Session: ${used}/${max} files (${pct}%)` : '';
+
+    const undeclaredLabel = serverConfirmedUndeclared.size > 0
+      ? `🚫 ${serverConfirmedUndeclared.size} undeclared: ${[...serverConfirmedUndeclared].join(', ')}`
+      : '';
+
+    const title = [budgetLabel, undeclaredLabel].filter(Boolean).join(' | ');
+    if (!title) return [];
+
+    return [new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
+      title,
+      command: 'vertaai.showGovernance',
+      tooltip: 'Session budget and governance status. Click to view details.',
+      arguments: [],
+    })];
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Activation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -213,6 +276,15 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.languages.registerCodeLensProvider(
       { scheme: 'file', pattern: '**/*.{ts,tsx,js,jsx,py,go,java,rb}' },
       new VertaAICodeLensProvider()
+    )
+  );
+
+  // Session budget CodeLens — inline session state (pure local, no API)
+  sessionBudgetLensProvider = new VertaAISessionBudgetLens();
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider(
+      { scheme: 'file', pattern: '**/*.{ts,tsx,js,jsx,py,go,java,rb,rs}' },
+      sessionBudgetLensProvider,
     )
   );
 
@@ -263,10 +335,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(doc => {
       if (/\.(ts|tsx|js|jsx|py|go|java|rb|rs)$/.test(doc.fileName)) {
-        // Track file for session budget
+        // Track file for session budget + refresh CodeLens on first touch
         const rel = vscode.workspace.asRelativePath(doc.uri);
+        const isNew = !sessionFilesTouched.has(rel);
         sessionFilesTouched.add(rel);
         checkSpaghettibudget();
+        if (isNew) sessionBudgetLensProvider?.fireChange();
 
         // Run inline diagnostics + accumulate for API report
         scanDocumentForCapabilities(doc);
@@ -347,6 +421,12 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('vertaai.apiUrl') || e.affectsConfiguration('vertaai.workspaceId')) {
+        // Reset session state for the new workspace — prevents cross-workspace session pollution
+        currentSessionId = undefined;
+        existingAbstractions = [];
+        serverConfirmedUndeclared.clear();
+        sessionFilesTouched.clear();
+        lastGitDiffFiles = new Set<string>();
         disconnectSseStream();
         setTimeout(() => connectSseStream(), 500);
         // Re-initialize session with new config
@@ -490,6 +570,18 @@ function onSseCodingDrift(payload: {
 
   if (undeclared.length === 0) return;
 
+  // Add server-confirmed types to the escalation set and re-scan affected files
+  const prevSize = serverConfirmedUndeclared.size;
+  for (const u of undeclared) serverConfirmedUndeclared.add(u.type);
+  if (serverConfirmedUndeclared.size !== prevSize) {
+    vscode.workspace.textDocuments.forEach(doc => {
+      if (/\.(ts|tsx|js|jsx|py|go|java|rb|rs)$/.test(doc.fileName)) {
+        scanDocumentForCapabilities(doc);
+      }
+    });
+    sessionBudgetLensProvider?.fireChange();
+  }
+
   const typeList = [...new Set(undeclared.map(u => u.type))].join(', ');
   const budgetMsg = budget && budget.filesUsed >= budget.filesWarning
     ? ` | Budget: ${budget.filesUsed}/${budget.filesMax} files`
@@ -536,15 +628,36 @@ function scanDocumentForCapabilities(doc: vscode.TextDocument): void {
       const endPos = doc.positionAt(match.index + match[0].length);
       const range = new vscode.Range(pos, endPos);
 
+      // Escalate to Error if the server confirmed this type is undeclared (via scan-report or SSE)
+      const effectiveSeverity = serverConfirmedUndeclared.has(type)
+        ? vscode.DiagnosticSeverity.Error
+        : severity;
+
       const message =
         `VertaAI: \`${type}\` (${label}) detected — ` +
         `verify this capability is declared in your IntentArtifact. ` +
         `Ask Claude: "check_capability_intent for ${type}"`;
 
-      const diagnostic = new vscode.Diagnostic(range, message, severity);
+      const diagnostic = new vscode.Diagnostic(range, message, effectiveSeverity);
       diagnostic.source = 'VertaAI';
       diagnostic.code = type;
       diagnostics.push(diagnostic);
+
+      // Duplicate abstraction check — flag if this capability type already exists in a different file
+      const existingOtherFiles = existingAbstractions.filter(
+        a => a.capability === type && a.file !== filePath,
+      );
+      if (existingOtherFiles.length > 0) {
+        const existingList = existingOtherFiles.slice(0, 2).map(a => `\`${a.file}\``).join(', ');
+        const dupDiag = new vscode.Diagnostic(
+          range,
+          `VertaAI: Possible duplicate — \`${type}\` already implemented in ${existingList}. Consider reusing the existing abstraction instead of creating a new one.`,
+          vscode.DiagnosticSeverity.Warning,
+        );
+        dupDiag.source = 'VertaAI';
+        dupDiag.code = `dup_${type}`;
+        diagnostics.push(dupDiag);
+      }
 
       // Also accumulate for API scan-report (GAP 2)
       pendingCapabilities.push({ type, file: filePath, line: pos.line });
@@ -1331,6 +1444,11 @@ async function initSession(): Promise<void> {
         policyBudgets.blockedCapabilities = data.policy.blockedCapabilities ?? [];
         policyBudgets.requireDeclaration = data.policy.requireDeclaration ?? [];
       }
+      // Cache abstraction inventory for duplicate detection in local scanner
+      if (Array.isArray(data.structuralContext?.existingAbstractions)) {
+        existingAbstractions = data.structuralContext.existingAbstractions;
+        console.log(`[${EXTENSION_NAME}] Abstraction inventory: ${existingAbstractions.length} existing capabilities cached`);
+      }
       console.log(`[${EXTENSION_NAME}] Session initialized: ${currentSessionId}`);
     }
   } catch (err: any) {
@@ -1413,11 +1531,16 @@ async function callDeclareSessionIntentApi(
     const data = await resp.json() as any;
     const policy = data.policy ?? {};
 
-    // Update local cache
+    // Update local policy cache
     if (policy.maxFilesChanged) policyBudgets.maxFilesChanged = policy.maxFilesChanged;
     if (policy.maxNewAbstractions) policyBudgets.maxNewAbstractions = policy.maxNewAbstractions;
     if (policy.blockedCapabilities) policyBudgets.blockedCapabilities = policy.blockedCapabilities;
     if (policy.requireDeclaration) policyBudgets.requireDeclaration = policy.requireDeclaration;
+
+    // Cache abstraction inventory for duplicate detection — agent has provided service context
+    if (Array.isArray(data.structuralContext?.existingAbstractions)) {
+      existingAbstractions = data.structuralContext.existingAbstractions;
+    }
 
     return [
       `✅ **VertaAI: Session intent declared**`,
@@ -1493,9 +1616,25 @@ async function reportScanToApi(): Promise<void> {
       budgetExceeded: boolean;
     };
 
+    // Escalate diagnostics for server-confirmed undeclared types to Error severity
+    if (data.undeclared.length > 0) {
+      const prevSize = serverConfirmedUndeclared.size;
+      for (const u of data.undeclared) serverConfirmedUndeclared.add(u.type);
+      if (serverConfirmedUndeclared.size !== prevSize) {
+        // New confirmed types — re-scan open documents to show Error squiggles
+        vscode.workspace.textDocuments.forEach(doc => {
+          if (/\.(ts|tsx|js|jsx|py|go|java|rb|rs)$/.test(doc.fileName)) {
+            scanDocumentForCapabilities(doc);
+          }
+        });
+        sessionBudgetLensProvider?.fireChange();
+      }
+    }
+
     // Show budget warning in status bar tooltip when approaching limit (GAP 6)
     if (data.budgetExceeded) {
       setStatusBar('operational', `Session budget exceeded: ${data.sessionBudget.filesUsed}/${data.sessionBudget.filesMax} files`);
+      sessionBudgetLensProvider?.fireChange();
     } else if (data.budgetWarning) {
       // Don't override critical/operational drift status — just log
       console.warn(`[${EXTENSION_NAME}] Spaghetti warning: ${data.sessionBudget.filesUsed}/${data.sessionBudget.filesMax} files touched this session`);
@@ -1528,12 +1667,14 @@ function checkSpaghettibudget(): void {
 
   if (used >= max) {
     setStatusBar('operational', `Session budget EXCEEDED: ${used}/${max} files (spaghetti risk)`);
+    sessionBudgetLensProvider?.fireChange();
   } else if (used >= warningAt) {
     // Update status bar tooltip without overriding severity colour
     if (statusBarItem.backgroundColor === undefined) {
       // Only show budget warning if there's no active drift alert
       statusBarItem.tooltip = `⚠️ VertaAI: Session budget ${used}/${max} files (${Math.round(used / max * 100)}%) — consider scoping this PR.`;
     }
+    sessionBudgetLensProvider?.fireChange();
   }
 }
 
