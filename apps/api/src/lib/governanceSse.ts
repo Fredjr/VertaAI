@@ -71,6 +71,8 @@ export function notifyCodingDrift(
     sessionId: string;
     undeclared: Array<{ type: string; target?: string; file: string; line: number }>;
     sessionBudget: { filesUsed: number; filesWarning: number; filesMax: number };
+    /** New packages added to package.json mid-session (P0). */
+    newDependencies?: string[];
   },
 ): void {
   const ws = clients.get(workspaceId);

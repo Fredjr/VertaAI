@@ -703,36 +703,57 @@ function onSseCodingDrift(payload: {
   sessionId?: string;
   undeclared?: Array<{ type: string; target?: string; file: string; line: number }>;
   sessionBudget?: { filesUsed: number; filesWarning: number; filesMax: number };
+  newDependencies?: string[];
 }): void {
   const undeclared = payload.undeclared ?? [];
   const budget = payload.sessionBudget;
+  const newDeps = payload.newDependencies ?? [];
 
-  if (undeclared.length === 0) return;
-
-  // Add server-confirmed types to the escalation set and re-scan affected files
-  const prevSize = serverConfirmedUndeclared.size;
-  for (const u of undeclared) serverConfirmedUndeclared.add(u.type);
-  if (serverConfirmedUndeclared.size !== prevSize) {
-    vscode.workspace.textDocuments.forEach(doc => {
-      if (/\.(ts|tsx|js|jsx|py|go|java|rb|rs)$/.test(doc.fileName)) {
-        scanDocumentForCapabilities(doc);
-      }
-    });
-    sessionBudgetLensProvider?.fireChange();
+  // P0 — server echoes new deps back via SSE: ensure local state is in sync
+  if (newDeps.length > 0) {
+    let depsChanged = false;
+    for (const dep of newDeps) {
+      if (!newSessionDeps.has(dep)) { newSessionDeps.add(dep); depsChanged = true; }
+    }
+    if (depsChanged) sessionBudgetLensProvider?.fireChange();
   }
 
-  const typeList = [...new Set(undeclared.map(u => u.type))].join(', ');
-  const budgetMsg = budget && budget.filesUsed >= budget.filesWarning
-    ? ` | Budget: ${budget.filesUsed}/${budget.filesMax} files`
-    : '';
+  if (undeclared.length === 0 && newDeps.length === 0) return;
+
+  // Add server-confirmed types to the escalation set and re-scan affected files
+  if (undeclared.length > 0) {
+    const prevSize = serverConfirmedUndeclared.size;
+    for (const u of undeclared) serverConfirmedUndeclared.add(u.type);
+    if (serverConfirmedUndeclared.size !== prevSize) {
+      vscode.workspace.textDocuments.forEach(doc => {
+        if (/\.(ts|tsx|js|jsx|py|go|java|rb|rs)$/.test(doc.fileName)) {
+          scanDocumentForCapabilities(doc);
+        }
+      });
+      sessionBudgetLensProvider?.fireChange();
+    }
+  }
 
   const now = Date.now();
   if (now - (lastNotificationBySeverity['coding_drift'] ?? 0) < 60_000) return; // 1min cooldown
   lastNotificationBySeverity['coding_drift'] = now;
 
+  // Build notification message — combine undeclared capabilities + new deps
+  const parts: string[] = [];
+  if (undeclared.length > 0) {
+    const typeList = [...new Set(undeclared.map(u => u.type))].join(', ');
+    parts.push(`undeclared: ${typeList}`);
+  }
+  if (newDeps.length > 0) {
+    parts.push(`new packages: ${newDeps.join(', ')}`);
+  }
+  const budgetMsg = budget && budget.filesUsed >= budget.filesWarning
+    ? ` | Budget: ${budget.filesUsed}/${budget.filesMax} files`
+    : '';
+
   vscode.window
     .showWarningMessage(
-      `⚠️ VertaAI: Undeclared capability detected in live code — ${typeList}${budgetMsg}`,
+      `⚠️ VertaAI: Governance alert — ${parts.join(' | ')}${budgetMsg}`,
       'View Details',
       'Dismiss',
     )
@@ -740,7 +761,7 @@ function onSseCodingDrift(payload: {
       if (action === 'View Details') openGovernanceFile();
     });
 
-  console.log(`[${EXTENSION_NAME}] coding_drift: ${undeclared.length} undeclared capabilities — ${typeList}`);
+  console.log(`[${EXTENSION_NAME}] coding_drift: ${parts.join(', ')}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1217,6 +1238,32 @@ function buildClaudeMd(workspaceId: string, apiUrl: string): string {
     '',
     'If `check_capability_intent` returns blocked, ask the developer to declare the',
     'capability in the IntentArtifact before proceeding. Do not bypass governance.',
+    '',
+    '## Dependency governance — MANDATORY (prevent spaghetti)',
+    '',
+    '**STOP before `npm install X` / `pnpm add X` / editing `package.json` deps.**',
+    'Every new package must be justified by the current session intent.',
+    '',
+    '1. Identify the capability the package adds, then call `check_capability_intent` for it.',
+    '2. If `check_capability_intent` is BLOCKED → do not add the package.',
+    '3. If no active session intent → call `declare_session_intent` first.',
+    '',
+    '| Package | Capability to check |',
+    '|---|---|',
+    '| axios, node-fetch, got, ky | `api_endpoint` |',
+    '| @aws-sdk/client-s3, aws-sdk | `s3_write` or `s3_read` |',
+    '| @aws-sdk/client-iam | `iam_modify` |',
+    '| @aws-sdk/client-secrets-manager | `secret_read` or `secret_write` |',
+    '| moment, date-fns, dayjs, luxon | Check "Existing Abstractions" first |',
+    '| lodash, ramda, underscore | Check "Existing Abstractions" first |',
+    '| uuid, nanoid, cuid | Check "Existing Abstractions" first |',
+    '',
+    '## Abstraction governance — MANDATORY (no duplicate utilities)',
+    '',
+    'Before writing a new utility function (formatDate, generateId, parseAmount, handleError):',
+    '1. Read the **Existing Abstractions** section in the `declare_session_intent` response.',
+    '2. If a matching function exists elsewhere → **reuse it**. Never create a duplicate.',
+    '3. Do not write new helper wrappers around packages the workspace already uses elsewhere.',
   ].join('\n');
 }
 
@@ -1309,6 +1356,19 @@ async function buildCopilotInstructions(workspaceId: string, apiUrl: string): Pr
     '## Live governance',
     `- Dashboard: ${apiUrl.replace('/api', '')}/governance?workspace=${workspaceId}`,
     '- Local file: `.claude/GOVERNANCE.md` (updated seconds after production events)',
+    '',
+    '## Dependency governance — MANDATORY',
+    '',
+    'STOP before `npm install X` / `pnpm add X` / editing package.json. Steps:',
+    '1. Identify the capability (axios → `api_endpoint`; @aws-sdk/client-s3 → `s3_write`; @aws-sdk/client-iam → `iam_modify`; @aws-sdk/client-secrets-manager → `secret_read`; moment/lodash/uuid → check "Existing Abstractions").',
+    '2. Call `vertaai_check_capability_intent` for that capability. BLOCKED → do not add the package.',
+    '3. No active session intent → call `vertaai_declare_session_intent` first.',
+    '',
+    '## Abstraction governance — MANDATORY',
+    '',
+    'Before writing formatDate, generateId, parseAmount, handleError or any utility:',
+    '1. Check the **Existing Abstractions** list in `vertaai_declare_session_intent` response.',
+    '2. Matching function found elsewhere → reuse it. Do not duplicate.',
   ].join('\n');
 
   // Fetch and append the agent permission envelope from the VertaAI workspace
@@ -1360,6 +1420,18 @@ async function buildCursorPermissionRules(workspaceId: string, apiUrl: string): 
     '',
     'Before writing code that uses any capability below, call `get_governance_status` via MCP',
     'or use the `vertaai_check_capability_intent` tool to verify governance clearance.',
+    '',
+    '## Dependency governance — MANDATORY',
+    '',
+    'STOP before `npm install` / `pnpm add` / editing package.json.',
+    '- axios/node-fetch → `api_endpoint`; @aws-sdk/client-s3 → `s3_write`; @aws-sdk/client-iam → `iam_modify`; @aws-sdk/client-secrets-manager → `secret_read`',
+    '- moment/date-fns/lodash/uuid → check "Existing Abstractions" in `declare_session_intent` response first',
+    '- Call `vertaai_check_capability_intent` for the mapped capability. BLOCKED → do not add the package.',
+    '',
+    '## Abstraction governance — MANDATORY',
+    '',
+    'Before writing new utilities (formatDate, generateId, handleError): check "Existing Abstractions".',
+    'If a matching function exists → reuse it. Never duplicate.',
     '',
   ].join('\n');
 
@@ -1419,8 +1491,20 @@ async function buildWindsurfPermissionRules(workspaceId: string, apiUrl: string)
     '',
     'Before writing code that uses any capability below, call `get_governance_status` via MCP',
     'or use the `vertaai_check_capability_intent` tool to verify governance clearance.',
-    "If the check returns **BLOCKED**, do not write the code — ask the developer to declare",
+    'If the check returns **BLOCKED**, do not write the code — ask the developer to declare',
     'the capability in the IntentArtifact first.',
+    '',
+    '## Dependency governance — MANDATORY',
+    '',
+    'STOP before `npm install` / `pnpm add` / editing package.json.',
+    '- axios/node-fetch → `api_endpoint`; @aws-sdk/client-s3 → `s3_write`; @aws-sdk/client-iam → `iam_modify`; @aws-sdk/client-secrets-manager → `secret_read`',
+    '- moment/date-fns/lodash/uuid → check "Existing Abstractions" in `declare_session_intent` response first',
+    '- Call `vertaai_check_capability_intent` for the mapped capability. BLOCKED → do not add the package.',
+    '',
+    '## Abstraction governance — MANDATORY',
+    '',
+    'Before writing new utilities (formatDate, generateId, handleError): check "Existing Abstractions".',
+    'If a matching function exists → reuse it. Never duplicate.',
     '',
   ].join('\n');
 
@@ -1471,6 +1555,13 @@ async function buildAugmentPermissionGuidelines(workspaceId: string, apiUrl: str
     'MANDATORY: Before writing code that uses any infrastructure capability (db_write, s3_write,',
     'iam_modify, secret_read, infra_create, schema_modify, etc.), call the vertaai_check_capability_intent',
     'MCP tool to verify governance clearance. Do not implement code that uses BLOCKED capabilities.',
+    '',
+    'DEPENDENCY GOVERNANCE (MANDATORY): STOP before npm install / pnpm add / editing package.json.',
+    'Map the package to its capability: axios/node-fetch → api_endpoint; @aws-sdk/client-s3 → s3_write; @aws-sdk/client-iam → iam_modify; @aws-sdk/client-secrets-manager → secret_read; moment/lodash/uuid → check Existing Abstractions first.',
+    'Call vertaai_check_capability_intent for that capability. BLOCKED → do not add the package.',
+    '',
+    'ABSTRACTION GOVERNANCE (MANDATORY): Before writing formatDate, generateId, handleError or any utility,',
+    'read the Existing Abstractions list from declare_session_intent. If a match exists → reuse it, never duplicate.',
     '',
   ].join('\n');
 
@@ -1842,6 +1933,7 @@ async function reportScanToApi(): Promise<void> {
         body: JSON.stringify({
           detectedCapabilities: capsSnapshot,
           filesModified: filesSnapshot,
+          newSessionDeps: Array.from(newSessionDeps),
         }),
         signal: AbortSignal.timeout(10_000),
       },

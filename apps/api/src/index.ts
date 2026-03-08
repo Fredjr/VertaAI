@@ -1004,9 +1004,11 @@ app.post('/api/workspaces/:id/session-intent', async (req: Request, res: Respons
 app.patch('/api/workspaces/:id/session-intent/:sessionId/scan-report', async (req: Request, res: Response) => {
   const workspaceId = req.params.id;
   const { sessionId } = req.params;
-  const { detectedCapabilities = [], filesModified = [] } = req.body as {
+  const { detectedCapabilities = [], filesModified = [], newSessionDeps = [] } = req.body as {
     detectedCapabilities: Array<{ type: string; target?: string; file: string; line: number }>;
     filesModified: string[];
+    /** New packages added to package.json this session (P0). */
+    newSessionDeps: string[];
   };
 
   try {
@@ -1060,9 +1062,14 @@ app.patch('/api/workspaces/:id/session-intent/:sessionId/scan-report', async (re
       },
     });
 
-    // Fire SSE coding_drift if there are undeclared capabilities
-    if (undeclared.length > 0) {
-      notifyCodingDrift(workspaceId, { sessionId, undeclared, sessionBudget });
+    // Fire SSE coding_drift if there are undeclared capabilities OR new packages added mid-session
+    if (undeclared.length > 0 || newSessionDeps.length > 0) {
+      notifyCodingDrift(workspaceId, {
+        sessionId,
+        undeclared,
+        sessionBudget,
+        ...(newSessionDeps.length > 0 ? { newDependencies: newSessionDeps } : {}),
+      });
     }
 
     return res.json({
@@ -1072,6 +1079,7 @@ app.patch('/api/workspaces/:id/session-intent/:sessionId/scan-report', async (re
       sessionBudget,
       budgetWarning: filesUsed >= filesWarning,
       budgetExceeded: filesUsed >= maxFiles,
+      newDependencies: newSessionDeps,
     });
   } catch (err: any) {
     console.error('[ScanReport] Error:', err);
