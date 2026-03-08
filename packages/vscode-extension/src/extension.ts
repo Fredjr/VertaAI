@@ -106,6 +106,34 @@ let sseRequest: http.ClientRequest | undefined;
 let sseReconnectTimer: NodeJS.Timeout | undefined;
 let capabilityDiagnostics: vscode.DiagnosticCollection;
 
+// ── Track 0/1 enhanced: session tracking, policy budgets, coding drift ────────
+
+/** UUID for the current coding session — stable across file saves, reset on new window. */
+let currentSessionId: string | undefined;
+
+/** Relative paths of files saved/modified in this session (for spaghetti budget). */
+const sessionFilesTouched = new Set<string>();
+
+/** Policy thresholds fetched from effective-policy-summary at session start. */
+let policyBudgets = {
+  maxFilesChanged: 20,
+  maxNewAbstractions: 3,
+  blockedCapabilities: [] as string[],
+  requireDeclaration: [] as string[],
+};
+
+/** Accumulated capabilities from local scanner — drained by reportScanToApi (debounced). */
+const pendingCapabilities: Array<{ type: string; target?: string; file: string; line: number }> = [];
+
+/** Debounce timer for reportScanToApi. */
+let scanReportTimer: NodeJS.Timeout | undefined;
+
+/** Interval for polling git diff (P2 — unstaged changes). */
+let gitDiffTimer: NodeJS.Timeout | undefined;
+
+/** Last known set of unstaged file paths (for delta detection). */
+let lastGitDiffFiles = new Set<string>();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CodeLens provider — AI provenance at line 0
 // ─────────────────────────────────────────────────────────────────────────────
@@ -231,10 +259,20 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ── Signal 3: Local capability scanner ───────────────────────────────────
   // Fires on every file save — before commit, before push.
+  // Also tracks files touched for spaghetti budget enforcement (GAP 6).
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument(doc => {
       if (/\.(ts|tsx|js|jsx|py|go|java|rb|rs)$/.test(doc.fileName)) {
+        // Track file for session budget
+        const rel = vscode.workspace.asRelativePath(doc.uri);
+        sessionFilesTouched.add(rel);
+        checkSpaghettibudget();
+
+        // Run inline diagnostics + accumulate for API report
         scanDocumentForCapabilities(doc);
+
+        // Schedule debounced report to API (GAP 2)
+        scheduleScanReport();
       }
     }),
   );
@@ -276,7 +314,29 @@ export function activate(context: vscode.ExtensionContext): void {
         },
       ),
     );
-    console.log(`[${EXTENSION_NAME}] VSCode LM Tool registered — Track 0 active for Copilot`);
+
+    // declare_session_intent — call this at the START of a vibe coding session
+    context.subscriptions.push(
+      vscode.lm.registerTool<{
+        rawPrompt: string;
+        service?: string;
+        ticketRef?: string;
+        scopeHint?: string;
+      }>(
+        'vertaai_declare_session_intent',
+        {
+          invoke: async (options, _token) => {
+            const { rawPrompt, service, ticketRef, scopeHint } = options.input;
+            const resultText = await callDeclareSessionIntentApi(rawPrompt, service, ticketRef, scopeHint);
+            return new vscode.LanguageModelToolResult([
+              new vscode.LanguageModelTextPart(resultText),
+            ]);
+          },
+        },
+      ),
+    );
+
+    console.log(`[${EXTENSION_NAME}] VSCode LM Tools registered — Track 0 active for Copilot`);
   }
 
   // ── Signal 2: SSE stream (if configured) ─────────────────────────────────
@@ -289,9 +349,22 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration('vertaai.apiUrl') || e.affectsConfiguration('vertaai.workspaceId')) {
         disconnectSseStream();
         setTimeout(() => connectSseStream(), 500);
+        // Re-initialize session with new config
+        setTimeout(() => initSession(), 1_000);
       }
     }),
   );
+
+  // ── Track 0/1: Session initialization ────────────────────────────────────
+  // Generate a stable session ID and declare the session to the API so Track 1
+  // has live context. Also fetches the effective policy for local budget enforcement.
+  setTimeout(() => initSession(), 3_000); // after SSE connects
+
+  // ── Track 1: Git diff watcher (P2) ───────────────────────────────────────
+  // Polls `git diff --name-only HEAD` every 30s to detect unstaged changes.
+  // Tracks files the agent has touched (even before a save) for budget counting.
+  gitDiffTimer = setInterval(() => checkGitDiff(), 30_000);
+  context.subscriptions.push({ dispose: () => { if (gitDiffTimer) clearInterval(gitDiffTimer); } });
 
   console.log(`[${EXTENSION_NAME}] Activated — file watcher + SSE stream + capability scanner ready`);
 }
@@ -340,9 +413,17 @@ function connectSseStream(): void {
       buffer = parts.pop() ?? '';
       for (const part of parts) {
         const eventLine = part.match(/^event:\s*(.+)$/m)?.[1]?.trim();
+        const dataLine = part.match(/^data:\s*(.+)$/m)?.[1]?.trim();
+
         if (eventLine === 'drift_updated') {
-          // New drift cluster detected — refresh governance state immediately
+          // Track B: production drift — refresh governance file + GOVERNANCE.md
           onSseDriftUpdated();
+        } else if (eventLine === 'coding_drift' && dataLine) {
+          // Track 1: coding-time drift — server confirmed undeclared capabilities in live code
+          try {
+            const payload = JSON.parse(dataLine);
+            onSseCodingDrift(payload);
+          } catch { /* malformed data — ignore */ }
         }
       }
     });
@@ -383,10 +464,52 @@ function onSseDriftUpdated(): void {
     if (files.length > 0) {
       readGovernanceFile(files[0]!);
     } else {
-      // No local file — fetch from API and update status bar
-      pollApiOnce();
+      // No local file — fetch from API and update status bar + dynamically write GOVERNANCE.md (GAP 5)
+      fetchApiContent().then(content => {
+        if (content) {
+          processGovernanceMarkdown(content, 'api');
+          writeGovernanceMd(content); // persist so future reads are file-based
+        }
+      });
     }
   });
+}
+
+/**
+ * Handle a coding_drift SSE event from the server (GAP 3).
+ * The server fires this when the scan-report endpoint detected undeclared capabilities.
+ * Show a warning notification and reinforce the existing inline squiggles.
+ */
+function onSseCodingDrift(payload: {
+  sessionId?: string;
+  undeclared?: Array<{ type: string; target?: string; file: string; line: number }>;
+  sessionBudget?: { filesUsed: number; filesWarning: number; filesMax: number };
+}): void {
+  const undeclared = payload.undeclared ?? [];
+  const budget = payload.sessionBudget;
+
+  if (undeclared.length === 0) return;
+
+  const typeList = [...new Set(undeclared.map(u => u.type))].join(', ');
+  const budgetMsg = budget && budget.filesUsed >= budget.filesWarning
+    ? ` | Budget: ${budget.filesUsed}/${budget.filesMax} files`
+    : '';
+
+  const now = Date.now();
+  if (now - (lastNotificationBySeverity['coding_drift'] ?? 0) < 60_000) return; // 1min cooldown
+  lastNotificationBySeverity['coding_drift'] = now;
+
+  vscode.window
+    .showWarningMessage(
+      `⚠️ VertaAI: Undeclared capability detected in live code — ${typeList}${budgetMsg}`,
+      'View Details',
+      'Dismiss',
+    )
+    .then(action => {
+      if (action === 'View Details') openGovernanceFile();
+    });
+
+  console.log(`[${EXTENSION_NAME}] coding_drift: ${undeclared.length} undeclared capabilities — ${typeList}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -396,9 +519,14 @@ function onSseDriftUpdated(): void {
 function scanDocumentForCapabilities(doc: vscode.TextDocument): void {
   const text = doc.getText();
   const diagnostics: vscode.Diagnostic[] = [];
+  const filePath = vscode.workspace.asRelativePath(doc.uri);
+
+  // Remove stale pending entries for this file before re-scanning
+  for (let i = pendingCapabilities.length - 1; i >= 0; i--) {
+    if (pendingCapabilities[i]!.file === filePath) pendingCapabilities.splice(i, 1);
+  }
 
   for (const { pattern, type, label, severity } of CAPABILITY_PATTERNS) {
-    // Reset lastIndex for global patterns
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     const globalPattern = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g');
@@ -418,7 +546,9 @@ function scanDocumentForCapabilities(doc: vscode.TextDocument): void {
       diagnostic.code = type;
       diagnostics.push(diagnostic);
 
-      // Prevent runaway matches on long files
+      // Also accumulate for API scan-report (GAP 2)
+      pendingCapabilities.push({ type, file: filePath, line: pos.line });
+
       if (diagnostics.length >= 20) break;
     }
     if (diagnostics.length >= 20) break;
@@ -1136,4 +1266,311 @@ async function callCapabilityIntentCheckApi(
   } catch (err: any) {
     return `⚠️ VertaAI: Could not reach governance API — ${err.message}. Proceed with caution.`;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Track 0/1: Session intent (GAP 1) + declare_session_intent LM Tool (GAP 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Generate a simple UUID-like session ID stable for the current extension process. */
+function generateSessionId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * Initialize the coding session:
+ * 1. Generate a session ID if none exists.
+ * 2. POST to /session-intent to register the session with the API.
+ * 3. Fetch and cache the effective policy (session budgets, blocked capabilities).
+ * Called at activation and after config changes.
+ */
+async function initSession(): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration('vertaai');
+  const workspaceId = cfg.get<string>('workspaceId');
+  const apiUrl = cfg.get<string>('apiUrl');
+  if (!workspaceId || !apiUrl) return;
+
+  if (!currentSessionId) currentSessionId = generateSessionId();
+
+  try {
+    // Declare session intent (no prompt yet — extension activates before the user types)
+    const resp = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/session-intent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: currentSessionId }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (resp.ok) {
+      const data = await resp.json() as any;
+      // Cache policy budgets for local enforcement
+      if (data.policy) {
+        policyBudgets.maxFilesChanged = data.policy.maxFilesChanged ?? 20;
+        policyBudgets.maxNewAbstractions = data.policy.maxNewAbstractions ?? 3;
+        policyBudgets.blockedCapabilities = data.policy.blockedCapabilities ?? [];
+        policyBudgets.requireDeclaration = data.policy.requireDeclaration ?? [];
+      }
+      console.log(`[${EXTENSION_NAME}] Session initialized: ${currentSessionId}`);
+    }
+  } catch (err: any) {
+    // Non-blocking — extension works fine even if session declaration fails
+    console.warn(`[${EXTENSION_NAME}] Session init failed: ${err.message}`);
+  }
+
+  // Also fetch the full policy summary to ensure budgets are current (GAP 4)
+  await pollPolicySummary();
+}
+
+/**
+ * Fetch /effective-policy-summary and cache the thresholds locally (GAP 4).
+ * Called at session start and every 5 minutes to stay current with pack changes.
+ */
+async function pollPolicySummary(): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration('vertaai');
+  const workspaceId = cfg.get<string>('workspaceId');
+  const apiUrl = cfg.get<string>('apiUrl');
+  if (!workspaceId || !apiUrl) return;
+
+  try {
+    const resp = await fetch(
+      `${apiUrl}/api/workspaces/${workspaceId}/effective-policy-summary`,
+      { signal: AbortSignal.timeout(8_000) },
+    );
+    if (!resp.ok) return;
+    const data = await resp.json() as any;
+    policyBudgets.maxFilesChanged = data.maxFilesChanged ?? 20;
+    policyBudgets.maxNewAbstractions = data.maxNewAbstractions ?? 3;
+    policyBudgets.blockedCapabilities = data.blockedCapabilities ?? [];
+    policyBudgets.requireDeclaration = data.requireDeclaration ?? [];
+    console.log(`[${EXTENSION_NAME}] Policy synced — maxFiles: ${policyBudgets.maxFilesChanged}, maxAbstractions: ${policyBudgets.maxNewAbstractions}`);
+  } catch { /* non-blocking */ }
+}
+
+/**
+ * Called by the `vertaai_declare_session_intent` LM Tool.
+ * The agent calls this at the START of a coding session with the developer's prompt.
+ * Stores intent in the API, updates cached policy, returns markdown to the LLM.
+ */
+async function callDeclareSessionIntentApi(
+  rawPrompt: string,
+  service?: string,
+  ticketRef?: string,
+  scopeHint?: string,
+): Promise<string> {
+  const cfg = vscode.workspace.getConfiguration('vertaai');
+  const workspaceId = cfg.get<string>('workspaceId');
+  const apiUrl = cfg.get<string>('apiUrl');
+
+  if (!workspaceId || !apiUrl) {
+    return '⚠️ VertaAI: Not configured. Run "VertaAI: Setup" to set workspace ID and API URL.';
+  }
+
+  if (!currentSessionId) currentSessionId = generateSessionId();
+
+  try {
+    const resp = await fetch(`${apiUrl}/api/workspaces/${workspaceId}/session-intent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: currentSessionId, rawPrompt, service, ticketRef, scopeHint }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (!resp.ok) {
+      return `⚠️ VertaAI: Failed to declare session intent (HTTP ${resp.status}).`;
+    }
+
+    const data = await resp.json() as any;
+    const policy = data.policy ?? {};
+
+    // Update local cache
+    if (policy.maxFilesChanged) policyBudgets.maxFilesChanged = policy.maxFilesChanged;
+    if (policy.maxNewAbstractions) policyBudgets.maxNewAbstractions = policy.maxNewAbstractions;
+    if (policy.blockedCapabilities) policyBudgets.blockedCapabilities = policy.blockedCapabilities;
+    if (policy.requireDeclaration) policyBudgets.requireDeclaration = policy.requireDeclaration;
+
+    return [
+      `✅ **VertaAI: Session intent declared**`,
+      '',
+      `**Session**: \`${currentSessionId}\``,
+      rawPrompt ? `**Intent**: "${rawPrompt}"` : '',
+      service ? `**Service**: \`${service}\`` : '',
+      ticketRef ? `**Ticket**: ${ticketRef}` : '',
+      '',
+      '## Active Session Policy',
+      `- Max files: **${policy.maxFilesChanged ?? 20}** (warn at ${policy.warningThresholdPercent ?? 80}%)`,
+      `- Max abstractions: **${policy.maxNewAbstractions ?? 3}**`,
+      `- 🚫 BLOCKED: ${(policy.blockedCapabilities ?? []).join(', ') || 'none'}`,
+      `- ⚠️ REQUIRES DECLARATION: ${(policy.requireDeclaration ?? []).join(', ') || 'none'}`,
+      '',
+      'Track 1 real-time alerts are now active. Call `check_capability_intent` before using any listed capabilities.',
+    ].filter(Boolean).join('\n');
+  } catch (err: any) {
+    return `⚠️ VertaAI: Could not reach governance API — ${err.message}.`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Track 1: Scan report — POST local scanner results to API (GAP 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Schedule a debounced POST of accumulated capability scan results to the API.
+ * The API checks them against recent IntentArtifacts and fires coding_drift SSE
+ * if any are undeclared. Debounced to 10 seconds to batch rapid file saves.
+ */
+function scheduleScanReport(): void {
+  if (scanReportTimer) clearTimeout(scanReportTimer);
+  scanReportTimer = setTimeout(() => {
+    scanReportTimer = undefined;
+    reportScanToApi();
+  }, 10_000);
+}
+
+/**
+ * POST current pendingCapabilities and sessionFilesTouched to the scan-report endpoint.
+ * Handles the response to show budget warnings via status bar.
+ */
+async function reportScanToApi(): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration('vertaai');
+  const workspaceId = cfg.get<string>('workspaceId');
+  const apiUrl = cfg.get<string>('apiUrl');
+  if (!workspaceId || !apiUrl || !currentSessionId) return;
+  if (pendingCapabilities.length === 0 && sessionFilesTouched.size === 0) return;
+
+  const capsSnapshot = [...pendingCapabilities];
+  const filesSnapshot = [...sessionFilesTouched];
+
+  try {
+    const resp = await fetch(
+      `${apiUrl}/api/workspaces/${workspaceId}/session-intent/${currentSessionId}/scan-report`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          detectedCapabilities: capsSnapshot,
+          filesModified: filesSnapshot,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+
+    if (!resp.ok) return;
+    const data = await resp.json() as {
+      undeclared: Array<{ type: string; file: string; line: number }>;
+      sessionBudget: { filesUsed: number; filesWarning: number; filesMax: number };
+      budgetWarning: boolean;
+      budgetExceeded: boolean;
+    };
+
+    // Show budget warning in status bar tooltip when approaching limit (GAP 6)
+    if (data.budgetExceeded) {
+      setStatusBar('operational', `Session budget exceeded: ${data.sessionBudget.filesUsed}/${data.sessionBudget.filesMax} files`);
+    } else if (data.budgetWarning) {
+      // Don't override critical/operational drift status — just log
+      console.warn(`[${EXTENSION_NAME}] Spaghetti warning: ${data.sessionBudget.filesUsed}/${data.sessionBudget.filesMax} files touched this session`);
+      const now = Date.now();
+      if (now - (lastNotificationBySeverity['budget_warning'] ?? 0) > 10 * 60_000) {
+        lastNotificationBySeverity['budget_warning'] = now;
+        vscode.window.showWarningMessage(
+          `⚠️ VertaAI: Session budget at ${data.sessionBudget.filesUsed}/${data.sessionBudget.filesMax} files — consider scoping this PR.`,
+        );
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[${EXTENSION_NAME}] Scan report failed: ${err.message}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Track 1 (GAP 6): Spaghetti prevention — local budget enforcement
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Check whether the session has exceeded or is approaching the session file budget.
+ * Shows inline CodeLens-style warning via status bar tooltip.
+ * This fires locally on every save without needing an API round-trip.
+ */
+function checkSpaghettibudget(): void {
+  const used = sessionFilesTouched.size;
+  const max = policyBudgets.maxFilesChanged;
+  const warningAt = Math.floor(max * 0.8);
+
+  if (used >= max) {
+    setStatusBar('operational', `Session budget EXCEEDED: ${used}/${max} files (spaghetti risk)`);
+  } else if (used >= warningAt) {
+    // Update status bar tooltip without overriding severity colour
+    if (statusBarItem.backgroundColor === undefined) {
+      // Only show budget warning if there's no active drift alert
+      statusBarItem.tooltip = `⚠️ VertaAI: Session budget ${used}/${max} files (${Math.round(used / max * 100)}%) — consider scoping this PR.`;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Track 1 (GAP 5): Dynamic GOVERNANCE.md regeneration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Write or overwrite the .claude/GOVERNANCE.md file with fresh content.
+ * Called when a drift_updated SSE arrives and no local file was found.
+ * Keeps the agent's context current without requiring the developer to run Setup again.
+ */
+function writeGovernanceMd(content: string): void {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return;
+
+  const root = folders[0]!.uri.fsPath;
+  const dir = path.join(root, '.claude');
+  const filePath = path.join(dir, 'GOVERNANCE.md');
+
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, content, 'utf-8');
+    governanceFileFound = true;
+    console.log(`[${EXTENSION_NAME}] GOVERNANCE.md refreshed from SSE drift event`);
+  } catch (err: any) {
+    console.warn(`[${EXTENSION_NAME}] Could not write GOVERNANCE.md: ${err.message}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Track 1 (P2): Git diff watcher — detect unstaged changes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Runs `git diff --name-only HEAD` every 30s to detect files the agent has modified
+ * but not yet saved (or that were saved but not captured by onDidSaveTextDocument).
+ * Adds newly discovered files to sessionFilesTouched for budget tracking.
+ */
+function checkGitDiff(): void {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) return;
+
+  const cwd = folders[0]!.uri.fsPath;
+  const { execFile } = require('child_process') as typeof import('child_process');
+
+  execFile('git', ['diff', '--name-only', 'HEAD'], { cwd, timeout: 5_000 }, (err: any, stdout: string) => {
+    if (err) return; // Not a git repo or git unavailable — silently skip
+
+    const currentFiles = new Set(
+      stdout.split('\n').map(l => l.trim()).filter(Boolean),
+    );
+
+    // Find newly appeared files since last check
+    const newFiles: string[] = [];
+    for (const f of currentFiles) {
+      if (!lastGitDiffFiles.has(f)) newFiles.push(f);
+    }
+    lastGitDiffFiles = currentFiles;
+
+    if (newFiles.length === 0) return;
+
+    // Add to session tracking
+    for (const f of newFiles) sessionFilesTouched.add(f);
+    checkSpaghettibudget();
+
+    // Schedule a scan report since new files were detected
+    scheduleScanReport();
+
+    console.log(`[${EXTENSION_NAME}] Git diff: ${newFiles.length} new file(s) modified — session total: ${sessionFilesTouched.size}`);
+  });
 }

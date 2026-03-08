@@ -82,6 +82,20 @@ export interface GovernanceMcpOpts {
     capabilities: Array<{ type: string; target?: string }>,
   ) => Promise<CapabilityIntentCheckResult>;
   /**
+   * Declare a new vibe coding session intent at the start of a session.
+   * Stores the developer's natural language prompt and session context so
+   * Track 0 and Track 1 have live intent during the agent coding session.
+   * Optional — tool is omitted from the server if not provided.
+   */
+  declareSessionIntent?: (
+    workspaceId: string,
+    sessionId: string,
+    rawPrompt: string,
+    service?: string,
+    ticketRef?: string,
+    scopeHint?: string,
+  ) => Promise<{ sessionIntentId: string; policy: Record<string, unknown> }>;
+  /**
    * Optional workspace this session is scoped to.
    * If set, notifications are filtered and the resource list is scoped to this workspace.
    */
@@ -338,6 +352,88 @@ export function createGovernanceMcpServer(opts: GovernanceMcpOpts): McpServer {
           lines.push('## ℹ No capabilities declared yet');
           lines.push('No IntentArtifact found for this service. All capabilities are undeclared by default.');
         }
+
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+      },
+    );
+  }
+
+  // ── Tool: declare_session_intent ─────────────────────────────────────────
+  // Called at the START of a vibe coding session (before the agent writes code).
+  // Stores the developer's natural language prompt so Track 0 and Track 1 have
+  // live intent context throughout the session — not just when the PR opens.
+  // The tool returns the effective policy envelope so the agent knows its budget.
+  if (opts.declareSessionIntent) {
+    mcpServer.registerTool(
+      'declare_session_intent',
+      {
+        description:
+          'Declare the intent of this coding session at session start. Call this FIRST — before writing ' +
+          'any code — with the developer\'s natural language prompt and any known context. ' +
+          'This enables real-time in-editor governance feedback (Track 1) aligned to your actual intent. ' +
+          'Returns the active permission envelope and session budgets so you know your boundaries.',
+        inputSchema: {
+          sessionId: z.string().describe(
+            'A unique identifier for this coding session. Use a UUID or a short descriptive string. ' +
+            'Must be stable across reconnects for the same session (e.g., store in workspace state).',
+          ),
+          rawPrompt: z.string().describe(
+            'The developer\'s natural language prompt or task description for this session. ' +
+            'E.g., "Add S3 upload to the user profile service" or "Refactor the auth module to use JWT".',
+          ),
+          service: z.string().optional().describe('Primary service name this session targets (e.g. "user-service").'),
+          ticketRef: z.string().optional().describe('Ticket reference (e.g. "JIRA-123", "GH-456").'),
+          scopeHint: z.string().optional().describe('Short scope description (e.g. "auth refactor", "add S3 upload").'),
+          workspaceId: z.string().optional().describe('Workspace ID. Defaults to the session workspace.'),
+        },
+      },
+      async ({ sessionId, rawPrompt, service, ticketRef, scopeHint, workspaceId }) => {
+        const wsId = workspaceId ?? opts.workspaceId;
+        if (!wsId) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: '# Error\n\nNo workspace ID. Pass `workspaceId` or initialize the session with `?workspaceId=<id>`.',
+            }],
+          };
+        }
+        if (opts.workspaceId && opts.workspaceId !== wsId) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `# Access denied\n\nThis session is scoped to workspace \`${opts.workspaceId}\`.`,
+            }],
+          };
+        }
+
+        const result = await opts.declareSessionIntent!(wsId, sessionId, rawPrompt, service, ticketRef, scopeHint);
+
+        const policy = result.policy as {
+          maxFilesChanged?: number;
+          maxNewAbstractions?: number;
+          blockedCapabilities?: string[];
+          requireDeclaration?: string[];
+          warningThresholdPercent?: number;
+        };
+
+        const lines: string[] = [
+          '# ✅ Session Intent Declared',
+          '',
+          `**Session ID**: \`${sessionId}\``,
+          `**Workspace**: \`${wsId}\``,
+          rawPrompt ? `**Intent**: "${rawPrompt}"` : '',
+          service ? `**Service**: \`${service}\`` : '',
+          ticketRef ? `**Ticket**: ${ticketRef}` : '',
+          '',
+          '## Active Session Policy',
+          `- Max files changed: **${policy.maxFilesChanged ?? 20}** (warning at ${policy.warningThresholdPercent ?? 80}%)`,
+          `- Max new abstractions: **${policy.maxNewAbstractions ?? 3}**`,
+          `- 🚫 BLOCKED capabilities: ${(policy.blockedCapabilities ?? []).join(', ') || 'none'}`,
+          `- ⚠️ REQUIRES DECLARATION: ${(policy.requireDeclaration ?? []).join(', ') || 'none'}`,
+          '',
+          'Track 1 real-time in-editor alerts are now active for this session. ',
+          'Track 0 governance rules are loaded. Call `check_capability_intent` before using any listed capabilities.',
+        ].filter(Boolean);
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       },

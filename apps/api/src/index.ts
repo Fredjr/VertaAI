@@ -26,7 +26,7 @@ import contractPoliciesRouter from './routes/contractPolicies.js';  // Week 5-6:
 import policyPacksRouter from './routes/policyPacks.js';  // P2 Week 7: Unified WorkspacePolicyPack Management
 import adminRouter from './routes/admin.js';  // Admin routes for one-time operations
 import runtimeRouter from './routes/runtime/index.js';  // Agent Governance: Runtime observation webhooks
-import { registerSseClient, unregisterSseClient, notifyGovernanceSse, activeSseClientCount } from './lib/governanceSse.js';  // Track 1: real-time SSE push
+import { registerSseClient, unregisterSseClient, notifyGovernanceSse, notifyCodingDrift, activeSseClientCount } from './lib/governanceSse.js';  // Track 1: real-time SSE push
 import { initializeComparators } from './services/gatekeeper/yaml-dsl/comparators/index.js';  // YAML DSL Migration
 import { buildCompactSummary, type ParsedDriftCluster } from './services/governance/compactSummaryBuilder.js';  // Phase 2: Compact governance summary
 import { buildWorkspaceGovernanceMarkdown } from './services/governance/claudeMdWriter.js';  // Phase 3+4: governance markdown builder
@@ -882,6 +882,168 @@ app.get('/api/workspaces/:id/code-provenance', async (req: Request, res: Respons
   }
 });
 
+// ── Track 0/1: Effective policy summary (GAP 4) ───────────────────────────────
+// Returns machine-readable policy thresholds so the VSCode extension can enforce
+// session budgets locally (warn at 80%, block at 100%) without waiting for a PR gate.
+//
+// GET /api/workspaces/:id/effective-policy-summary
+app.get('/api/workspaces/:id/effective-policy-summary', async (req: Request, res: Response) => {
+  try {
+    const envelope = await compileAgentPermissions(req.params.id);
+    return res.json({
+      success: true,
+      maxFilesChanged: envelope.sessionBudgets.maxFilesChanged,
+      maxNewAbstractions: envelope.sessionBudgets.maxNewAbstractions,
+      requireTestFor: envelope.sessionBudgets.requireTestFor,
+      blockedCapabilities: envelope.blocked,
+      requireDeclaration: envelope.requireDeclaration,
+      alwaysAllowed: envelope.alwaysAllowed,
+      requireHumanApproval: envelope.requireHumanApproval,
+      warningThresholdPercent: 80,
+      compiledFromPacks: envelope.compiledFromPacks,
+      compiledAt: envelope.compiledAt,
+    });
+  } catch (err: any) {
+    console.error('[EffectivePolicySummary] Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Track 0/1: Session Intent — declare vibe coding session at prompt submission ─
+// POST /api/workspaces/:id/session-intent
+// Body: { sessionId, rawPrompt?, service?, ticketRef?, scopeHint? }
+// Called by the VSCode extension at session start (activation + re-activation on config change).
+// Stores the developer's intent so Track 0 and Track 1 have live context during coding.
+app.post('/api/workspaces/:id/session-intent', async (req: Request, res: Response) => {
+  const workspaceId = req.params.id;
+  const { sessionId, rawPrompt, service, ticketRef, scopeHint } = req.body as {
+    sessionId: string;
+    rawPrompt?: string;
+    service?: string;
+    ticketRef?: string;
+    scopeHint?: string;
+  };
+
+  if (!sessionId) {
+    return res.status(400).json({ success: false, error: 'sessionId is required' });
+  }
+
+  try {
+    // Upsert: allow the extension to re-send on reconnect without duplicates
+    const intent = await prisma.sessionIntent.upsert({
+      where: { workspaceId_sessionId: { workspaceId, sessionId } },
+      update: {
+        rawPrompt: rawPrompt ?? undefined,
+        service: service ?? undefined,
+        ticketRef: ticketRef ?? undefined,
+        scopeHint: scopeHint ?? undefined,
+        status: 'active',
+        closedAt: null,
+      },
+      create: { workspaceId, sessionId, rawPrompt, service, ticketRef, scopeHint },
+    });
+
+    // Return the effective policy so the extension can cache it immediately
+    const policy = await compileAgentPermissions(workspaceId);
+    return res.json({
+      success: true,
+      sessionIntent: { id: intent.id, sessionId: intent.sessionId, workspaceId: intent.workspaceId },
+      policy: {
+        maxFilesChanged: policy.sessionBudgets.maxFilesChanged,
+        maxNewAbstractions: policy.sessionBudgets.maxNewAbstractions,
+        blockedCapabilities: policy.blocked,
+        requireDeclaration: policy.requireDeclaration,
+        warningThresholdPercent: 80,
+      },
+    });
+  } catch (err: any) {
+    console.error('[SessionIntent] Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Track 1: Scan report — receive local capability scanner results ─────────
+// PATCH /api/workspaces/:id/session-intent/:sessionId/scan-report
+// Body: { detectedCapabilities: [{ type, target?, file, line }], filesModified: string[] }
+//
+// Called by the VSCode extension every ~10s on file save (debounced).
+// Checks detected capabilities against ANY recent IntentArtifact for the workspace.
+// Returns undeclared capabilities + session budget status so the extension can show
+// inline squiggles without a PR having been opened.
+// Also fires notifyCodingDrift() SSE for future cross-session scenarios.
+app.patch('/api/workspaces/:id/session-intent/:sessionId/scan-report', async (req: Request, res: Response) => {
+  const workspaceId = req.params.id;
+  const { sessionId } = req.params;
+  const { detectedCapabilities = [], filesModified = [] } = req.body as {
+    detectedCapabilities: Array<{ type: string; target?: string; file: string; line: number }>;
+    filesModified: string[];
+  };
+
+  try {
+    // Fetch session intent (create a stub if extension forgot to call session-intent first)
+    const intent = await prisma.sessionIntent.upsert({
+      where: { workspaceId_sessionId: { workspaceId, sessionId } },
+      update: { filesModified: filesModified.length },
+      create: { workspaceId, sessionId, filesModified: filesModified.length, status: 'active' },
+    });
+
+    // Gather all declared capability TYPES from IntentArtifacts in this workspace (last 90 days)
+    // We check workspace-wide (not per-service) because the local scanner doesn't know the service name.
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const recentArtifacts = await prisma.intentArtifact.findMany({
+      where: { workspaceId, createdAt: { gte: cutoff } },
+      select: { requestedCapabilities: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    // Build set of all declared capability types across recent specs
+    const declaredTypes = new Set<string>();
+    for (const a of recentArtifacts) {
+      const caps = Array.isArray(a.requestedCapabilities) ? a.requestedCapabilities : [];
+      for (const c of caps as any[]) {
+        if (c.type) declaredTypes.add(String(c.type));
+      }
+    }
+
+    // Determine which detected capabilities are NOT in any recent spec
+    const undeclared = detectedCapabilities.filter(c => !declaredTypes.has(c.type));
+
+    // Fetch policy budgets for budget status
+    const policy = await compileAgentPermissions(workspaceId);
+    const maxFiles = policy.sessionBudgets.maxFilesChanged;
+    const filesUsed = filesModified.length;
+    const filesWarning = Math.floor(maxFiles * 0.8);
+    const sessionBudget = { filesUsed, filesWarning, filesMax: maxFiles };
+
+    // Update session intent with latest detected capabilities
+    await prisma.sessionIntent.update({
+      where: { id: intent.id },
+      data: {
+        detectedCapabilities: detectedCapabilities as any,
+        filesModified: filesUsed,
+      },
+    });
+
+    // Fire SSE coding_drift if there are undeclared capabilities
+    if (undeclared.length > 0) {
+      notifyCodingDrift(workspaceId, { sessionId, undeclared, sessionBudget });
+    }
+
+    return res.json({
+      success: true,
+      undeclared,
+      declaredTypeCount: declaredTypes.size,
+      sessionBudget,
+      budgetWarning: filesUsed >= filesWarning,
+      budgetExceeded: filesUsed >= maxFiles,
+    });
+  } catch (err: any) {
+    console.error('[ScanReport] Error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Create or update an integration for a workspace
 app.put('/api/workspaces/:id/integrations/:type', async (req: Request, res: Response) => {
   const workspaceId = req.params.id;
@@ -1602,6 +1764,24 @@ app.post('/mcp', async (req: Request, res: Response) => {
         const allowed = undeclaredRequested.length === 0 && !hasCriticalDrift;
 
         return { allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service };
+      },
+      declareSessionIntent: async (workspaceId, sessionId, rawPrompt, service, ticketRef, scopeHint) => {
+        const intent = await prisma.sessionIntent.upsert({
+          where: { workspaceId_sessionId: { workspaceId, sessionId } },
+          update: { rawPrompt, service, ticketRef, scopeHint, status: 'active', closedAt: null },
+          create: { workspaceId, sessionId, rawPrompt, service, ticketRef, scopeHint },
+        });
+        const policy = await compileAgentPermissions(workspaceId);
+        return {
+          sessionIntentId: intent.id,
+          policy: {
+            maxFilesChanged: policy.sessionBudgets.maxFilesChanged,
+            maxNewAbstractions: policy.sessionBudgets.maxNewAbstractions,
+            blockedCapabilities: policy.blocked,
+            requireDeclaration: policy.requireDeclaration,
+            warningThresholdPercent: 80,
+          },
+        };
       },
       workspaceId: scopedWorkspaceId,
     });

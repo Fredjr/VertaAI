@@ -56,6 +56,41 @@ export function notifyGovernanceSse(workspaceId: string): void {
   }
 }
 
+/**
+ * Push a coding_drift event to all SSE clients for the given workspace.
+ * Fired when the scan-report endpoint detects that the local scanner found
+ * capabilities that are NOT declared in any recent IntentArtifact for the workspace.
+ * This is distinct from drift_updated (which signals Track B runtime drift).
+ *
+ * The extension receives this event and shows inline squiggles at the exact
+ * file + line where the undeclared capability was detected — before any PR is opened.
+ */
+export function notifyCodingDrift(
+  workspaceId: string,
+  payload: {
+    sessionId: string;
+    undeclared: Array<{ type: string; target?: string; file: string; line: number }>;
+    sessionBudget: { filesUsed: number; filesWarning: number; filesMax: number };
+  },
+): void {
+  const ws = clients.get(workspaceId);
+  if (!ws || ws.size === 0) return;
+
+  const data = `event: coding_drift\ndata: ${JSON.stringify({
+    workspaceId,
+    detectedAt: new Date().toISOString(),
+    ...payload,
+  })}\n\n`;
+
+  for (const res of ws) {
+    try {
+      res.write(data);
+    } catch {
+      ws.delete(res);
+    }
+  }
+}
+
 /** Number of active SSE clients across all workspaces (for health endpoints). */
 export function activeSseClientCount(): number {
   let count = 0;
