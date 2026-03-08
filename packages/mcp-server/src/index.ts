@@ -58,6 +58,14 @@ export interface CapabilityIntentCheckResult {
   /** Capabilities declared in the latest IntentArtifact for this service. */
   declaredCapabilities: Array<{ type: string; target: string }>;
   service: string;
+  /** Current session file budget — null if no active session. */
+  sessionBudget?: {
+    filesUsed: number;
+    filesMax: number;
+    warningAt: number;
+    atWarning: boolean;
+    atLimit: boolean;
+  } | null;
 }
 
 export interface GovernanceMcpOpts {
@@ -360,6 +368,21 @@ export function createGovernanceMcpServer(opts: GovernanceMcpOpts): McpServer {
         } else {
           lines.push('## ℹ No capabilities declared yet');
           lines.push('No IntentArtifact found for this service. All capabilities are undeclared by default.');
+        }
+
+        // Session budget warning — surface spaghetti risk inline
+        if (result.sessionBudget) {
+          const b = result.sessionBudget;
+          lines.push('');
+          if (b.atLimit) {
+            lines.push(`## 🚫 Session budget EXCEEDED: ${b.filesUsed}/${b.filesMax} files modified`);
+            lines.push('Stop and scope this PR before making further changes. This session has exceeded the file-change budget.');
+          } else if (b.atWarning) {
+            lines.push(`## ⚠️ Session budget warning: ${b.filesUsed}/${b.filesMax} files modified (${Math.round(b.filesUsed / b.filesMax * 100)}%)`);
+            lines.push('Consider scoping this PR. You are approaching the session file-change limit.');
+          } else {
+            lines.push(`*Session: ${b.filesUsed}/${b.filesMax} files modified this session.*`);
+          }
         }
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };

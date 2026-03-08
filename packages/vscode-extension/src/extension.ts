@@ -150,6 +150,29 @@ const serverConfirmedUndeclared = new Set<string>();
 /** Reference to the session budget CodeLens provider (fires refresh on state change). */
 let sessionBudgetLensProvider: VertaAISessionBudgetLens | undefined;
 
+// ── P0: package.json watcher ─────────────────────────────────────────────────
+
+/** DiagnosticCollection for new-dependency warnings (P0). */
+let packageJsonDiagnostics: vscode.DiagnosticCollection | undefined;
+
+/**
+ * Baseline snapshot of package.json dependencies captured at session start.
+ * Maps workspace-relative file path → { name: version } for all deps+devDeps.
+ * Used to detect when an agent adds a new package mid-session.
+ */
+const packageJsonBaselines = new Map<string, Record<string, string>>();
+
+/** Set of dep names added since session start — displayed in session budget lens. */
+const newSessionDeps = new Set<string>();
+
+// ── P3: function signature similarity ────────────────────────────────────────
+
+/**
+ * Map of exported function name → relative file path, scanned at session start.
+ * Used to flag when the agent writes a new function that already exists elsewhere.
+ */
+const existingFunctions = new Map<string, string>();
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CodeLens provider — AI provenance at line 0
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,7 +266,11 @@ class VertaAISessionBudgetLens implements vscode.CodeLensProvider {
       ? `🚫 ${serverConfirmedUndeclared.size} undeclared: ${[...serverConfirmedUndeclared].join(', ')}`
       : '';
 
-    const title = [budgetLabel, undeclaredLabel].filter(Boolean).join(' | ');
+    const newDepsLabel = newSessionDeps.size > 0
+      ? `📦 +${newSessionDeps.size} new pkg${newSessionDeps.size > 1 ? 's' : ''}: ${[...newSessionDeps].join(', ')}`
+      : '';
+
+    const title = [budgetLabel, undeclaredLabel, newDepsLabel].filter(Boolean).join(' | ');
     if (!title) return [];
 
     return [new vscode.CodeLens(new vscode.Range(0, 0, 0, 0), {
@@ -427,6 +454,9 @@ export function activate(context: vscode.ExtensionContext): void {
         serverConfirmedUndeclared.clear();
         sessionFilesTouched.clear();
         lastGitDiffFiles = new Set<string>();
+        packageJsonBaselines.clear();
+        newSessionDeps.clear();
+        existingFunctions.clear();
         disconnectSseStream();
         setTimeout(() => connectSseStream(), 500);
         // Re-initialize session with new config
@@ -446,13 +476,122 @@ export function activate(context: vscode.ExtensionContext): void {
   gitDiffTimer = setInterval(() => checkGitDiff(), 30_000);
   context.subscriptions.push({ dispose: () => { if (gitDiffTimer) clearInterval(gitDiffTimer); } });
 
+  // ── P0: package.json watcher ─────────────────────────────────────────────
+  // Watches all package.json files in the workspace (excluding node_modules).
+  // On change: diffs against baseline to detect newly added dependencies.
+  // Flags undeclared packages with Warning diagnostics on the exact line.
+  packageJsonDiagnostics = vscode.languages.createDiagnosticCollection('vertaai-pkg');
+  context.subscriptions.push(packageJsonDiagnostics);
+
+  const pkgWatcher = vscode.workspace.createFileSystemWatcher('**/package.json', false, false, false);
+  pkgWatcher.onDidChange(uri => {
+    if (!uri.fsPath.includes('node_modules')) checkNewDependencies(uri);
+  });
+  pkgWatcher.onDidCreate(uri => {
+    if (!uri.fsPath.includes('node_modules')) snapshotPackageJson(uri);
+  });
+  context.subscriptions.push(pkgWatcher);
+
+  // Snapshot all existing package.json files as baseline at activation
+  vscode.workspace.findFiles('**/package.json', '**/node_modules/**').then(pkgFiles => {
+    pkgFiles.forEach(uri => snapshotPackageJson(uri));
+  });
+
   console.log(`[${EXTENSION_NAME}] Activated — file watcher + SSE stream + capability scanner ready`);
 }
 
 export function deactivate(): void {
   disconnectSseStream();
   capabilityDiagnostics?.dispose();
+  packageJsonDiagnostics?.dispose();
   statusBarItem?.dispose();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P0: package.json dependency watcher
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Extract all runtime + dev dependencies from a parsed package.json object. */
+function extractDeps(pkg: Record<string, unknown>): Record<string, string> {
+  return {
+    ...(pkg['dependencies'] as Record<string, string> ?? {}),
+    ...(pkg['devDependencies'] as Record<string, string> ?? {}),
+  };
+}
+
+/**
+ * Capture a baseline snapshot of a package.json file.
+ * Called at activation (for existing files) and on file creation.
+ */
+function snapshotPackageJson(uri: vscode.Uri): void {
+  try {
+    const raw = fs.readFileSync(uri.fsPath, 'utf8');
+    const pkg = JSON.parse(raw) as Record<string, unknown>;
+    const rel = vscode.workspace.asRelativePath(uri);
+    packageJsonBaselines.set(rel, extractDeps(pkg));
+  } catch { /* non-blocking */ }
+}
+
+/**
+ * Called when a package.json changes mid-session.
+ * Diffs against the baseline; shows Warning diagnostics for any newly added packages.
+ * Also updates `newSessionDeps` for the session budget lens.
+ */
+function checkNewDependencies(uri: vscode.Uri): void {
+  if (!packageJsonDiagnostics) return;
+  try {
+    const raw = fs.readFileSync(uri.fsPath, 'utf8');
+    const pkg = JSON.parse(raw) as Record<string, unknown>;
+    const rel = vscode.workspace.asRelativePath(uri);
+    const baseline = packageJsonBaselines.get(rel) ?? {};
+    const current = extractDeps(pkg);
+
+    // Find deps that weren't in the baseline
+    const added = Object.keys(current).filter(name => !(name in baseline));
+    if (added.length === 0) {
+      // Deps may have been removed — update baseline and clear diagnostics
+      packageJsonBaselines.set(rel, current);
+      packageJsonDiagnostics.delete(uri);
+      return;
+    }
+
+    // Build diagnostics: one per added dep, pointing to its line in the file
+    const lines = raw.split('\n');
+    const diagnostics: vscode.Diagnostic[] = [];
+    for (const depName of added) {
+      newSessionDeps.add(depName);
+      // Find the line that mentions this dep name
+      const lineIdx = lines.findIndex(l => l.includes(`"${depName}"`));
+      const range = lineIdx >= 0
+        ? new vscode.Range(lineIdx, 0, lineIdx, lines[lineIdx]!.length)
+        : new vscode.Range(0, 0, 0, 0);
+      const diag = new vscode.Diagnostic(
+        range,
+        `VertaAI: New dependency added mid-session — \`${depName}\`. ` +
+          'Declare this dependency in the session intent if required, or remove if accidental.',
+        vscode.DiagnosticSeverity.Warning,
+      );
+      diag.source = 'VertaAI';
+      diag.code = 'new_dependency';
+      diagnostics.push(diag);
+    }
+    packageJsonDiagnostics.set(uri, diagnostics);
+    sessionBudgetLensProvider?.fireChange();
+
+    // Notify via status bar (non-intrusive)
+    const depList = added.join(', ');
+    console.warn(`[${EXTENSION_NAME}] New packages added mid-session: ${depList}`);
+    const now = Date.now();
+    if (now - (lastNotificationBySeverity['new_dep'] ?? 0) > 5 * 60_000) {
+      lastNotificationBySeverity['new_dep'] = now;
+      vscode.window.showWarningMessage(
+        `⚠️ VertaAI: Agent added ${added.length} new ${added.length === 1 ? 'package' : 'packages'} to package.json: ${depList}. Declare or remove.`,
+      );
+    }
+
+    // Update baseline so next save doesn't re-flag the same additions
+    packageJsonBaselines.set(rel, current);
+  } catch { /* non-blocking — malformed JSON during agent edits is expected */ }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -608,6 +747,83 @@ function onSseCodingDrift(payload: {
 // Signal 3: Local capability scanner
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// P3: Function signature similarity scan
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Scan the workspace src/ directory for exported function names.
+ * Populates `existingFunctions` map (name → relative file path).
+ * Uses Node.js child_process grep — fast, no AST needed.
+ * Called at session init (after `initSession`) so the map is ready before
+ * the agent starts writing code.
+ */
+function scanExistingFunctions(): void {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) return;
+
+  const { exec } = require('child_process') as typeof import('child_process');
+  // grep for `export (async )? function name(` and `export const name =`
+  const cmd = `grep -rn --include="*.ts" --include="*.js" -E "export (async )?function [A-Za-z_][A-Za-z0-9_]+|export const [A-Za-z_][A-Za-z0-9_]+ =" src/ 2>/dev/null || true`;
+  exec(cmd, { cwd: workspaceRoot, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+    if (err || !stdout.trim()) return;
+    existingFunctions.clear();
+    for (const line of stdout.split('\n')) {
+      const colonIdx = line.indexOf(':');
+      if (colonIdx < 0) continue;
+      const filePart = line.slice(0, colonIdx); // relative from cwd
+      const rest = line.slice(colonIdx + 1);
+      // Extract function name from either form
+      const fnMatch = rest.match(/export\s+(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]+)/) ??
+                      rest.match(/export\s+const\s+([A-Za-z_][A-Za-z0-9_]+)\s*=/);
+      if (fnMatch?.[1] && !existingFunctions.has(fnMatch[1])) {
+        existingFunctions.set(fnMatch[1], filePart);
+      }
+    }
+    console.log(`[${EXTENSION_NAME}] P3: scanned ${existingFunctions.size} existing exported functions`);
+  });
+}
+
+/**
+ * Check a document being saved for new exported functions that duplicate existing ones.
+ * Shows a Warning diagnostic on the duplicate function definition line.
+ */
+function checkForDuplicateFunctions(doc: vscode.TextDocument): vscode.Diagnostic[] {
+  const text = doc.getText();
+  const filePath = vscode.workspace.asRelativePath(doc.uri);
+  const duplicateDiagnostics: vscode.Diagnostic[] = [];
+
+  // Only check TypeScript / JavaScript source files
+  if (!/\.(ts|tsx|js|jsx)$/.test(doc.fileName)) return [];
+  // Skip test files — duplicates are expected in test utils
+  if (/\.(test|spec)\.(ts|tsx|js|jsx)$/.test(doc.fileName)) return [];
+
+  const FN_RE = /export\s+(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]+)|export\s+const\s+([A-Za-z_][A-Za-z0-9_]+)\s*=/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = FN_RE.exec(text)) !== null) {
+    const fnName = match[1] ?? match[2];
+    if (!fnName) continue;
+
+    const existingFile = existingFunctions.get(fnName);
+    // Only flag if the same name exists in a DIFFERENT file (not the same file being saved)
+    if (existingFile && existingFile !== filePath && !existingFile.endsWith(filePath)) {
+      const pos = doc.positionAt(match.index);
+      const endPos = doc.positionAt(match.index + match[0].length);
+      const diag = new vscode.Diagnostic(
+        new vscode.Range(pos, endPos),
+        `VertaAI: Possible duplicate — \`${fnName}\` already exists in \`${existingFile}\`. ` +
+          'Consider reusing the existing function instead of creating a new one.',
+        vscode.DiagnosticSeverity.Warning,
+      );
+      diag.source = 'VertaAI';
+      diag.code = `dup_fn_${fnName}`;
+      duplicateDiagnostics.push(diag);
+    }
+  }
+  return duplicateDiagnostics;
+}
+
 function scanDocumentForCapabilities(doc: vscode.TextDocument): void {
   const text = doc.getText();
   const diagnostics: vscode.Diagnostic[] = [];
@@ -666,6 +882,10 @@ function scanDocumentForCapabilities(doc: vscode.TextDocument): void {
     }
     if (diagnostics.length >= 20) break;
   }
+
+  // P3: Flag duplicate exported function names
+  const dupFnDiags = checkForDuplicateFunctions(doc);
+  for (const d of dupFnDiags) diagnostics.push(d);
 
   capabilityDiagnostics.set(doc.uri, diagnostics);
 }
@@ -1370,7 +1590,21 @@ async function callCapabilityIntentCheckApi(
       activeDrifts: number;
       declaredCapabilities: Array<{ capabilityType: string; capabilityTarget: string }>;
       service: string;
+      sessionBudget?: { filesUsed: number; filesMax: number; warningAt: number; atWarning: boolean; atLimit: boolean } | null;
     };
+
+    // Build session budget suffix line
+    let budgetLine = '';
+    if (data.sessionBudget) {
+      const b = data.sessionBudget;
+      if (b.atLimit) {
+        budgetLine = `\n🚫 **Session budget EXCEEDED: ${b.filesUsed}/${b.filesMax} files.** Stop and scope this PR.`;
+      } else if (b.atWarning) {
+        budgetLine = `\n⚠️ Session budget: ${b.filesUsed}/${b.filesMax} files modified (${Math.round(b.filesUsed / b.filesMax * 100)}%) — consider scoping this PR.`;
+      } else if (b.filesMax > 0) {
+        budgetLine = `\n*Session: ${b.filesUsed}/${b.filesMax} files modified.*`;
+      }
+    }
 
     if (data.allowed) {
       return [
@@ -1380,6 +1614,7 @@ async function callCapabilityIntentCheckApi(
         data.activeDrifts > 0
           ? `\n⚠️ Note: ${data.activeDrifts} active drift ${data.activeDrifts === 1 ? 'cluster' : 'clusters'} exist for this service — review .claude/GOVERNANCE.md.`
           : '\nNo active drift clusters. Safe to proceed.',
+        budgetLine,
       ].join('\n');
     } else {
       const undeclaredList = data.undeclaredRequested
@@ -1396,6 +1631,7 @@ async function callCapabilityIntentCheckApi(
         data.activeDrifts > 0
           ? `\n⚠️ ${data.activeDrifts} active drift ${data.activeDrifts === 1 ? 'cluster' : 'clusters'} also exist for this service.`
           : '',
+        budgetLine,
       ].join('\n');
     }
   } catch (err: any) {
@@ -1468,6 +1704,9 @@ async function initSession(): Promise<void> {
       writeGovernanceMd(content);
     }
   }
+
+  // P3: Scan workspace for existing exported functions to enable duplicate detection
+  scanExistingFunctions();
 }
 
 /**

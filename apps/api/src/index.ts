@@ -745,7 +745,21 @@ app.post('/api/workspaces/:id/capability-intent-check', async (req: Request, res
 
     const structuralContext = buildStructuralContext(recentArtifacts);
 
-    return res.json({ success: true, allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service, structuralContext, agentPermissions });
+    // P2: Include active session budget (same signal the MCP tool now includes)
+    const activeSession = await prisma.sessionIntent.findFirst({
+      where: { workspaceId, status: 'active' },
+      orderBy: { createdAt: 'desc' },
+      select: { filesModified: true, sessionId: true },
+    });
+    const sessionBudget = activeSession ? {
+      filesUsed: activeSession.filesModified,
+      filesMax: agentPermissions.sessionBudgets.maxFilesChanged,
+      warningAt: Math.floor(agentPermissions.sessionBudgets.maxFilesChanged * 0.8),
+      atWarning: activeSession.filesModified >= Math.floor(agentPermissions.sessionBudgets.maxFilesChanged * 0.8),
+      atLimit: activeSession.filesModified >= agentPermissions.sessionBudgets.maxFilesChanged,
+    } : null;
+
+    return res.json({ success: true, allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service, structuralContext, agentPermissions, sessionBudget });
   } catch (err: any) {
     console.error('[CapabilityIntentCheck] Error:', err);
     return res.status(500).json({ success: false, error: err.message });
@@ -1711,7 +1725,42 @@ app.post('/mcp', async (req: Request, res: Response) => {
     // Create a fresh McpServer for this session with governance resource + tool.
     // Workspace isolation: if scopedWorkspaceId is set, list/read/notify are scoped to it.
     const mcpServer = createGovernanceMcpServer({
-      readGovernanceMarkdown: buildWorkspaceGovernanceMarkdown,
+      // P1: Enrich governance markdown with the active coding session context so agents
+      // can self-correct mid-session via get_governance_status without a context switch.
+      readGovernanceMarkdown: async (workspaceId: string) => {
+        const [baseMarkdown, activeSession, policy] = await Promise.all([
+          buildWorkspaceGovernanceMarkdown(workspaceId),
+          prisma.sessionIntent.findFirst({
+            where: { workspaceId, status: 'active' },
+            orderBy: { createdAt: 'desc' },
+          }),
+          compileAgentPermissions(workspaceId),
+        ]);
+
+        if (!activeSession) return baseMarkdown;
+
+        const used = activeSession.filesModified;
+        const max = policy.sessionBudgets.maxFilesChanged;
+        const warningAt = Math.floor(max * 0.8);
+        const detectedCaps = Array.isArray(activeSession.detectedCapabilities)
+          ? (activeSession.detectedCapabilities as any[]).map((c: any) => String(c.type ?? c)).join(', ')
+          : '';
+
+        const sessionLines = [
+          '',
+          '---',
+          '## Current Coding Session',
+          `**Session**: \`${activeSession.sessionId}\``,
+          activeSession.rawPrompt ? `**Intent**: "${activeSession.rawPrompt}"` : '',
+          activeSession.service ? `**Service**: \`${activeSession.service}\`` : '',
+          activeSession.ticketRef ? `**Ticket**: ${activeSession.ticketRef}` : '',
+          `**Files modified**: ${used} / ${max}${used >= max ? ' 🚫 EXCEEDED' : used >= warningAt ? ' ⚠️ approaching limit' : ''}`,
+          detectedCaps ? `**Detected capabilities this session**: ${detectedCaps}` : '',
+          `**Session started**: ${activeSession.createdAt.toISOString().slice(0, 16).replace('T', ' ')} UTC`,
+        ].filter(Boolean).join('\n');
+
+        return baseMarkdown + sessionLines;
+      },
       listWorkspaces: async () => {
         if (scopedWorkspaceId) {
           // Return only the session's workspace — prevents enumeration of other workspaces
@@ -1784,7 +1833,25 @@ app.post('/mcp', async (req: Request, res: Response) => {
         const hasCriticalDrift = activeDrifts.some(d => d.materialityTier === 'critical');
         const allowed = undeclaredRequested.length === 0 && !hasCriticalDrift;
 
-        return { allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service };
+        // P2: Include active session budget so agent can self-limit before hitting the wall
+        const [activeSession, policy] = await Promise.all([
+          prisma.sessionIntent.findFirst({
+            where: { workspaceId, status: 'active' },
+            orderBy: { createdAt: 'desc' },
+            select: { filesModified: true, sessionId: true },
+          }),
+          compileAgentPermissions(workspaceId),
+        ]);
+
+        const sessionBudget = activeSession ? {
+          filesUsed: activeSession.filesModified,
+          filesMax: policy.sessionBudgets.maxFilesChanged,
+          warningAt: Math.floor(policy.sessionBudgets.maxFilesChanged * 0.8),
+          atWarning: activeSession.filesModified >= Math.floor(policy.sessionBudgets.maxFilesChanged * 0.8),
+          atLimit: activeSession.filesModified >= policy.sessionBudgets.maxFilesChanged,
+        } : null;
+
+        return { allowed, undeclaredRequested, activeDrifts, declaredCapabilities: declared, service, sessionBudget };
       },
       declareSessionIntent: async (workspaceId, sessionId, rawPrompt, service, ticketRef, scopeHint) => {
         const [intent, policy, recentArtifacts] = await Promise.all([
